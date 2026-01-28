@@ -1,4 +1,4 @@
-# Mattermost DM CLI - Specification
+# Mattermost CLI - Specification
 
 ## Overview
 A TypeScript + Bun CLI tool to fetch and display direct messages from Mattermost, with built-in secret redaction for safe LLM processing later.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Mattermost DM CLI - Entry point
+// Mattermost CLI - Entry point
 
 import { Command } from 'commander'
 import { listChannels, fetchDMs } from './cli'
@@ -9,7 +9,7 @@ const program = new Command()
 
 program
   .name('mm')
-  .description('Mattermost DM CLI - Fetch and display direct messages')
+  .description('Mattermost CLI - Fetch and display messages')
   .version(pkg.version)
 
 // Global options (don't use env vars as defaults - they leak in --help)
