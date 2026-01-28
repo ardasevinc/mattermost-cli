@@ -22,7 +22,7 @@ A TypeScript + Bun CLI tool to fetch and display direct messages from Mattermost
 ### Environment Variables
 
 ```bash
-MM_URL=https://mattermost.company.com
+MM_URL=https://mattermost.example.com
 MM_TOKEN=your-personal-access-token
 ```
 

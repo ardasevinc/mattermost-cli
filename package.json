@@ -2,11 +2,20 @@
   "name": "mattermost-dm-cli",
   "version": "1.0.0",
   "description": "CLI tool to fetch and display Mattermost direct messages with secret redaction",
+  "author": "Arda Sevinc <arda@sevinc.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ardasevinc/mattermost-dm-cli"
+  },
+  "keywords": ["mattermost", "cli", "dm", "messages", "bun", "secret-redaction"],
   "module": "src/index.ts",
   "type": "module",
-  "private": true,
   "bin": {
     "mm": "src/index.ts"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
   },
   "scripts": {
     "start": "bun src/index.ts",

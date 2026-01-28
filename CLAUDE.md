@@ -1,8 +1,25 @@
 ---
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
+description: Mattermost DM CLI - Bun-based CLI with secret redaction
 globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
 alwaysApply: false
 ---
+
+For AI agent instructions on using this CLI, see @AGENTS.md
+
+## Project Info
+
+- **Entry point:** `src/index.ts`
+- **Run tests:** `bun test`
+- **Run CLI:** `bun src/index.ts` or `mm` (if linked)
+
+## Environment Variables
+
+- `MM_URL` - Mattermost server URL
+- `MM_TOKEN` - Personal access token
+
+**IMPORTANT:** Never log or expose MM_TOKEN. The CLI is designed to never print tokens in `--help` or error messages.
+
+## Bun Guidelines
 
 Default to using Bun instead of Node.js.
 

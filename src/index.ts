@@ -3,31 +3,37 @@
 
 import { Command } from 'commander'
 import { listChannels, fetchDMs } from './cli'
+import pkg from '../package.json'
 
 const program = new Command()
 
 program
   .name('mm')
   .description('Mattermost DM CLI - Fetch and display direct messages')
-  .version('1.0.0')
+  .version(pkg.version)
 
-// Global options
+// Global options (don't use env vars as defaults - they leak in --help)
 program
-  .option('-t, --token <token>', 'Mattermost personal access token', process.env.MM_TOKEN)
-  .option('--url <url>', 'Mattermost server URL', process.env.MM_URL)
+  .option('-t, --token <token>', 'Mattermost personal access token (or MM_TOKEN env)')
+  .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
   .option('--json', 'Output as JSON', false)
   .option('--no-color', 'Disable colored output')
 
-// Validate required config
-function validateConfig(options: { url?: string; token?: string }): void {
-  if (!options.url) {
+// Resolve config from CLI options + env vars
+function resolveConfig(options: { url?: string; token?: string }): { url: string; token: string } {
+  const url = options.url || process.env.MM_URL
+  const token = options.token || process.env.MM_TOKEN
+
+  if (!url) {
     console.error('Error: Mattermost URL required. Set MM_URL env var or use --url')
     process.exit(1)
   }
-  if (!options.token) {
+  if (!token) {
     console.error('Error: Mattermost token required. Set MM_TOKEN env var or use --token')
     process.exit(1)
   }
+
+  return { url, token }
 }
 
 // List channels command
@@ -36,12 +42,12 @@ program
   .description('List all DM channels')
   .action(async () => {
     const opts = program.opts()
-    validateConfig(opts)
+    const config = resolveConfig(opts)
 
     try {
       await listChannels({
-        url: opts.url!,
-        token: opts.token!,
+        url: config.url,
+        token: config.token,
         json: opts.json,
         color: opts.color,
       })
@@ -61,12 +67,12 @@ program
   .option('-c, --channel <id>', 'Specific channel ID')
   .action(async (cmdOpts) => {
     const globalOpts = program.opts()
-    validateConfig(globalOpts)
+    const config = resolveConfig(globalOpts)
 
     try {
       await fetchDMs({
-        url: globalOpts.url!,
-        token: globalOpts.token!,
+        url: config.url,
+        token: config.token,
         json: globalOpts.json,
         color: globalOpts.color,
         user: cmdOpts.user || [],
