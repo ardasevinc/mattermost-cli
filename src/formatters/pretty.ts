@@ -1,0 +1,231 @@
+// Pretty terminal output with ANSI colors
+
+import type { DMOutput, ProcessedMessage, ProcessedChannel } from '../types'
+
+// ANSI color codes
+const colors = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  italic: '\x1b[3m',
+
+  // Foreground
+  black: '\x1b[30m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m',
+
+  // Background
+  bgBlack: '\x1b[40m',
+  bgRed: '\x1b[41m',
+  bgGreen: '\x1b[42m',
+  bgYellow: '\x1b[43m',
+  bgBlue: '\x1b[44m',
+  bgMagenta: '\x1b[45m',
+  bgCyan: '\x1b[46m',
+  bgWhite: '\x1b[47m',
+}
+
+// Simple color helpers
+function c(text: string, ...codes: string[]): string {
+  return `${codes.join('')}${text}${colors.reset}`
+}
+
+function bold(text: string): string {
+  return c(text, colors.bold)
+}
+
+function dim(text: string): string {
+  return c(text, colors.dim)
+}
+
+function cyan(text: string): string {
+  return c(text, colors.cyan)
+}
+
+function yellow(text: string): string {
+  return c(text, colors.yellow)
+}
+
+function green(text: string): string {
+  return c(text, colors.green)
+}
+
+function magenta(text: string): string {
+  return c(text, colors.magenta)
+}
+
+function blue(text: string): string {
+  return c(text, colors.blue)
+}
+
+// Generate consistent color for username
+function userColor(username: string): string {
+  const userColors = [cyan, yellow, green, magenta, blue]
+  let hash = 0
+  for (const char of username) {
+    hash = (hash << 5) - hash + char.charCodeAt(0)
+    hash = hash & hash
+  }
+  const colorFn = userColors[Math.abs(hash) % userColors.length]
+  return colorFn(username)
+}
+
+export function formatPretty(outputs: DMOutput[], useColor = true): string {
+  if (!useColor) {
+    // Strip all color codes for --no-color
+    return formatPrettyNoColor(outputs)
+  }
+
+  const sections: string[] = []
+
+  for (const output of outputs) {
+    sections.push(formatDMChannelPretty(output))
+  }
+
+  return sections.join('\n' + dim('─'.repeat(60)) + '\n\n')
+}
+
+function formatDMChannelPretty(output: DMOutput): string {
+  const { channel, messages } = output
+  const lines: string[] = []
+
+  // Header
+  lines.push(bold(`💬 DMs with ${cyan('@' + channel.otherUser)}`))
+  lines.push('')
+
+  // Group messages by date
+  const messagesByDate = groupByDate(messages)
+
+  for (const [date, msgs] of messagesByDate) {
+    lines.push(dim(`  ── ${date} ──`))
+    lines.push('')
+
+    for (const msg of msgs) {
+      lines.push(formatMessagePretty(msg))
+    }
+  }
+
+  // Redaction notice
+  if (output.redactions.length > 0) {
+    lines.push('')
+    lines.push(dim(`  ⚠ ${output.redactions.length} secret(s) redacted`))
+  }
+
+  return lines.join('\n')
+}
+
+function formatMessagePretty(msg: ProcessedMessage): string {
+  const time = dim(formatTime(msg.timestamp))
+  const user = userColor(msg.user)
+
+  const lines: string[] = []
+  lines.push(`  ${time} ${bold(user)}`)
+
+  // Indent message content
+  const indentedText = msg.text
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n')
+  lines.push(indentedText)
+
+  // File attachments
+  if (msg.files.length > 0) {
+    lines.push(dim(`    📎 ${msg.files.join(', ')}`))
+  }
+
+  lines.push('')
+  return lines.join('\n')
+}
+
+function formatPrettyNoColor(outputs: DMOutput[]): string {
+  const sections: string[] = []
+
+  for (const output of outputs) {
+    const { channel, messages } = output
+    const lines: string[] = []
+
+    lines.push(`DMs with @${channel.otherUser}`)
+    lines.push('─'.repeat(40))
+
+    const messagesByDate = groupByDate(messages)
+
+    for (const [date, msgs] of messagesByDate) {
+      lines.push(`  -- ${date} --`)
+      lines.push('')
+
+      for (const msg of msgs) {
+        const time = formatTime(msg.timestamp)
+        lines.push(`  [${time}] ${msg.user}`)
+        const indentedText = msg.text
+          .split('\n')
+          .map((line) => `    ${line}`)
+          .join('\n')
+        lines.push(indentedText)
+        if (msg.files.length > 0) {
+          lines.push(`    Attachments: ${msg.files.join(', ')}`)
+        }
+        lines.push('')
+      }
+    }
+
+    if (output.redactions.length > 0) {
+      lines.push(`  [${output.redactions.length} secret(s) redacted]`)
+    }
+
+    sections.push(lines.join('\n'))
+  }
+
+  return sections.join('\n' + '='.repeat(60) + '\n\n')
+}
+
+function groupByDate(
+  messages: ProcessedMessage[]
+): Map<string, ProcessedMessage[]> {
+  const groups = new Map<string, ProcessedMessage[]>()
+
+  const sorted = [...messages].sort(
+    (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+  )
+
+  for (const msg of sorted) {
+    const date = formatDate(msg.timestamp)
+    if (!groups.has(date)) {
+      groups.set(date, [])
+    }
+    groups.get(date)!.push(msg)
+  }
+
+  return groups
+}
+
+function formatDate(date: Date): string {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+
+  if (date.toDateString() === today.toDateString()) {
+    return 'Today'
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Yesterday'
+  }
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+  })
+}
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}

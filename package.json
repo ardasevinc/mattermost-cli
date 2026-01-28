@@ -1,0 +1,25 @@
+{
+  "name": "mattermost-dm-cli",
+  "version": "1.0.0",
+  "description": "CLI tool to fetch and display Mattermost direct messages with secret redaction",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "mm": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "mm": "bun src/index.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "commander": "^14.0.2"
+  }
+}
