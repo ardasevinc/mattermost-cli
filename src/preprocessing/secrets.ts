@@ -77,10 +77,9 @@ export function redactSecrets(text: string): {
     const masked = maskSecret(secret.value, secret.type)
     result += masked
 
-    // Log the redaction
+    // Log the redaction (without original value for security)
     redactions.push({
       type: secret.type,
-      original: secret.value,
       masked,
       position: secret.start,
     })

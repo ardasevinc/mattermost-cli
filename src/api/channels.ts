@@ -40,16 +40,8 @@ export async function getDMChannelWithUser(
     )
     return channel
   } catch {
-    // Try alternative: create or get direct channel
-    try {
-      const channel = await client.post<Channel>('/channels/direct', [
-        me.id,
-        userId,
-      ])
-      return channel
-    } catch {
-      return null
-    }
+    // Don't create channel - this is a read-only operation
+    return null
   }
 }
 

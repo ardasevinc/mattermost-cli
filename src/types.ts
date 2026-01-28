@@ -88,7 +88,6 @@ export interface ProcessedMessage {
   user: string
   userId: string
   text: string
-  originalText: string
   timestamp: Date
   files: string[]
 }
@@ -107,7 +106,6 @@ export interface DMOutput {
 
 export interface Redaction {
   type: string
-  original: string
   masked: string
   position: number
 }

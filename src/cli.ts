@@ -152,7 +152,6 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
         user: postUser.id === me.id ? 'you' : postUser.username,
         userId: post.user_id,
         text,
-        originalText: post.message,
         timestamp: new Date(post.create_at),
         files: post.file_ids || [],
       })
