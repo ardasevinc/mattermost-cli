@@ -12,7 +12,34 @@ Use `mm` when the user asks about:
 
 ## Prerequisites
 
-The CLI must be installed and `MM_URL`/`MM_TOKEN` environment variables must be set.
+The CLI must be installed and configured:
+
+```bash
+# Install
+git clone https://github.com/ardasevinc/mattermost-dm-cli
+cd mattermost-dm-cli
+bun install
+bun link  # Makes `mm` available globally
+```
+
+## Configuration
+
+Set `MM_URL` and `MM_TOKEN` via environment variables or `.env` file:
+
+```bash
+# Option 1: Export directly
+export MM_URL="https://mattermost.example.com"
+export MM_TOKEN="your-personal-access-token"
+
+# Option 2: Create .env file (Bun auto-loads it)
+echo 'MM_URL=https://mattermost.example.com' >> .env
+echo 'MM_TOKEN=your-token' >> .env
+```
+
+Or pass via CLI flags:
+```bash
+mm --url https://... --token your-token channels
+```
 
 ## Commands
 
@@ -87,3 +114,14 @@ mm channels --json | jq '.[] | select(.lastPost != null) | .user'
 ## Error Handling
 
 If `MM_URL` or `MM_TOKEN` are not set, the CLI exits with an error message explaining what's needed. Never hardcode credentials.
+
+## Development
+
+When working on this codebase:
+
+- **Runtime:** Bun (not Node.js)
+- **Run tests:** `bun test`
+- **Entry point:** `src/index.ts`
+- **Run CLI:** `bun src/index.ts` or `mm` (if linked)
+
+**Important:** Never log or expose MM_TOKEN. The CLI is designed to never print tokens in `--help` or error messages.

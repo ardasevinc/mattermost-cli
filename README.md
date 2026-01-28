@@ -25,16 +25,20 @@ bun link  # Makes `mm` available globally
 
 ## Configuration
 
-Set environment variables or use CLI flags:
+Set environment variables, use a `.env` file, or pass CLI flags:
 
 ```bash
+# Option 1: Environment variables
 export MM_URL="https://mattermost.example.com"
 export MM_TOKEN="your-personal-access-token"
-```
 
-Or pass directly:
+# Option 2: .env file (Bun auto-loads it)
+cat > .env << EOF
+MM_URL=https://mattermost.example.com
+MM_TOKEN=your-personal-access-token
+EOF
 
-```bash
+# Option 3: CLI flags
 mm --url https://mattermost.example.com --token your-token channels
 ```
 
