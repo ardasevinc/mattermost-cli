@@ -1,127 +1,106 @@
-# Mattermost DM CLI - Agent Instructions
+# Agent Guide
 
-This document describes how AI agents should use the `mm` CLI tool.
+Codebase guide for AI agents working on this project.
 
-## When to Use
+## Project Structure
 
-Use `mm` when the user asks about:
-- Mattermost direct messages or DMs
-- Checking messages from coworkers
-- Finding tasks or action items mentioned in chat
-- Reviewing recent conversations
-
-## Prerequisites
-
-The CLI must be installed and configured:
-
-```bash
-# Install
-git clone https://github.com/ardasevinc/mattermost-dm-cli
-cd mattermost-dm-cli
-bun install
-bun link  # Makes `mm` available globally
+```
+src/
+├── index.ts              # CLI entry point (commander setup)
+├── cli.ts                # Command handlers (listChannels, fetchDMs)
+├── types.ts              # All TypeScript interfaces
+├── api/
+│   ├── client.ts         # MattermostClient class (HTTP, auth, rate limits)
+│   ├── users.ts          # User fetching + caching
+│   ├── channels.ts       # Channel/DM fetching
+│   └── posts.ts          # Message fetching + pagination
+├── preprocessing/
+│   ├── patterns.ts       # Secret detection regex patterns
+│   ├── secrets.ts        # Detection + masking logic
+│   └── index.ts          # Pipeline entry (currently just secrets)
+└── formatters/
+    ├── json.ts           # JSON output
+    ├── markdown.ts       # Markdown output (for pipes/LLMs)
+    └── pretty.ts         # Terminal output (colors, grouping)
 ```
 
-## Configuration
+## Key Flows
 
-Set `MM_URL` and `MM_TOKEN` via environment variables or `.env` file:
-
-```bash
-# Option 1: Export directly
-export MM_URL="https://mattermost.example.com"
-export MM_TOKEN="your-personal-access-token"
-
-# Option 2: Create .env file (Bun auto-loads it)
-echo 'MM_URL=https://mattermost.example.com' >> .env
-echo 'MM_TOKEN=your-token' >> .env
+### CLI → API → Output
+```
+index.ts (parse args)
+    → cli.ts (listChannels/fetchDMs)
+        → api/* (fetch data from Mattermost)
+        → preprocessing/* (redact secrets)
+        → formatters/* (format output)
 ```
 
-Or pass via CLI flags:
-```bash
-mm --url https://... --token your-token channels
+### Secret Redaction Pipeline
+```
+cli.ts:146 calls preprocess(post.message)
+    → preprocessing/index.ts
+        → secrets.ts:detectSecrets() finds matches
+        → secrets.ts:maskSecret() partial-masks each
+        → returns { text, redactions }
 ```
 
-## Commands
+## Common Tasks
 
-### List DM Channels
+### Add a new secret pattern
+1. Edit `src/preprocessing/patterns.ts`
+2. Add to `SECRET_PATTERNS` array with `name` and `pattern` (regex with capture group)
+3. Add test in `src/preprocessing/secrets.test.ts`
+
+### Add a new output format
+1. Create `src/formatters/newformat.ts`
+2. Export from `src/formatters/index.ts`
+3. Wire up in `cli.ts` output logic (~line 180)
+
+### Add a new API endpoint
+1. Add function in appropriate `src/api/*.ts` file
+2. Use `getClient().get<T>()` or `.post<T>()`
+3. Add types to `src/types.ts` if needed
+
+## Code Conventions
+
+- **Bun, not Node** - use `bun test`, `bun run`, Bun APIs
+- **No dotenv** - Bun auto-loads `.env`
+- **Types in types.ts** - keep interfaces centralized
+- **Singleton client** - use `getClient()` after `initClient()`
+
+## Testing
 
 ```bash
-mm channels           # Pretty output
-mm channels --json    # JSON output
+bun test                    # Run all tests
+bun test secrets            # Run tests matching "secrets"
 ```
 
-Returns list of DM channels with usernames, message counts, and last activity.
+Test files live next to source: `foo.ts` → `foo.test.ts`
 
-### Fetch Messages
+## Security Rules
+
+**Never:**
+- Log or print `MM_TOKEN` (not even in errors)
+- Store original secret values in output (we removed `originalText` and `redactions.original` for this reason)
+- Make write operations in read commands (we removed POST fallback in `getDMChannelWithUser`)
+
+**Always:**
+- Redact before output
+- Use partial masking (show prefix/suffix for context)
+
+## Environment
 
 ```bash
-# All DMs from last 7 days (default)
-mm dms
-
-# From specific user
-mm dms -u <username>
-mm dms -u alice -u bob   # Multiple users
-
-# Time filters
-mm dms --since 24h       # Last 24 hours
-mm dms --since 7d        # Last 7 days
-mm dms --since 30d       # Last 30 days
-
-# Limit message count
-mm dms --limit 100
-
-# JSON output (best for parsing)
-mm dms --json
+MM_URL=https://mattermost.example.com   # Server URL
+MM_TOKEN=<token>                         # Personal access token
 ```
 
-## Output Formats
+## Entry Points
 
-| Context | Format | Notes |
-|---------|--------|-------|
-| TTY (terminal) | Pretty | Colored, grouped by date |
-| Piped/non-TTY | Markdown | Good for LLM processing |
-| `--json` flag | JSON | Structured, includes redaction metadata |
-
-## Security
-
-**All output is automatically redacted.** The CLI detects and masks:
-- API keys (AWS, GitHub, Stripe, OpenAI, etc.)
-- Tokens (JWT, Bearer, Slack, Discord)
-- Connection strings
-- Passwords in config snippets
-
-Example: `ghp_abc123xyz789secret` becomes `ghp_...cret`
-
-**Safe for LLM context:** You can pass the output to other AI tools without leaking secrets.
-
-## Example Workflows
-
-### Check recent messages from a user
-```bash
-mm dms -u alice --since 24h
-```
-
-### Export all DMs as JSON for analysis
-```bash
-mm dms --json > /tmp/dms.json
-```
-
-### Find who messaged recently
-```bash
-mm channels --json | jq '.[] | select(.lastPost != null) | .user'
-```
-
-## Error Handling
-
-If `MM_URL` or `MM_TOKEN` are not set, the CLI exits with an error message explaining what's needed. Never hardcode credentials.
-
-## Development
-
-When working on this codebase:
-
-- **Runtime:** Bun (not Node.js)
-- **Run tests:** `bun test`
-- **Entry point:** `src/index.ts`
-- **Run CLI:** `bun src/index.ts` or `mm` (if linked)
-
-**Important:** Never log or expose MM_TOKEN. The CLI is designed to never print tokens in `--help` or error messages.
+| Task | File | Function |
+|------|------|----------|
+| CLI parsing | `src/index.ts` | `program.parse()` |
+| List channels | `src/cli.ts` | `listChannels()` |
+| Fetch DMs | `src/cli.ts` | `fetchDMs()` |
+| Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
+| API requests | `src/api/client.ts` | `MattermostClient.request()` |
