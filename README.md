@@ -1,4 +1,4 @@
-# mattermost-dm-cli
+# mattermost-cli
 
 A CLI tool to fetch and display Mattermost direct messages with automatic secret redaction for safe LLM processing.
 
@@ -17,8 +17,8 @@ A CLI tool to fetch and display Mattermost direct messages with automatic secret
 ## Installation
 
 ```bash
-git clone https://github.com/ardasevinc/mattermost-dm-cli
-cd mattermost-dm-cli
+git clone https://github.com/ardasevinc/mattermost-cli
+cd mattermost-cli
 bun install
 bun link  # Makes `mm` available globally
 ```

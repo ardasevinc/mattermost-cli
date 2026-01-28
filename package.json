@@ -1,12 +1,12 @@
 {
-  "name": "mattermost-dm-cli",
+  "name": "mattermost-cli",
   "version": "1.0.0",
   "description": "CLI tool to fetch and display Mattermost direct messages with secret redaction",
   "author": "Arda Sevinc <arda@ardasevinc.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ardasevinc/mattermost-dm-cli"
+    "url": "https://github.com/ardasevinc/mattermost-cli"
   },
   "keywords": ["mattermost", "cli", "dm", "messages", "bun", "secret-redaction"],
   "module": "src/index.ts",
