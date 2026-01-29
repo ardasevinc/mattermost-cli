@@ -25,20 +25,39 @@ bun link  # Makes `mm` available globally
 
 ## Configuration
 
-Set environment variables, use a `.env` file, or pass CLI flags:
+Configuration is resolved in this order: **CLI flags → environment variables → config file**
+
+### Option 1: Config file (recommended)
 
 ```bash
-# Option 1: Environment variables
+mm config --init  # Creates ~/.config/mattermost-cli/config.toml
+```
+
+Then edit the file:
+
+```toml
+# ~/.config/mattermost-cli/config.toml
+url = "https://mattermost.example.com"
+token = "your-personal-access-token"
+```
+
+### Option 2: Environment variables
+
+```bash
 export MM_URL="https://mattermost.example.com"
 export MM_TOKEN="your-personal-access-token"
+```
 
-# Option 2: .env file (Bun auto-loads it)
-cat > .env << EOF
+Or use a `.env` file (Bun auto-loads it):
+
+```bash
 MM_URL=https://mattermost.example.com
 MM_TOKEN=your-personal-access-token
-EOF
+```
 
-# Option 3: CLI flags
+### Option 3: CLI flags
+
+```bash
 mm --url https://mattermost.example.com --token your-token channels
 ```
 
@@ -67,6 +86,14 @@ mm dms --since 30d --limit 100
 
 # JSON output (for piping to other tools)
 mm dms --json
+```
+
+### Manage configuration
+
+```bash
+mm config           # Show config file status
+mm config --path    # Print config file path
+mm config --init    # Create config file with template
 ```
 
 ### Options

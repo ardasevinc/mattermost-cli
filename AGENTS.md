@@ -8,6 +8,7 @@ Codebase guide for AI agents working on this project.
 src/
 ├── index.ts              # CLI entry point (commander setup)
 ├── cli.ts                # Command handlers (listChannels, fetchDMs)
+├── config.ts             # TOML config file loading (~/.config/mattermost-cli/)
 ├── types.ts              # All TypeScript interfaces
 ├── api/
 │   ├── client.ts         # MattermostClient class (HTTP, auth, rate limits)
@@ -88,11 +89,25 @@ Test files live next to source: `foo.ts` → `foo.test.ts`
 - Redact before output
 - Use partial masking (show prefix/suffix for context)
 
-## Environment
+## Configuration
 
+**Priority chain:** CLI args → env vars → TOML config file
+
+### Environment Variables
 ```bash
 MM_URL=https://mattermost.example.com   # Server URL
 MM_TOKEN=<token>                         # Personal access token
+```
+
+### Config File
+```bash
+mm config --init  # Creates ~/.config/mattermost-cli/config.toml
+```
+
+```toml
+# ~/.config/mattermost-cli/config.toml
+url = "https://mattermost.example.com"
+token = "your-personal-access-token"
 ```
 
 ## Entry Points
@@ -100,6 +115,7 @@ MM_TOKEN=<token>                         # Personal access token
 | Task | File | Function |
 |------|------|----------|
 | CLI parsing | `src/index.ts` | `program.parse()` |
+| Config loading | `src/config.ts` | `loadConfigFile()` |
 | List channels | `src/cli.ts` | `listChannels()` |
 | Fetch DMs | `src/cli.ts` | `fetchDMs()` |
 | Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
