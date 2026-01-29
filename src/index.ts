@@ -3,6 +3,7 @@
 
 import { Command } from 'commander'
 import { listChannels, fetchDMs } from './cli'
+import { loadConfigFile, getConfigPath, initConfigFile, getConfigStatus } from './config'
 import pkg from '../package.json'
 
 const program = new Command()
@@ -19,22 +20,86 @@ program
   .option('--json', 'Output as JSON', false)
   .option('--no-color', 'Disable colored output')
 
-// Resolve config from CLI options + env vars
-function resolveConfig(options: { url?: string; token?: string }): { url: string; token: string } {
-  const url = options.url || process.env.MM_URL
-  const token = options.token || process.env.MM_TOKEN
+// Resolve config from CLI options → env vars → config file
+async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string }> {
+  // Check CLI args and env vars first
+  let url = options.url || process.env.MM_URL
+  let token = options.token || process.env.MM_TOKEN
+
+  // Only load config file if we're still missing values (avoids noisy warnings)
+  if (!url || !token) {
+    const fileConfig = await loadConfigFile()
+    url = url || fileConfig.url
+    token = token || fileConfig.token
+  }
+
+  const configPath = getConfigPath()
 
   if (!url) {
-    console.error('Error: Mattermost URL required. Set MM_URL env var or use --url')
+    console.error(
+      'Error: Mattermost URL required.\n' +
+      '  1. Use --url flag\n' +
+      '  2. Set MM_URL env var\n' +
+      `  3. Add to ${configPath}`
+    )
     process.exit(1)
   }
   if (!token) {
-    console.error('Error: Mattermost token required. Set MM_TOKEN env var or use --token')
+    console.error(
+      'Error: Mattermost token required.\n' +
+      '  1. Use --token flag\n' +
+      '  2. Set MM_TOKEN env var\n' +
+      `  3. Add to ${configPath}`
+    )
     process.exit(1)
   }
 
   return { url, token }
 }
+
+// Config management command
+program
+  .command('config')
+  .description('Manage config file')
+  .option('--path', 'Print config file path')
+  .option('--init', 'Create config file with template')
+  .action(async (opts) => {
+    try {
+      if (opts.path) {
+        console.log(getConfigPath())
+        return
+      }
+
+      if (opts.init) {
+        const result = await initConfigFile()
+        if (result.created) {
+          console.log(`Created config file: ${result.path}`)
+          console.log('Edit the file to add your Mattermost URL and token.')
+        } else {
+          console.log(`Config file already exists: ${result.path}`)
+        }
+        return
+      }
+
+      // Default: show config status
+      const status = await getConfigStatus()
+      console.log(`Config path: ${status.path}`)
+      console.log(`Exists: ${status.exists ? 'yes' : 'no'}`)
+      if (status.exists) {
+        console.log(`URL configured: ${status.hasUrl ? 'yes' : 'no'}`)
+        console.log(`Token configured: ${status.hasToken ? 'yes' : 'no'}`)
+        if (status.insecurePerms) {
+          console.log(`\nWarning: Config file has insecure permissions.`)
+          console.log(`  Run: chmod 600 "${status.path}"`)
+        }
+      } else {
+        console.log('\nRun `mm config --init` to create a config file.')
+      }
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
 
 // List channels command
 program
@@ -42,7 +107,7 @@ program
   .description('List all DM channels')
   .action(async () => {
     const opts = program.opts()
-    const config = resolveConfig(opts)
+    const config = await resolveConfig(opts)
 
     try {
       await listChannels({
@@ -67,7 +132,7 @@ program
   .option('-c, --channel <id>', 'Specific channel ID')
   .action(async (cmdOpts) => {
     const globalOpts = program.opts()
-    const config = resolveConfig(globalOpts)
+    const config = await resolveConfig(globalOpts)
 
     try {
       await fetchDMs({
@@ -86,5 +151,5 @@ program
     }
   })
 
-// Parse and run
-program.parse()
+// Parse and run (use parseAsync for proper async action handling)
+await program.parseAsync()
