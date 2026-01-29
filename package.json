@@ -9,6 +9,7 @@
     "url": "https://github.com/ardasevinc/mattermost-cli"
   },
   "keywords": ["mattermost", "cli", "dm", "messages", "bun", "secret-redaction"],
+  "files": ["README.md"],
   "module": "src/index.ts",
   "type": "module",
   "bin": {
