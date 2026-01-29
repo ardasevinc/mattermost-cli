@@ -1,18 +1,30 @@
 // Markdown output formatter
 
 import type { DMOutput, ProcessedMessage } from '../types'
+import {
+  formatTime,
+  formatRelativeTime,
+  formatDateLong,
+} from '../utils/date'
 
-export function formatMarkdown(outputs: DMOutput[]): string {
+export interface MarkdownOptions {
+  relative?: boolean
+}
+
+export function formatMarkdown(
+  outputs: DMOutput[],
+  options: MarkdownOptions = {}
+): string {
   const sections: string[] = []
 
   for (const output of outputs) {
-    sections.push(formatDMChannel(output))
+    sections.push(formatDMChannel(output, options.relative ?? false))
   }
 
   return sections.join('\n\n---\n\n')
 }
 
-function formatDMChannel(output: DMOutput): string {
+function formatDMChannel(output: DMOutput, relative: boolean): string {
   const { channel, messages } = output
   const lines: string[] = []
 
@@ -27,7 +39,7 @@ function formatDMChannel(output: DMOutput): string {
     lines.push('')
 
     for (const msg of msgs) {
-      lines.push(formatMessage(msg))
+      lines.push(formatMessage(msg, relative))
       lines.push('')
     }
   }
@@ -41,11 +53,13 @@ function formatDMChannel(output: DMOutput): string {
   return lines.join('\n')
 }
 
-function formatMessage(msg: ProcessedMessage): string {
-  const time = formatTime(msg.timestamp)
+function formatMessage(msg: ProcessedMessage, relative: boolean): string {
+  const timeStr = relative
+    ? formatRelativeTime(msg.timestamp)
+    : formatTime(msg.timestamp)
   const lines: string[] = []
 
-  lines.push(`**${msg.user}** (${time}):`)
+  lines.push(`**${msg.user}** (${timeStr}):`)
 
   // Quote the message content
   const quotedText = msg.text
@@ -74,7 +88,7 @@ function groupByDate(
   )
 
   for (const msg of sorted) {
-    const date = formatDate(msg.timestamp)
+    const date = formatDateLong(msg.timestamp)
     if (!groups.has(date)) {
       groups.set(date, [])
     }
@@ -82,21 +96,4 @@ function groupByDate(
   }
 
   return groups
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'long',
-  })
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
 }

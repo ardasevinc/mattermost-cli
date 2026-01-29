@@ -79,6 +79,7 @@ export interface CLIOptions {
   token: string
   json: boolean
   color: boolean
+  relative: boolean
 }
 
 export interface DMsOptions extends CLIOptions {

@@ -23,6 +23,7 @@ import {
 } from './api'
 import { preprocess } from './preprocessing'
 import { formatJSON, formatMarkdown, formatPretty } from './formatters'
+import { formatDate, formatRelativeTime } from './utils/date'
 
 // List all DM channels
 export async function listChannels(options: {
@@ -30,6 +31,7 @@ export async function listChannels(options: {
   token: string
   json: boolean
   color: boolean
+  relative: boolean
 }): Promise<void> {
   initClient(options.url, options.token)
 
@@ -71,9 +73,13 @@ export async function listChannels(options: {
   } else {
     console.log('DM Channels:\n')
     for (const ch of output) {
-      const lastPost = ch.lastPost
-        ? new Date(ch.lastPost).toLocaleDateString()
-        : 'never'
+      let lastPost = 'never'
+      if (ch.lastPost) {
+        const date = new Date(ch.lastPost)
+        lastPost = options.relative
+          ? formatRelativeTime(date)
+          : formatDate(date, { includeYear: true })
+      }
       console.log(`  @${ch.user.padEnd(20)} ${ch.messageCount} msgs, last: ${lastPost}`)
     }
     console.log(`\nTotal: ${output.length} DM channels`)
@@ -179,11 +185,11 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   if (options.json) {
     console.log(formatJSON(outputs))
   } else if (process.stdout.isTTY && options.color) {
-    console.log(formatPretty(outputs, true))
+    console.log(formatPretty(outputs, { color: true, relative: options.relative }))
   } else if (!options.color) {
-    console.log(formatPretty(outputs, false))
+    console.log(formatPretty(outputs, { color: false, relative: options.relative }))
   } else {
     // Pipe or non-TTY: use markdown
-    console.log(formatMarkdown(outputs))
+    console.log(formatMarkdown(outputs, { relative: options.relative }))
   }
 }

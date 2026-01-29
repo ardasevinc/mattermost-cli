@@ -1,6 +1,11 @@
 // Pretty terminal output with ANSI colors
 
 import type { DMOutput, ProcessedMessage, ProcessedChannel } from '../types'
+import {
+  formatTime,
+  formatRelativeTime,
+  getDateGroupLabel,
+} from '../utils/date'
 
 // ANSI color codes
 const colors = {
@@ -75,22 +80,35 @@ function userColor(username: string): string {
   return colorFn(username)
 }
 
-export function formatPretty(outputs: DMOutput[], useColor = true): string {
+export interface PrettyOptions {
+  color?: boolean
+  relative?: boolean
+}
+
+export function formatPretty(
+  outputs: DMOutput[],
+  options: PrettyOptions | boolean = true
+): string {
+  // Handle legacy boolean parameter
+  const opts: PrettyOptions =
+    typeof options === 'boolean' ? { color: options } : options
+  const useColor = opts.color ?? true
+  const relative = opts.relative ?? false
+
   if (!useColor) {
-    // Strip all color codes for --no-color
-    return formatPrettyNoColor(outputs)
+    return formatPrettyNoColor(outputs, relative)
   }
 
   const sections: string[] = []
 
   for (const output of outputs) {
-    sections.push(formatDMChannelPretty(output))
+    sections.push(formatDMChannelPretty(output, relative))
   }
 
   return sections.join('\n' + dim('─'.repeat(60)) + '\n\n')
 }
 
-function formatDMChannelPretty(output: DMOutput): string {
+function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
   const { channel, messages } = output
   const lines: string[] = []
 
@@ -106,7 +124,7 @@ function formatDMChannelPretty(output: DMOutput): string {
     lines.push('')
 
     for (const msg of msgs) {
-      lines.push(formatMessagePretty(msg))
+      lines.push(formatMessagePretty(msg, relative))
     }
   }
 
@@ -119,8 +137,11 @@ function formatDMChannelPretty(output: DMOutput): string {
   return lines.join('\n')
 }
 
-function formatMessagePretty(msg: ProcessedMessage): string {
-  const time = dim(formatTime(msg.timestamp))
+function formatMessagePretty(msg: ProcessedMessage, relative: boolean): string {
+  const timeStr = relative
+    ? formatRelativeTime(msg.timestamp)
+    : formatTime(msg.timestamp)
+  const time = dim(timeStr)
   const user = userColor(msg.user)
 
   const lines: string[] = []
@@ -142,7 +163,7 @@ function formatMessagePretty(msg: ProcessedMessage): string {
   return lines.join('\n')
 }
 
-function formatPrettyNoColor(outputs: DMOutput[]): string {
+function formatPrettyNoColor(outputs: DMOutput[], relative: boolean): string {
   const sections: string[] = []
 
   for (const output of outputs) {
@@ -159,8 +180,10 @@ function formatPrettyNoColor(outputs: DMOutput[]): string {
       lines.push('')
 
       for (const msg of msgs) {
-        const time = formatTime(msg.timestamp)
-        lines.push(`  [${time}] ${msg.user}`)
+        const timeStr = relative
+          ? formatRelativeTime(msg.timestamp)
+          : formatTime(msg.timestamp)
+        lines.push(`  [${timeStr}] ${msg.user}`)
         const indentedText = msg.text
           .split('\n')
           .map((line) => `    ${line}`)
@@ -193,7 +216,7 @@ function groupByDate(
   )
 
   for (const msg of sorted) {
-    const date = formatDate(msg.timestamp)
+    const date = getDateGroupLabel(msg.timestamp)
     if (!groups.has(date)) {
       groups.set(date, [])
     }
@@ -201,31 +224,4 @@ function groupByDate(
   }
 
   return groups
-}
-
-function formatDate(date: Date): string {
-  const today = new Date()
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-
-  if (date.toDateString() === today.toDateString()) {
-    return 'Today'
-  }
-  if (date.toDateString() === yesterday.toDateString()) {
-    return 'Yesterday'
-  }
-
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
-  })
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
 }

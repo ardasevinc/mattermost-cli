@@ -19,6 +19,7 @@ program
   .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
   .option('--json', 'Output as JSON', false)
   .option('--no-color', 'Disable colored output')
+  .option('-r, --relative', 'Show times as relative (e.g., "2 days ago")', false)
 
 // Resolve config from CLI options → env vars → config file
 async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string }> {
@@ -115,6 +116,7 @@ program
         token: config.token,
         json: opts.json,
         color: opts.color,
+        relative: opts.relative,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -140,6 +142,7 @@ program
         token: config.token,
         json: globalOpts.json,
         color: globalOpts.color,
+        relative: globalOpts.relative,
         user: cmdOpts.user || [],
         limit: parseInt(cmdOpts.limit, 10),
         since: cmdOpts.since,
