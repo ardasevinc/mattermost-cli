@@ -19,6 +19,8 @@ src/
 │   ├── patterns.ts       # Secret detection regex patterns
 │   ├── secrets.ts        # Detection + masking logic
 │   └── index.ts          # Pipeline entry (currently just secrets)
+├── utils/
+│   └── date.ts           # Date formatting (DD/MM, relative time)
 └── formatters/
     ├── json.ts           # JSON output
     ├── markdown.ts       # Markdown output (for pipes/LLMs)
@@ -118,5 +120,6 @@ token = "your-personal-access-token"
 | Config loading | `src/config.ts` | `loadConfigFile()` |
 | List channels | `src/cli.ts` | `listChannels()` |
 | Fetch DMs | `src/cli.ts` | `fetchDMs()` |
+| Date formatting | `src/utils/date.ts` | `formatDate()`, `formatRelativeTime()` |
 | Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
 | API requests | `src/api/client.ts` | `MattermostClient.request()` |
