@@ -2,9 +2,21 @@
 // Mattermost CLI - Entry point
 
 import { Command } from 'commander'
+import { isAgent } from 'is-ai-agent'
 import { listChannels, fetchDMs } from './cli'
 import { loadConfigFile, getConfigPath, initConfigFile, getConfigStatus } from './config'
 import pkg from '../package.json'
+
+// Default to relative time when running under AI agents (Claude Code, Gemini CLI, etc.)
+const isRunningUnderAgent = isAgent() !== null
+
+// Resolve relative option: explicit flag > agent detection > false
+function resolveRelative(opts: { relative?: boolean }): boolean {
+  // If user explicitly set --relative or --no-relative, use that
+  if (opts.relative !== undefined) return opts.relative
+  // Otherwise, default based on agent detection
+  return isRunningUnderAgent
+}
 
 const program = new Command()
 
@@ -19,7 +31,8 @@ program
   .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
   .option('--json', 'Output as JSON', false)
   .option('--no-color', 'Disable colored output')
-  .option('-r, --relative', 'Show times as relative (e.g., "2 days ago")', false)
+  .option('-r, --relative', 'Show times as relative (e.g., "2 days ago"); auto-enabled under AI agents')
+  .option('--no-relative', 'Show absolute dates/times')
 
 // Resolve config from CLI options → env vars → config file
 async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string }> {
@@ -116,7 +129,7 @@ program
         token: config.token,
         json: opts.json,
         color: opts.color,
-        relative: opts.relative,
+        relative: resolveRelative(opts),
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -142,7 +155,7 @@ program
         token: config.token,
         json: globalOpts.json,
         color: globalOpts.color,
-        relative: globalOpts.relative,
+        relative: resolveRelative(globalOpts),
         user: cmdOpts.user || [],
         limit: parseInt(cmdOpts.limit, 10),
         since: cmdOpts.since,

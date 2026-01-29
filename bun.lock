@@ -6,6 +6,7 @@
       "name": "mattermost-api",
       "dependencies": {
         "commander": "^14.0.2",
+        "is-ai-agent": "^0.1.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -23,6 +24,8 @@
     "bun-types": ["bun-types@1.3.7", "", { "dependencies": { "@types/node": "*" } }, "sha512-qyschsA03Qz+gou+apt6HNl6HnI+sJJLL4wLDke4iugsE6584CMupOtTY1n+2YC9nGVrEKUlTs99jjRLKgWnjQ=="],
 
     "commander": ["commander@14.0.2", "", {}, "sha512-TywoWNNRbhoD0BXs1P3ZEScW8W5iKrnbithIl0YH+uCmBd0QpPOA8yc82DS3BIE5Ma6FnBVUsJ7wVUDz4dvOWQ=="],
+
+    "is-ai-agent": ["is-ai-agent@0.1.0", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-Qo2fUHEm3TF3z95mcLDyei/vdmyxgsuWmn5vt5gw2C8ClintP8NmHuSg0ujcnxvo6l9SELi10xR4X2yEWJzkZQ=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
