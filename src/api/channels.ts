@@ -1,6 +1,6 @@
 // Channel fetching with DM filtering
 
-import type { Channel, User } from '../types'
+import type { Channel } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
 
@@ -31,18 +31,16 @@ export async function getDMChannelWithUser(
   userId: string
 ): Promise<Channel | null> {
   const me = await getMe()
-  const client = getClient()
+  const channels = await getMyDMChannels()
 
-  try {
-    // Mattermost DM channel names are the two user IDs sorted and joined
-    const channel = await client.get<Channel>(
-      `/channels/direct/${me.id}/${userId}`
-    )
-    return channel
-  } catch {
-    // Don't create channel - this is a read-only operation
-    return null
-  }
+  // Find the DM channel with this user by checking the channel name
+  // DM channel names are "{userId1}__{userId2}" sorted alphabetically
+  return (
+    channels.find((ch) => {
+      const otherId = getOtherUserIdFromDMChannel(ch, me.id)
+      return otherId === userId
+    }) ?? null
+  )
 }
 
 export async function getDMChannelByUsername(
