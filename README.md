@@ -72,13 +72,6 @@ export MM_URL="https://mattermost.example.com"
 export MM_TOKEN="your-personal-access-token"
 ```
 
-Or use a `.env` file (Bun auto-loads it):
-
-```bash
-MM_URL=https://mattermost.example.com
-MM_TOKEN=your-personal-access-token
-```
-
 ### Option 3: CLI flags
 
 ```bash
