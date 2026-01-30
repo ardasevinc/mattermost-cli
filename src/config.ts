@@ -2,7 +2,8 @@
 
 import { homedir } from 'os'
 import { join } from 'path'
-import { stat, mkdir, writeFile } from 'fs/promises'
+import { stat, mkdir, writeFile, readFile, access } from 'fs/promises'
+import { parse as parseTOML } from 'smol-toml'
 
 export interface FileConfig {
   url?: string
@@ -25,10 +26,17 @@ async function hasInsecurePermissions(): Promise<boolean> {
   }
 }
 
-export async function loadConfigFile(): Promise<FileConfig> {
-  const file = Bun.file(CONFIG_PATH)
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
 
-  if (!(await file.exists())) {
+export async function loadConfigFile(): Promise<FileConfig> {
+  if (!(await fileExists(CONFIG_PATH))) {
     return {}
   }
 
@@ -41,8 +49,8 @@ export async function loadConfigFile(): Promise<FileConfig> {
   }
 
   try {
-    const content = await file.text()
-    const parsed = Bun.TOML.parse(content)
+    const content = await readFile(CONFIG_PATH, 'utf-8')
+    const parsed = parseTOML(content)
 
     // Trim and treat empty strings as undefined
     const url = typeof parsed.url === 'string' ? parsed.url.trim() : undefined
@@ -77,8 +85,7 @@ export async function initConfigFile(): Promise<{ created: boolean; path: string
   // Create directory if it doesn't exist
   await mkdir(dir, { recursive: true })
 
-  const file = Bun.file(CONFIG_PATH)
-  if (await file.exists()) {
+  if (await fileExists(CONFIG_PATH)) {
     return { created: false, path: CONFIG_PATH }
   }
 
@@ -96,8 +103,7 @@ export async function getConfigStatus(): Promise<{
   hasToken: boolean
   insecurePerms: boolean
 }> {
-  const file = Bun.file(CONFIG_PATH)
-  const exists = await file.exists()
+  const exists = await fileExists(CONFIG_PATH)
 
   if (!exists) {
     return { exists: false, path: CONFIG_PATH, hasUrl: false, hasToken: false, insecurePerms: false }

@@ -7,6 +7,7 @@
       "dependencies": {
         "commander": "^14.0.2",
         "is-ai-agent": "^0.1.0",
+        "smol-toml": "^1.6.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -26,6 +27,8 @@
     "commander": ["commander@14.0.2", "", {}, "sha512-TywoWNNRbhoD0BXs1P3ZEScW8W5iKrnbithIl0YH+uCmBd0QpPOA8yc82DS3BIE5Ma6FnBVUsJ7wVUDz4dvOWQ=="],
 
     "is-ai-agent": ["is-ai-agent@0.1.0", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-Qo2fUHEm3TF3z95mcLDyei/vdmyxgsuWmn5vt5gw2C8ClintP8NmHuSg0ujcnxvo6l9SELi10xR4X2yEWJzkZQ=="],
+
+    "smol-toml": ["smol-toml@1.6.0", "", {}, "sha512-4zemZi0HvTnYwLfrpk/CF9LOd9Lt87kAt50GnqhMpyF9U3poDAP2+iukq2bZsO/ufegbYehBkqINbsWxj4l4cw=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 

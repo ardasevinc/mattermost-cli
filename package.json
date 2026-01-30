@@ -1,6 +1,6 @@
 {
   "name": "mattermost-cli",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "CLI tool to fetch and display Mattermost direct messages with secret redaction",
   "author": "Arda Sevinc <arda@ardasevinc.com>",
   "license": "MIT",
@@ -9,19 +9,25 @@
     "url": "https://github.com/ardasevinc/mattermost-cli"
   },
   "keywords": ["mattermost", "cli", "dm", "messages", "bun", "secret-redaction"],
-  "files": ["README.md"],
-  "module": "src/index.ts",
+  "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "mm": "src/index.ts"
+    "mm": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "engines": {
+    "node": ">=18.0.0",
     "bun": ">=1.0.0"
   },
   "scripts": {
     "start": "bun src/index.ts",
     "mm": "bun src/index.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "build": "bun build src/index.ts --target node --outfile dist/index.js --minify && node -e \"const fs=require('fs');const f='dist/index.js';const c=fs.readFileSync(f,'utf8').replace(/^#!.*\\n/,'');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\" && (chmod +x dist/index.js || true)",
+    "prepublishOnly": "bun run build"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -31,6 +37,7 @@
   },
   "dependencies": {
     "commander": "^14.0.2",
-    "is-ai-agent": "^0.1.0"
+    "is-ai-agent": "^0.1.0",
+    "smol-toml": "^1.6.0"
   }
 }

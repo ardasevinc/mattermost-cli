@@ -11,10 +11,34 @@ A CLI tool to fetch and display Mattermost direct messages with automatic secret
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.0.0
+- Node.js >= 18.0.0 or [Bun](https://bun.sh) >= 1.0.0
 - Mattermost personal access token
 
 ## Installation
+
+```bash
+# npm
+npm install -g mattermost-cli
+
+# yarn
+yarn global add mattermost-cli
+
+# pnpm
+pnpm add -g mattermost-cli
+
+# bun
+bun add -g mattermost-cli
+```
+
+Or run without installing:
+
+```bash
+npx mattermost-cli
+pnpx mattermost-cli
+bunx mattermost-cli
+```
+
+### From source
 
 ```bash
 git clone https://github.com/ardasevinc/mattermost-cli
@@ -126,6 +150,17 @@ This tool automatically detects and redacts secrets in message content:
 Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while preventing exposure.
 
 **Note:** Redaction happens on display. Original messages are not modified on the server.
+
+## Contributing
+
+Development requires [Bun](https://bun.sh) (the published package works with any runtime).
+
+```bash
+bun install     # Install dependencies
+bun test        # Run tests
+bun run build   # Build for npm
+bun run mm      # Run CLI from source
+```
 
 ## License
 
