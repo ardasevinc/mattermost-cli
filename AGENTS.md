@@ -66,7 +66,7 @@ cli.ts:146 calls preprocess(post.message)
 
 ## Code Conventions
 
-- **Bun, not Node** - use `bun test`, `bun run`, Bun APIs
+- **Bun for dev** - use `bun test`, `bun run`; production code uses cross-runtime APIs
 - **No dotenv** - Bun auto-loads `.env`
 - **Types in types.ts** - keep interfaces centralized
 - **Singleton client** - use `getClient()` after `initClient()`
