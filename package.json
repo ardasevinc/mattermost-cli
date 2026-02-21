@@ -1,6 +1,6 @@
 {
   "name": "mattermost-cli",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "CLI tool to fetch and display Mattermost direct messages with secret redaction",
   "author": "Arda Sevinc <arda@ardasevinc.com>",
   "license": "MIT",
