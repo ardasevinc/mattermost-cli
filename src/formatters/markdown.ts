@@ -53,25 +53,36 @@ function formatDMChannel(output: DMOutput, relative: boolean): string {
   return lines.join('\n')
 }
 
-function formatMessage(msg: ProcessedMessage, relative: boolean): string {
+function formatMessage(msg: ProcessedMessage, relative: boolean, depth: number = 0): string {
   const timeStr = relative
     ? formatRelativeTime(msg.timestamp)
     : formatTime(msg.timestamp)
   const lines: string[] = []
+  const prefix = depth > 0 ? '> '.repeat(depth) : ''
 
-  lines.push(`**${msg.user}** (${timeStr}):`)
+  lines.push(`${prefix}**${msg.user}** (${timeStr}):`)
 
   // Quote the message content
+  const quotePrefix = prefix + '> '
   const quotedText = msg.text
     .split('\n')
-    .map((line) => `> ${line}`)
+    .map((line) => `${quotePrefix}${line}`)
     .join('\n')
 
   lines.push(quotedText)
 
   // Add file attachments if any
   if (msg.files.length > 0) {
-    lines.push(`> _Attachments: ${msg.files.join(', ')}_`)
+    lines.push(`${quotePrefix}_Attachments: ${msg.files.join(', ')}_`)
+  }
+
+  // Render replies
+  if (msg.replies && msg.replies.length > 0) {
+    lines.push('')
+    for (const reply of msg.replies) {
+      lines.push(formatMessage(reply, relative, depth + 1))
+      lines.push('')
+    }
   }
 
   return lines.join('\n')

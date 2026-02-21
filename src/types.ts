@@ -33,6 +33,8 @@ export interface Post {
   type: string
   props: Record<string, unknown>
   hashtags: string
+  root_id: string           // empty = root post, non-empty = reply to this post
+  reply_count: number       // number of replies (root posts only)
   file_ids: string[]
   pending_post_id: string
   metadata?: PostMetadata
@@ -74,6 +76,7 @@ export interface CLIOptions {
   color: boolean
   relative: boolean
   redact: boolean
+  threads: boolean
 }
 
 export interface DMsOptions extends CLIOptions {
@@ -92,6 +95,9 @@ export interface ProcessedMessage {
   text: string
   timestamp: Date
   files: string[]
+  rootId?: string
+  replyCount?: number
+  replies?: ProcessedMessage[]
 }
 
 export interface ProcessedChannel {

@@ -3,7 +3,7 @@
 
 import { Command } from 'commander'
 import { isAgent } from 'is-ai-agent'
-import { listChannels, fetchDMs } from './cli'
+import { listChannels, fetchDMs, fetchThread } from './cli'
 import { loadConfigFile, getConfigPath, initConfigFile, getConfigStatus } from './config'
 import pkg from '../package.json'
 
@@ -52,6 +52,8 @@ program
   .option('--no-relative', 'Show absolute dates/times')
   .option('--redact', 'Enable secret redaction (default)')
   .option('--no-redact', 'Disable secret redaction')
+  .option('--threads', 'Show thread structure (default)')
+  .option('--no-threads', 'Flatten thread replies')
 
 // Resolve config from CLI options → env vars → config file
 async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string; fileConfig: { redact?: boolean } }> {
@@ -148,6 +150,7 @@ program
         color: opts.color,
         relative: resolveRelative(opts),
         redact: resolveRedact(opts, config.fileConfig),
+        threads: opts.threads ?? true,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -175,10 +178,36 @@ program
         color: globalOpts.color,
         relative: resolveRelative(globalOpts),
         redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
         user: cmdOpts.user || [],
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+// Fetch a specific thread
+program
+  .command('thread <postId>')
+  .description('Fetch and display a specific thread')
+  .action(async (postId) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await fetchThread({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: true,
+        postId,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)

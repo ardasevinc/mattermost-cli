@@ -137,7 +137,7 @@ function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
   return lines.join('\n')
 }
 
-function formatMessagePretty(msg: ProcessedMessage, relative: boolean): string {
+function formatMessagePretty(msg: ProcessedMessage, relative: boolean, indent: string = '  '): string {
   const timeStr = relative
     ? formatRelativeTime(msg.timestamp)
     : formatTime(msg.timestamp)
@@ -145,21 +145,30 @@ function formatMessagePretty(msg: ProcessedMessage, relative: boolean): string {
   const user = userColor(msg.user)
 
   const lines: string[] = []
-  lines.push(`  ${time} ${bold(user)}`)
+  lines.push(`${indent}${time} ${bold(user)}`)
 
   // Indent message content
+  const textIndent = indent + '  '
   const indentedText = msg.text
     .split('\n')
-    .map((line) => `    ${line}`)
+    .map((line) => `${textIndent}${line}`)
     .join('\n')
   lines.push(indentedText)
 
   // File attachments
   if (msg.files.length > 0) {
-    lines.push(dim(`    📎 ${msg.files.join(', ')}`))
+    lines.push(dim(`${textIndent}📎 ${msg.files.join(', ')}`))
   }
 
   lines.push('')
+
+  // Render replies
+  if (msg.replies && msg.replies.length > 0) {
+    for (const reply of msg.replies) {
+      lines.push(formatMessagePretty(reply, relative, indent + '  ↳ '))
+    }
+  }
+
   return lines.join('\n')
 }
 
@@ -180,19 +189,7 @@ function formatPrettyNoColor(outputs: DMOutput[], relative: boolean): string {
       lines.push('')
 
       for (const msg of msgs) {
-        const timeStr = relative
-          ? formatRelativeTime(msg.timestamp)
-          : formatTime(msg.timestamp)
-        lines.push(`  [${timeStr}] ${msg.user}`)
-        const indentedText = msg.text
-          .split('\n')
-          .map((line) => `    ${line}`)
-          .join('\n')
-        lines.push(indentedText)
-        if (msg.files.length > 0) {
-          lines.push(`    Attachments: ${msg.files.join(', ')}`)
-        }
-        lines.push('')
+        formatMessageNoColor(msg, relative, lines, '  ')
       }
     }
 
@@ -204,6 +201,29 @@ function formatPrettyNoColor(outputs: DMOutput[], relative: boolean): string {
   }
 
   return sections.join('\n' + '='.repeat(60) + '\n\n')
+}
+
+function formatMessageNoColor(msg: ProcessedMessage, relative: boolean, lines: string[], indent: string): void {
+  const timeStr = relative
+    ? formatRelativeTime(msg.timestamp)
+    : formatTime(msg.timestamp)
+  lines.push(`${indent}[${timeStr}] ${msg.user}`)
+  const textIndent = indent + '  '
+  const indentedText = msg.text
+    .split('\n')
+    .map((line) => `${textIndent}${line}`)
+    .join('\n')
+  lines.push(indentedText)
+  if (msg.files.length > 0) {
+    lines.push(`${textIndent}Attachments: ${msg.files.join(', ')}`)
+  }
+  lines.push('')
+
+  if (msg.replies && msg.replies.length > 0) {
+    for (const reply of msg.replies) {
+      formatMessageNoColor(reply, relative, lines, indent + '  > ')
+    }
+  }
 }
 
 function groupByDate(

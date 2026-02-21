@@ -2,6 +2,7 @@
 
 import type {
   Channel,
+  CLIOptions,
   DMOutput,
   DMsOptions,
   Post,
@@ -14,6 +15,7 @@ import {
   getMyDMChannels,
   getOtherUserIdFromDMChannel,
   getAllChannelPosts,
+  getPostThread,
   parseDuration,
   getMe,
   getUser,
@@ -24,6 +26,35 @@ import {
 import { preprocess } from './preprocessing'
 import { formatJSON, formatMarkdown, formatPretty } from './formatters'
 import { formatDate, formatRelativeTime } from './utils/date'
+
+// Group flat messages into threaded structure
+function groupIntoThreads(messages: ProcessedMessage[]): ProcessedMessage[] {
+  const rootMap = new Map<string, ProcessedMessage>()
+  const roots: ProcessedMessage[] = []
+
+  // First pass: identify root messages
+  for (const msg of messages) {
+    if (!msg.rootId) {
+      rootMap.set(msg.id, { ...msg, replies: [] })
+      roots.push(rootMap.get(msg.id)!)
+    }
+  }
+
+  // Second pass: attach replies to their roots
+  for (const msg of messages) {
+    if (msg.rootId) {
+      const root = rootMap.get(msg.rootId)
+      if (root) {
+        root.replies!.push(msg)
+      } else {
+        // Root not in current fetch window - show reply as standalone
+        roots.push(msg)
+      }
+    }
+  }
+
+  return roots
+}
 
 // List all DM channels
 export async function listChannels(options: {
@@ -167,6 +198,8 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
         text,
         timestamp: new Date(post.create_at),
         files: post.file_ids || [],
+        rootId: post.root_id || undefined,
+        replyCount: post.reply_count || undefined,
       })
     }
 
@@ -178,7 +211,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
 
     outputs.push({
       channel: processedChannel,
-      messages,
+      messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions: allRedactions,
     })
   }
@@ -189,6 +222,68 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   }
 
   // Format output
+  formatOutput(outputs, options)
+}
+
+// Fetch and display a specific thread
+export async function fetchThread(options: CLIOptions & { postId: string }): Promise<void> {
+  initClient(options.url, options.token)
+
+  const me = await getMe()
+  const posts = await getPostThread(options.postId)
+
+  if (posts.length === 0) {
+    console.error('Thread not found or empty')
+    process.exit(1)
+  }
+
+  // Get all user IDs from posts and fetch them
+  const postUserIds = [...new Set(posts.map((p) => p.user_id))]
+  await getUsersByIds(postUserIds)
+
+  const allRedactions: Redaction[] = []
+  const messages: ProcessedMessage[] = []
+
+  for (const post of posts) {
+    const postUser = await getUser(post.user_id)
+    const { text, redactions } = options.redact
+      ? preprocess(post.message)
+      : { text: post.message, redactions: [] }
+
+    allRedactions.push(...redactions)
+
+    messages.push({
+      id: post.id,
+      user: postUser.id === me.id ? 'you' : postUser.username,
+      userId: post.user_id,
+      text,
+      timestamp: new Date(post.create_at),
+      files: post.file_ids || [],
+      rootId: post.root_id || undefined,
+      replyCount: post.reply_count || undefined,
+    })
+  }
+
+  // Find the root post's channel to get the other user
+  const rootPost = posts.find((p) => !p.root_id)
+  const channel = rootPost ? await getChannel(rootPost.channel_id) : null
+  const otherUserId = channel ? getOtherUserIdFromDMChannel(channel, me.id) : null
+  const otherUser = otherUserId ? await getUser(otherUserId) : null
+
+  const outputs: DMOutput[] = [{
+    channel: {
+      id: rootPost?.channel_id || '',
+      otherUser: otherUser?.username || 'unknown',
+      otherUserId: otherUserId || 'unknown',
+    },
+    messages: groupIntoThreads(messages),
+    redactions: allRedactions,
+  }]
+
+  formatOutput(outputs, options)
+}
+
+function formatOutput(outputs: DMOutput[], options: CLIOptions): void {
   if (options.json) {
     console.log(formatJSON(outputs))
   } else if (process.stdout.isTTY && options.color) {

@@ -73,6 +73,16 @@ export async function getAllChannelPosts(
   return allPosts.slice(0, limit)
 }
 
+// Fetch a full thread (root + all replies)
+export async function getPostThread(postId: string): Promise<Post[]> {
+  const client = getClient()
+  const response = await client.get<PostsResponse>(`/posts/${postId}/thread`)
+
+  return response.order
+    .map((id) => response.posts[id])
+    .filter((post) => post.delete_at === 0)
+}
+
 // Parse duration string to milliseconds
 // Supports: "24h", "7d", "30d", "1w", "2m" (months)
 export function parseDuration(duration: string): number {
