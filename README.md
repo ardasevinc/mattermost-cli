@@ -159,6 +159,7 @@ mm unread --peek 5
 ```bash
 mm watch general
 mm watch dev --team myteam
+mm watch --dm alice
 ```
 
 ### Manage configuration
@@ -217,8 +218,9 @@ Unread:
   --peek <number>         Fetch N recent unread messages per channel
 
 Watch:
-  watch <channel>         Live tail a channel (Ctrl+C to stop)
+  watch [channel]         Live tail a channel (Ctrl+C to stop)
   --team <name>           Team name (required if multiple teams)
+  --dm <username>         Watch a DM conversation instead of a channel
 
 Thread:
   thread <postId>         Fetch and display one thread

@@ -678,7 +678,7 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
 }
 
 export async function watchChannel(
-  options: CLIOptions & { channel: string; team?: string },
+  options: CLIOptions & { channel?: string; team?: string; dm?: string },
 ): Promise<void> {
   initClient(options.url, options.token)
 
@@ -688,10 +688,25 @@ export async function watchChannel(
 
   printRedactionWarning(options.redact)
 
-  const teamId = await resolveTeamId(options.team)
-  const channel = await getChannelByName(teamId, options.channel)
+  if (options.channel && options.dm) {
+    console.error('Error: Use either a channel target or --dm <username>, not both.')
+    process.exit(1)
+  }
+  if (!options.channel && !options.dm) {
+    console.error('Error: Provide a channel name or use --dm <username>.')
+    process.exit(1)
+  }
 
-  console.log(`Watching #${channel.name} (Ctrl+C to stop)`)
+  const channel = options.dm
+    ? await getDMChannelByUsername(options.dm)
+    : await getChannelByName(await resolveTeamId(options.team), options.channel as string)
+  if (!channel) {
+    console.error(`Error: DM channel with @${options.dm} not found.`)
+    process.exit(1)
+  }
+
+  const watchTarget = channel.type === 'D' ? `DMs with @${options.dm}` : `#${channel.name}`
+  console.log(`Watching ${watchTarget} (Ctrl+C to stop)`)
 
   await new Promise<void>((resolve, reject) => {
     let closed = false

@@ -326,9 +326,10 @@ program
   })
 
 program
-  .command('watch <channel>')
-  .description('Watch a channel in real-time')
+  .command('watch [channel]')
+  .description('Watch a channel or DM in real-time')
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .option('--dm <username>', 'Watch direct messages with a username')
   .action(async (channel, cmdOpts) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
@@ -344,6 +345,7 @@ program
         threads: globalOpts.threads ?? true,
         team: cmdOpts.team,
         channel,
+        dm: cmdOpts.dm,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
