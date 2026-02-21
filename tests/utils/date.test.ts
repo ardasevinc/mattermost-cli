@@ -5,7 +5,7 @@ import {
   formatTime,
   formatRelativeTime,
   getDateGroupLabel,
-} from './date'
+} from '../../src/utils/date'
 
 describe('date utilities', () => {
   describe('formatDate', () => {

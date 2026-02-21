@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { parseDuration } from './posts'
+import { parseDuration } from '../../src/api/posts'
 
 describe('parseDuration', () => {
   test('parses hours', () => {

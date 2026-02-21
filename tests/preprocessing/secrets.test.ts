@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { detectSecrets, maskSecret, redactSecrets } from './secrets'
+import { detectSecrets, maskSecret, redactSecrets } from '../../src/preprocessing/secrets'
 
 describe('detectSecrets', () => {
   test('detects GitHub tokens', () => {
@@ -7,19 +7,21 @@ describe('detectSecrets', () => {
     const token = 'ghp_abcdefghijklmnopqrstuvwxyz1234567890'
     const text = `My token is ${token}`
     const secrets = detectSecrets(text)
+    const first = secrets.at(0)
 
     expect(secrets.length).toBe(1)
-    expect(secrets[0].type).toBe('github_token')
-    expect(secrets[0].value).toBe(token)
+    expect(first?.type).toBe('github_token')
+    expect(first?.value).toBe(token)
   })
 
   test('detects AWS access keys', () => {
     const text = 'AWS key: AKIAIOSFODNN7EXAMPLE'
     const secrets = detectSecrets(text)
+    const first = secrets.at(0)
 
     expect(secrets.length).toBe(1)
-    expect(secrets[0].type).toBe('aws_access_key')
-    expect(secrets[0].value).toBe('AKIAIOSFODNN7EXAMPLE')
+    expect(first?.type).toBe('aws_access_key')
+    expect(first?.value).toBe('AKIAIOSFODNN7EXAMPLE')
   })
 
   test('detects JWTs', () => {
@@ -43,6 +45,31 @@ describe('detectSecrets', () => {
     const secrets = detectSecrets(text)
 
     expect(secrets.some((s) => s.type === 'slack_token')).toBe(true)
+  })
+
+  test('detects newly added provider token patterns', () => {
+    const githubPat = 'github_pat_' + 'a'.repeat(22)
+    const openaiProject = 'sk-proj-' + 'A'.repeat(32)
+    const anthropic = 'sk-ant-' + 'b'.repeat(32)
+    const google = 'AIza' + 'c'.repeat(35)
+    const text = `${githubPat} ${openaiProject} ${anthropic} ${google}`
+    const secrets = detectSecrets(text)
+    const types = new Set(secrets.map((s) => s.type))
+
+    expect(types.has('github_fine_grained_token')).toBe(true)
+    expect(types.has('openai_project_key')).toBe(true)
+    expect(types.has('anthropic_key')).toBe(true)
+    expect(types.has('google_api_key')).toBe(true)
+  })
+
+  test('uses captured-group start position for labeled tokens', () => {
+    const token = 'abcdefghijklmnopqrstuvwxyz123456'
+    const text = `Authorization: Bearer ${token}`
+    const secrets = detectSecrets(text)
+    const bearer = secrets.find((s) => s.type === 'bearer_token')
+
+    expect(bearer?.start).toBe(text.indexOf(token))
+    expect(bearer?.value).toBe(token)
   })
 
   test('detects multiple secrets', () => {
@@ -98,7 +125,7 @@ describe('redactSecrets', () => {
     expect(redacted).toContain('ghp_')
     expect(redacted).toContain('...')
     expect(redactions.length).toBe(1)
-    expect(redactions[0].type).toBe('github_token')
+    expect(redactions[0]?.type).toBe('github_token')
   })
 
   test('preserves non-secret text', () => {
