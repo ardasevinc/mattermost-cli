@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { MessageOutput, ProcessedChannel } from '../../src/types'
-import { formatPretty } from '../../src/formatters/pretty'
 import { formatMarkdown } from '../../src/formatters/markdown'
+import { formatPretty } from '../../src/formatters/pretty'
+import type { MessageOutput, ProcessedChannel } from '../../src/types'
 
 function makeOutput(channel: ProcessedChannel): MessageOutput {
   return {

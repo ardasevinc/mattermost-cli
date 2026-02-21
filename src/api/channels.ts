@@ -51,6 +51,10 @@ export async function getChannel(channelId: string): Promise<Channel> {
   return client.get<Channel>(`/channels/${channelId}`)
 }
 
+export function normalizeChannelName(channelName: string): string {
+  return channelName.replace(/^#/, '')
+}
+
 export async function getMyTeams(): Promise<Team[]> {
   const me = await getMe()
   const client = getClient()
@@ -59,39 +63,47 @@ export async function getMyTeams(): Promise<Team[]> {
 
 export async function getChannelByName(teamId: string, channelName: string): Promise<Channel> {
   const client = getClient()
-  // Strip leading # if present
-  const name = channelName.replace(/^#/, '')
+  const name = normalizeChannelName(channelName)
   return client.get<Channel>(`/teams/${teamId}/channels/name/${name}`)
 }
 
-export async function resolveTeamId(teamName?: string): Promise<string> {
-  const teams = await getMyTeams()
-
+export function resolveTeamIdFromList(teams: Team[], teamName?: string): string {
   if (teams.length === 0) {
-    console.error('Error: You are not a member of any teams.')
-    process.exit(1)
+    throw new Error('You are not a member of any teams.')
   }
 
   if (teamName) {
     const team = teams.find((t) => t.name === teamName || t.display_name === teamName)
     if (!team) {
-      console.error(
-        `Error: Team "${teamName}" not found. Your teams: ${teams.map((t) => t.name).join(', ')}`,
+      throw new Error(
+        `Team "${teamName}" not found. Your teams: ${teams.map((t) => t.name).join(', ')}`,
       )
-      process.exit(1)
     }
     return team.id
   }
 
   if (teams.length === 1) {
-    return teams[0]?.id as string
+    const [team] = teams
+    if (!team) throw new Error('You are not a member of any teams.')
+    return team.id
   }
 
-  console.error(
-    `Error: You belong to multiple teams. Use --team to specify:\n` +
+  throw new Error(
+    `You belong to multiple teams. Use --team to specify:\n` +
       teams.map((t) => `  ${t.name} (${t.display_name})`).join('\n'),
   )
-  process.exit(1)
+}
+
+export async function resolveTeamId(teamName?: string): Promise<string> {
+  const teams = await getMyTeams()
+
+  try {
+    return resolveTeamIdFromList(teams, teamName)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`Error: ${message}`)
+    process.exit(1)
+  }
 }
 
 // Extract the other user's ID from a DM channel name
