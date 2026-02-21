@@ -63,6 +63,7 @@ Then edit the file:
 # ~/.config/mattermost-cli/config.toml
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
+# redact = false  # Uncomment to disable secret redaction
 ```
 
 ### Option 2: Environment variables
@@ -121,6 +122,7 @@ Global:
   --url <url>             Mattermost server URL (or MM_URL env)
   --json                  Output as JSON
   --no-color              Disable colored output
+  --no-redact             Disable secret redaction (or MM_REDACT=false env)
 
 DMs:
   -u, --user <username>   Filter by username (repeatable)

@@ -32,6 +32,7 @@ export async function listChannels(options: {
   json: boolean
   color: boolean
   relative: boolean
+  redact: boolean
 }): Promise<void> {
   initClient(options.url, options.token)
 
@@ -149,7 +150,9 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
 
     for (const post of posts) {
       const postUser = await getUser(post.user_id)
-      const { text, redactions } = preprocess(post.message)
+      const { text, redactions } = options.redact
+        ? preprocess(post.message)
+        : { text: post.message, redactions: [] }
 
       allRedactions.push(...redactions)
 

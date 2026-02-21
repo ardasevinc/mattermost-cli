@@ -8,6 +8,7 @@ import { parse as parseTOML } from 'smol-toml'
 export interface FileConfig {
   url?: string
   token?: string
+  redact?: boolean
 }
 
 const CONFIG_PATH = join(homedir(), '.config', 'mattermost-cli', 'config.toml')
@@ -55,10 +56,12 @@ export async function loadConfigFile(): Promise<FileConfig> {
     // Trim and treat empty strings as undefined
     const url = typeof parsed.url === 'string' ? parsed.url.trim() : undefined
     const token = typeof parsed.token === 'string' ? parsed.token.trim() : undefined
+    const redact = typeof parsed.redact === 'boolean' ? parsed.redact : undefined
 
     return {
       url: url || undefined,
       token: token || undefined,
+      redact,
     }
   } catch {
     console.warn(`Warning: Could not parse config at ${CONFIG_PATH}`)

@@ -18,6 +18,14 @@ function resolveRelative(opts: { relative?: boolean }): boolean {
   return isRunningUnderAgent
 }
 
+// Resolve redact option: CLI flag > env var > config file > default true
+function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolean }): boolean {
+  if (opts.redact !== undefined) return opts.redact
+  if (process.env.MM_REDACT !== undefined) return process.env.MM_REDACT !== 'false'
+  if (fileConfig.redact !== undefined) return fileConfig.redact
+  return true // secure by default
+}
+
 const program = new Command()
 
 program
@@ -33,19 +41,18 @@ program
   .option('--no-color', 'Disable colored output')
   .option('-r, --relative', 'Show times as relative (e.g., "2 days ago"); auto-enabled under AI agents')
   .option('--no-relative', 'Show absolute dates/times')
+  .option('--no-redact', 'Disable secret redaction')
 
 // Resolve config from CLI options → env vars → config file
-async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string }> {
+async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string; fileConfig: { redact?: boolean } }> {
   // Check CLI args and env vars first
   let url = options.url || process.env.MM_URL
   let token = options.token || process.env.MM_TOKEN
 
-  // Only load config file if we're still missing values (avoids noisy warnings)
-  if (!url || !token) {
-    const fileConfig = await loadConfigFile()
-    url = url || fileConfig.url
-    token = token || fileConfig.token
-  }
+  // Load config file (needed for url/token fallback and redact option)
+  const fileConfig = await loadConfigFile()
+  url = url || fileConfig.url
+  token = token || fileConfig.token
 
   const configPath = getConfigPath()
 
@@ -68,7 +75,7 @@ async function resolveConfig(options: { url?: string; token?: string }): Promise
     process.exit(1)
   }
 
-  return { url, token }
+  return { url, token, fileConfig: { redact: fileConfig.redact } }
 }
 
 // Config management command
@@ -130,6 +137,7 @@ program
         json: opts.json,
         color: opts.color,
         relative: resolveRelative(opts),
+        redact: resolveRedact(opts, config.fileConfig),
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -156,6 +164,7 @@ program
         json: globalOpts.json,
         color: globalOpts.color,
         relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
         user: cmdOpts.user || [],
         limit: parseInt(cmdOpts.limit, 10),
         since: cmdOpts.since,

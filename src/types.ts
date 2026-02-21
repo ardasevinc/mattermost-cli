@@ -80,6 +80,7 @@ export interface CLIOptions {
   json: boolean
   color: boolean
   relative: boolean
+  redact: boolean
 }
 
 export interface DMsOptions extends CLIOptions {
