@@ -1,11 +1,15 @@
 # mattermost-cli
 
-A CLI tool to fetch and display Mattermost direct messages with automatic secret redaction for safe LLM processing.
+A CLI tool to fetch and display Mattermost messages (DMs, channels, threads) with automatic secret redaction for safe LLM processing.
 
 ## Features
 
 - Fetch DMs from all channels or filter by specific users
 - Fetch messages from public/private channels via `mm channel <name>`
+- Search messages with Mattermost query syntax via `mm search <query>`
+- Find mentions via `mm mentions` (supports configurable aliases)
+- Show unread summary via `mm unread` (optional `--peek`)
+- Watch channel live via `mm watch <channel>`
 - List all channel types via `mm channels` with `--type` filtering
 - Thread-aware output by default (`--no-threads` to flatten)
 - Fetch a single thread via `mm thread <postId>`
@@ -37,8 +41,6 @@ bun add -g mattermost-cli
 Or run without installing:
 
 ```bash
-npx mattermost-cli
-pnpx mattermost-cli
 bunx mattermost-cli
 ```
 
@@ -68,6 +70,7 @@ Then edit the file:
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
 # redact = false  # Uncomment to disable secret redaction
+# mention_names = ["Arda", "arda.sevinc"]  # Optional aliases for `mm mentions`
 ```
 
 ### Option 2: Environment variables
@@ -129,6 +132,35 @@ mm channel general
 mm channel #dev --team myteam
 ```
 
+### Search messages
+
+```bash
+mm search "deployment"
+mm search "from:alice in:general after:2026-02-01"
+```
+
+### Find mentions
+
+```bash
+mm mentions
+mm mentions --since 7d
+mm mentions --channel general --limit 20
+```
+
+### Show unread channels
+
+```bash
+mm unread
+mm unread --peek 5
+```
+
+### Watch a channel live
+
+```bash
+mm watch general
+mm watch dev --team myteam
+```
+
 ### Manage configuration
 
 ```bash
@@ -166,6 +198,27 @@ Channel:
   --team <name>           Team name (required if multiple teams)
   -l, --limit <number>    Max messages to fetch (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
+
+Search:
+  search <query>          Search messages (supports Mattermost search modifiers)
+  --team <name>           Team name (required if multiple teams)
+  -l, --limit <number>    Max results (default: 50)
+
+Mentions:
+  mentions                Find @username + configured alias mentions
+  --team <name>           Team name (required if multiple teams)
+  -l, --limit <number>    Max results (default: 50)
+  -s, --since <duration>  Time range filter (e.g. 24h, 7d)
+  --channel <name>        Restrict mentions to one channel
+
+Unread:
+  unread                  Show channels with unread messages
+  --team <name>           Team name (required if multiple teams)
+  --peek <number>         Fetch N recent unread messages per channel
+
+Watch:
+  watch <channel>         Live tail a channel (Ctrl+C to stop)
+  --team <name>           Team name (required if multiple teams)
 
 Thread:
   thread <postId>         Fetch and display one thread

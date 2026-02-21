@@ -7,21 +7,24 @@ Codebase guide for AI agents working on this project.
 ```
 src/
 ├── index.ts              # CLI entry point (commander setup)
-├── cli.ts                # Command handlers (listChannels, fetchDMs)
+├── cli.ts                # Command handlers (channels, dms, channel, thread, search, mentions, unread, watch)
 ├── config.ts             # TOML config file loading (~/.config/mattermost-cli/)
 ├── types.ts              # All TypeScript interfaces
 ├── api/
 │   ├── client.ts         # MattermostClient class (HTTP, auth, rate limits)
 │   ├── users.ts          # User fetching + caching
-│   ├── channels.ts       # Channel/DM fetching
-│   └── posts.ts          # Message fetching + pagination
+│   ├── channels.ts       # Channel/DM/team fetching + team resolution
+│   ├── posts.ts          # Message fetching + pagination + search
+│   └── websocket.ts      # Live post events for watch mode
 ├── preprocessing/
 │   ├── patterns.ts       # Secret detection regex patterns
 │   ├── secrets.ts        # Detection + masking logic
 │   └── index.ts          # Pipeline entry (currently just secrets)
 ├── utils/
+│   ├── colors.ts         # ANSI colors + username color hashing
 │   ├── date.ts           # Date formatting (DD/MM, relative time)
-│   └── threading.ts      # Thread grouping + ordering
+│   ├── threading.ts      # Thread grouping + ordering
+│   └── unread.ts         # Unread metrics + sorting helpers
 └── formatters/
     ├── json.ts           # JSON output
     ├── markdown.ts       # Markdown output (for pipes/LLMs)
@@ -31,7 +34,7 @@ tests/
 ├── api/                  # API-related tests
 ├── formatters/           # Formatter/output tests
 ├── preprocessing/        # Secret detection/masking tests
-└── utils/                # Date + threading tests
+└── utils/                # Date + threading + unread tests
 ```
 
 ## Key Flows
@@ -39,7 +42,7 @@ tests/
 ### CLI → API → Output
 ```
 index.ts (parse args)
-    → cli.ts (listChannels/fetchDMs/fetchChannel/fetchThread)
+    → cli.ts (channels/dms/channel/thread/search/mentions/unread/watch)
         → api/* (fetch data from Mattermost)
         → preprocessing/* (redact secrets)
         → formatters/* (format output)
@@ -47,7 +50,7 @@ index.ts (parse args)
 
 ### Secret Redaction Pipeline
 ```
-cli.ts:146 calls preprocess(post.message)
+cli.ts:153 calls preprocess(post.message)
     → preprocessing/index.ts
         → secrets.ts:detectSecrets() finds matches
         → secrets.ts:maskSecret() partial-masks each
@@ -70,6 +73,11 @@ cli.ts:146 calls preprocess(post.message)
 1. Add function in appropriate `src/api/*.ts` file
 2. Use `getClient().get<T>()` or `.post<T>()`
 3. Add types to `src/types.ts` if needed
+
+### Add a new command
+1. Add handler in `src/cli.ts`
+2. Add command wiring in `src/index.ts`
+3. Add/adjust tests under `tests/`
 
 ## Code Conventions
 
@@ -125,18 +133,23 @@ mm config --init  # Creates ~/.config/mattermost-cli/config.toml
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
 redact = true
+mention_names = ["Arda", "arda.sevinc"] # optional aliases used by `mm mentions`
 ```
 
 ## Entry Points
 
 | Task | File | Function |
 |------|------|----------|
-| CLI parsing | `src/index.ts` | `program.parse()` |
+| CLI parsing | `src/index.ts` | `program.parseAsync()` |
 | Config loading | `src/config.ts` | `loadConfigFile()` |
 | List channels | `src/cli.ts` | `listChannels()` |
 | Fetch DMs | `src/cli.ts` | `fetchDMs()` |
 | Fetch one channel | `src/cli.ts` | `fetchChannel()` |
 | Fetch one thread | `src/cli.ts` | `fetchThread()` |
+| Search messages | `src/cli.ts` | `searchMessages()` |
+| Fetch mentions | `src/cli.ts` | `fetchMentions()` |
+| Show unread summary | `src/cli.ts` | `showUnread()` |
+| Watch live channel events | `src/cli.ts` | `watchChannel()` |
 | Date formatting | `src/utils/date.ts` | `formatDate()`, `formatRelativeTime()` |
 | Thread grouping | `src/utils/threading.ts` | `groupIntoThreads()` |
 | Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
