@@ -5,6 +5,8 @@ A CLI tool to fetch and display Mattermost direct messages with automatic secret
 ## Features
 
 - Fetch DMs from all channels or filter by specific users
+- Fetch messages from public/private channels via `mm channel <name>`
+- List all channel types via `mm channels` with `--type` filtering
 - Thread-aware output by default (`--no-threads` to flatten)
 - Fetch a single thread via `mm thread <postId>`
 - Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
@@ -13,7 +15,7 @@ A CLI tool to fetch and display Mattermost direct messages with automatic secret
 
 ## Prerequisites
 
-- Node.js >= 18.0.0 or [Bun](https://bun.sh) >= 1.0.0
+- Node.js >= 22.0.0 or [Bun](https://bun.sh) >= 1.0.0
 - Mattermost personal access token
 
 ## Installation
@@ -85,11 +87,12 @@ mm --url https://mattermost.example.com --token your-token channels
 
 ## Usage
 
-### List DM channels
+### List channels
 
 ```bash
 mm channels
 mm channels --json
+mm channels --type public
 ```
 
 ### Fetch direct messages
@@ -117,6 +120,13 @@ mm dms --no-threads
 
 ```bash
 mm thread <post-id>
+```
+
+### Fetch a channel
+
+```bash
+mm channel general
+mm channel #dev --team myteam
 ```
 
 ### Manage configuration
@@ -147,6 +157,15 @@ DMs:
   -l, --limit <number>    Max messages to fetch (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   -c, --channel <id>      Specific channel ID
+
+Channels:
+  channels --type <type>  Filter list by type: dm, public, private, group, all
+
+Channel:
+  channel <name>          Fetch messages from one channel
+  --team <name>           Team name (required if multiple teams)
+  -l, --limit <number>    Max messages to fetch (default: 50)
+  -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
 
 Thread:
   thread <postId>         Fetch and display one thread

@@ -1,14 +1,14 @@
 # Mattermost CLI - Specification
 
 ## Overview
-A TypeScript + Bun CLI tool to fetch and display direct messages from Mattermost, with built-in secret redaction for safe LLM processing later.
+A TypeScript + Bun CLI tool to fetch and display Mattermost messages (DMs and channels), with built-in secret redaction for safe LLM processing later.
 
 ## Requirements Summary
 
 | Aspect | Decision |
 |--------|----------|
 | Auth | Personal access token (env var) |
-| DM Scope | All DMs, filterable by specific users |
+| Message Scope | DMs + public/private/group channels |
 | Threading | Threaded output by default, `--no-threads` to flatten |
 | Output | Pretty terminal for TTY, markdown for pipe/non-TTY, `--json` flag |
 | Time Range | `--since` (duration) and `--limit` (count) flags |
@@ -31,8 +31,9 @@ MM_REDACT=false
 ### Commands
 
 ```bash
-# List all DM channels
+# List all channels
 mm channels
+mm channels --type public
 
 # Fetch DMs (all or filtered)
 mm dms [options]
@@ -43,6 +44,10 @@ mm dms -u bob -u alice    # Multiple users
 
 # Fetch one thread
 mm thread <postId>
+
+# Fetch one channel by name
+mm channel general
+mm channel #dev --team myteam
 ```
 
 ### Global Options
@@ -67,6 +72,21 @@ mm thread <postId>
 --limit, -l       Max messages to fetch (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 --channel, -c     Specific channel ID (skip channel lookup)
+```
+
+### Channels Options
+
+```bash
+--type            Filter list by type: dm, public, private, group, all
+```
+
+### Channel Command
+
+```bash
+channel <name>    Fetch and display one channel
+--team            Team name (required if multiple teams)
+--limit, -l       Max messages to fetch (default: 50)
+--since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 ```
 
 ### Thread Command

@@ -29,6 +29,7 @@ src/
 
 tests/
 ├── api/                  # API-related tests
+├── formatters/           # Formatter/output tests
 ├── preprocessing/        # Secret detection/masking tests
 └── utils/                # Date + threading tests
 ```
@@ -38,7 +39,7 @@ tests/
 ### CLI → API → Output
 ```
 index.ts (parse args)
-    → cli.ts (listChannels/fetchDMs/fetchThread)
+    → cli.ts (listChannels/fetchDMs/fetchChannel/fetchThread)
         → api/* (fetch data from Mattermost)
         → preprocessing/* (redact secrets)
         → formatters/* (format output)
@@ -73,6 +74,7 @@ cli.ts:146 calls preprocess(post.message)
 ## Code Conventions
 
 - **Bun for dev** - use `bun test`, `bun run`; production code uses cross-runtime APIs
+- **No `npx` in this repo** - use `bunx`/`bun run` only
 - **Biome is configured** - use `bun run lint` / `bun run check` / `bun run format`
 - **No dotenv** - Bun auto-loads `.env`
 - **Types in types.ts** - keep interfaces centralized
@@ -133,6 +135,7 @@ redact = true
 | Config loading | `src/config.ts` | `loadConfigFile()` |
 | List channels | `src/cli.ts` | `listChannels()` |
 | Fetch DMs | `src/cli.ts` | `fetchDMs()` |
+| Fetch one channel | `src/cli.ts` | `fetchChannel()` |
 | Fetch one thread | `src/cli.ts` | `fetchThread()` |
 | Date formatting | `src/utils/date.ts` | `formatDate()`, `formatRelativeTime()` |
 | Thread grouping | `src/utils/threading.ts` | `groupIntoThreads()` |
