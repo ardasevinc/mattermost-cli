@@ -31,7 +31,7 @@ export async function getChannelPosts(
   // Convert posts object to array, sorted by order
   const posts = response.order
     .map((id) => response.posts[id])
-    .filter((post) => post.delete_at === 0) // Exclude deleted
+    .filter((post): post is Post => !!post && post.delete_at === 0) // Exclude deleted
 
   return posts
 }
@@ -59,6 +59,7 @@ export async function getAllChannelPosts(
 
     // Get the oldest post ID for next page
     const oldestPost = posts[posts.length - 1]
+    if (!oldestPost) break
     before = oldestPost.id
 
     // If we got fewer than requested, we've hit the end
@@ -80,7 +81,7 @@ export async function getPostThread(postId: string): Promise<Post[]> {
 
   return response.order
     .map((id) => response.posts[id])
-    .filter((post) => post.delete_at === 0)
+    .filter((post): post is Post => !!post && post.delete_at === 0)
 }
 
 // Parse duration string to milliseconds
@@ -93,8 +94,14 @@ export function parseDuration(duration: string): number {
     )
   }
 
-  const value = parseInt(match[1], 10)
-  const unit = match[2].toLowerCase()
+  const valueText = match[1]
+  const unitText = match[2]
+  if (!valueText || !unitText) {
+    throw new Error(`Invalid duration format: ${duration}`)
+  }
+
+  const value = parseInt(valueText, 10)
+  const unit = unitText.toLowerCase()
 
   const now = Date.now()
   const msPerHour = 60 * 60 * 1000

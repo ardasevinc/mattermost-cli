@@ -76,7 +76,7 @@ function userColor(username: string): string {
     hash = (hash << 5) - hash + char.charCodeAt(0)
     hash = hash & hash
   }
-  const colorFn = userColors[Math.abs(hash) % userColors.length]
+  const colorFn = userColors[Math.abs(hash) % userColors.length] ?? cyan
   return colorFn(username)
 }
 

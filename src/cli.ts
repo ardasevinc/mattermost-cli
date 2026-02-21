@@ -25,36 +25,7 @@ import {
 } from './api'
 import { preprocess } from './preprocessing'
 import { formatJSON, formatMarkdown, formatPretty } from './formatters'
-import { formatDate, formatRelativeTime } from './utils/date'
-
-// Group flat messages into threaded structure
-function groupIntoThreads(messages: ProcessedMessage[]): ProcessedMessage[] {
-  const rootMap = new Map<string, ProcessedMessage>()
-  const roots: ProcessedMessage[] = []
-
-  // First pass: identify root messages
-  for (const msg of messages) {
-    if (!msg.rootId) {
-      rootMap.set(msg.id, { ...msg, replies: [] })
-      roots.push(rootMap.get(msg.id)!)
-    }
-  }
-
-  // Second pass: attach replies to their roots
-  for (const msg of messages) {
-    if (msg.rootId) {
-      const root = rootMap.get(msg.rootId)
-      if (root) {
-        root.replies!.push(msg)
-      } else {
-        // Root not in current fetch window - show reply as standalone
-        roots.push(msg)
-      }
-    }
-  }
-
-  return roots
-}
+import { formatDate, formatRelativeTime, groupIntoThreads } from './utils'
 
 // List all DM channels
 export async function listChannels(options: {
@@ -228,6 +199,10 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
 // Fetch and display a specific thread
 export async function fetchThread(options: CLIOptions & { postId: string }): Promise<void> {
   initClient(options.url, options.token)
+
+  if (!options.redact) {
+    console.error('Warning: Secret redaction is disabled. Output may contain secrets.')
+  }
 
   const me = await getMe()
   const posts = await getPostThread(options.postId)

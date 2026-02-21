@@ -104,6 +104,15 @@ mm dms --since 30d --limit 100
 
 # JSON output (for piping to other tools)
 mm dms --json
+
+# Flatten thread replies
+mm dms --no-threads
+```
+
+### Fetch a specific thread
+
+```bash
+mm thread <post-id>
 ```
 
 ### Manage configuration
@@ -123,12 +132,16 @@ Global:
   --json                  Output as JSON
   --no-color              Disable colored output
   --no-redact             Disable secret redaction (or MM_REDACT=false env)
+  --no-threads            Flatten thread replies
 
 DMs:
   -u, --user <username>   Filter by username (repeatable)
   -l, --limit <number>    Max messages to fetch (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   -c, --channel <id>      Specific channel ID
+
+Thread:
+  thread <postId>         Fetch and display one thread
 ```
 
 ## Security

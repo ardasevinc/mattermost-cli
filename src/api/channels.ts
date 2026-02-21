@@ -65,6 +65,8 @@ export function getOtherUserIdFromDMChannel(
 
   const parts = channel.name.split('__')
   if (parts.length !== 2) return null
+  const [left, right] = parts
+  if (!left || !right) return null
 
-  return parts[0] === myUserId ? parts[1] : parts[0]
+  return left === myUserId ? right : left
 }

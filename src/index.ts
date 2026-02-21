@@ -150,7 +150,6 @@ program
         color: opts.color,
         relative: resolveRelative(opts),
         redact: resolveRedact(opts, config.fileConfig),
-        threads: opts.threads ?? true,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
