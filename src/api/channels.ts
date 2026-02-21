@@ -1,6 +1,6 @@
 // Channel fetching with DM filtering
 
-import type { Channel } from '../types'
+import type { Channel, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
 
@@ -49,6 +49,49 @@ export async function getDMChannelByUsername(username: string): Promise<Channel 
 export async function getChannel(channelId: string): Promise<Channel> {
   const client = getClient()
   return client.get<Channel>(`/channels/${channelId}`)
+}
+
+export async function getMyTeams(): Promise<Team[]> {
+  const me = await getMe()
+  const client = getClient()
+  return client.get<Team[]>(`/users/${me.id}/teams`)
+}
+
+export async function getChannelByName(teamId: string, channelName: string): Promise<Channel> {
+  const client = getClient()
+  // Strip leading # if present
+  const name = channelName.replace(/^#/, '')
+  return client.get<Channel>(`/teams/${teamId}/channels/name/${name}`)
+}
+
+export async function resolveTeamId(teamName?: string): Promise<string> {
+  const teams = await getMyTeams()
+
+  if (teams.length === 0) {
+    console.error('Error: You are not a member of any teams.')
+    process.exit(1)
+  }
+
+  if (teamName) {
+    const team = teams.find((t) => t.name === teamName || t.display_name === teamName)
+    if (!team) {
+      console.error(
+        `Error: Team "${teamName}" not found. Your teams: ${teams.map((t) => t.name).join(', ')}`,
+      )
+      process.exit(1)
+    }
+    return team.id
+  }
+
+  if (teams.length === 1) {
+    return teams[0]?.id as string
+  }
+
+  console.error(
+    `Error: You belong to multiple teams. Use --team to specify:\n` +
+      teams.map((t) => `  ${t.name} (${t.display_name})`).join('\n'),
+  )
+  process.exit(1)
 }
 
 // Extract the other user's ID from a DM channel name

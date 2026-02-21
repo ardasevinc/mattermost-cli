@@ -9,6 +9,13 @@ export interface User {
   email: string
 }
 
+export interface Team {
+  id: string
+  name: string
+  display_name: string
+  type: 'O' | 'I' // Open, Invite-only
+}
+
 export interface Channel {
   id: string
   type: 'O' | 'P' | 'D' | 'G' // Open, Private, Direct, Group
@@ -86,6 +93,13 @@ export interface DMsOptions extends CLIOptions {
   channel?: string
 }
 
+export interface ChannelOptions extends CLIOptions {
+  channel: string // channel name or ID
+  team?: string // team name (required if multi-team)
+  limit: number
+  since: string
+}
+
 // Processed message for output
 
 export interface ProcessedMessage {
@@ -102,15 +116,19 @@ export interface ProcessedMessage {
 
 export interface ProcessedChannel {
   id: string
-  otherUser: string
-  otherUserId: string
+  type: 'dm' | 'public' | 'private' | 'group'
+  name: string // "@username" for DMs, "channel-name" for channels
+  displayName?: string // Channel display name (channels only)
 }
 
-export interface DMOutput {
+export interface MessageOutput {
   channel: ProcessedChannel
   messages: ProcessedMessage[]
   redactions: Redaction[]
 }
+
+/** @deprecated Use MessageOutput */
+export type DMOutput = MessageOutput
 
 export interface Redaction {
   type: string

@@ -1,6 +1,6 @@
 // Pretty terminal output with ANSI colors
 
-import type { DMOutput, ProcessedMessage } from '../types'
+import type { MessageOutput, ProcessedChannel, ProcessedMessage } from '../types'
 import { formatRelativeTime, formatTime, getDateGroupLabel } from '../utils/date'
 
 // ANSI color codes
@@ -76,12 +76,32 @@ function userColor(username: string): string {
   return colorFn(username)
 }
 
+function channelHeader(channel: ProcessedChannel): string {
+  if (channel.type === 'dm') {
+    return `💬 DMs with ${cyan(channel.name)}`
+  }
+  const name = `#${channel.name}`
+  const display = channel.displayName ? ` (${channel.displayName})` : ''
+  return `📢 ${cyan(name)}${display}`
+}
+
+function channelHeaderPlain(channel: ProcessedChannel): string {
+  if (channel.type === 'dm') {
+    return `DMs with ${channel.name}`
+  }
+  const display = channel.displayName ? ` (${channel.displayName})` : ''
+  return `#${channel.name}${display}`
+}
+
 export interface PrettyOptions {
   color?: boolean
   relative?: boolean
 }
 
-export function formatPretty(outputs: DMOutput[], options: PrettyOptions | boolean = true): string {
+export function formatPretty(
+  outputs: MessageOutput[],
+  options: PrettyOptions | boolean = true,
+): string {
   // Handle legacy boolean parameter
   const opts: PrettyOptions = typeof options === 'boolean' ? { color: options } : options
   const useColor = opts.color ?? true
@@ -94,18 +114,18 @@ export function formatPretty(outputs: DMOutput[], options: PrettyOptions | boole
   const sections: string[] = []
 
   for (const output of outputs) {
-    sections.push(formatDMChannelPretty(output, relative))
+    sections.push(formatChannelPretty(output, relative))
   }
 
   return sections.join(`\n${dim('─'.repeat(60))}\n\n`)
 }
 
-function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
+function formatChannelPretty(output: MessageOutput, relative: boolean): string {
   const { channel, messages } = output
   const lines: string[] = []
 
   // Header
-  lines.push(bold(`💬 DMs with ${cyan(`@${channel.otherUser}`)}`))
+  lines.push(bold(channelHeader(channel)))
   lines.push('')
 
   // Group messages by date
@@ -166,14 +186,14 @@ function formatMessagePretty(
   return lines.join('\n')
 }
 
-function formatPrettyNoColor(outputs: DMOutput[], relative: boolean): string {
+function formatPrettyNoColor(outputs: MessageOutput[], relative: boolean): string {
   const sections: string[] = []
 
   for (const output of outputs) {
     const { channel, messages } = output
     const lines: string[] = []
 
-    lines.push(`DMs with @${channel.otherUser}`)
+    lines.push(channelHeaderPlain(channel))
     lines.push('─'.repeat(40))
 
     const messagesByDate = groupByDate(messages)

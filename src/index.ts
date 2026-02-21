@@ -4,7 +4,7 @@
 import { Command } from 'commander'
 import { isAgent } from 'is-ai-agent'
 import pkg from '../package.json'
-import { fetchDMs, fetchThread, listChannels } from './cli'
+import { fetchChannel, fetchDMs, fetchThread, listChannels } from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
 
 // Default to relative time when running under AI agents (Claude Code, Gemini CLI, etc.)
@@ -140,8 +140,9 @@ program
 // List channels command
 program
   .command('channels')
-  .description('List all DM channels')
-  .action(async () => {
+  .description('List all channels (DMs, public, private, group)')
+  .option('--type <type>', 'Filter by type: dm, public, private, group, all', 'all')
+  .action(async (cmdOpts) => {
     const opts = program.opts()
     const config = await resolveConfig(opts)
 
@@ -153,6 +154,7 @@ program
         color: opts.color,
         relative: resolveRelative(opts),
         redact: resolveRedact(opts, config.fileConfig),
+        typeFilter: cmdOpts.type,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -185,6 +187,37 @@ program
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+// Fetch messages from a channel
+program
+  .command('channel <name>')
+  .description('Fetch messages from a channel by name')
+  .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .option('-l, --limit <number>', 'Max messages to fetch', '50')
+  .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
+  .action(async (name, cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await fetchChannel({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
+        channel: name,
+        team: cmdOpts.team,
+        limit: validateLimit(cmdOpts.limit),
+        since: cmdOpts.since,
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)

@@ -1,27 +1,35 @@
 // Markdown output formatter
 
-import type { DMOutput, ProcessedMessage } from '../types'
+import type { MessageOutput, ProcessedChannel, ProcessedMessage } from '../types'
 import { formatDateLong, formatRelativeTime, formatTime } from '../utils/date'
 
 export interface MarkdownOptions {
   relative?: boolean
 }
 
-export function formatMarkdown(outputs: DMOutput[], options: MarkdownOptions = {}): string {
+export function formatMarkdown(outputs: MessageOutput[], options: MarkdownOptions = {}): string {
   const sections: string[] = []
 
   for (const output of outputs) {
-    sections.push(formatDMChannel(output, options.relative ?? false))
+    sections.push(formatChannelMarkdown(output, options.relative ?? false))
   }
 
   return sections.join('\n\n---\n\n')
 }
 
-function formatDMChannel(output: DMOutput, relative: boolean): string {
+function channelHeaderMarkdown(channel: ProcessedChannel): string {
+  if (channel.type === 'dm') {
+    return `## DMs with ${channel.name}`
+  }
+  const display = channel.displayName ? ` (${channel.displayName})` : ''
+  return `## #${channel.name}${display}`
+}
+
+function formatChannelMarkdown(output: MessageOutput, relative: boolean): string {
   const { channel, messages } = output
   const lines: string[] = []
 
-  lines.push(`## DMs with @${channel.otherUser}`)
+  lines.push(channelHeaderMarkdown(channel))
   lines.push('')
 
   // Group messages by date
