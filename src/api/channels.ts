@@ -1,6 +1,6 @@
 // Channel fetching with DM filtering
 
-import type { Channel, Team } from '../types'
+import type { Channel, ChannelMember, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
 
@@ -104,6 +104,18 @@ export async function resolveTeamId(teamName?: string): Promise<string> {
     console.error(`Error: ${message}`)
     process.exit(1)
   }
+}
+
+export async function getTeamChannelMembers(teamId: string): Promise<ChannelMember[]> {
+  const me = await getMe()
+  const client = getClient()
+  return client.get<ChannelMember[]>(`/users/${me.id}/teams/${teamId}/channels/members`)
+}
+
+export async function getChannelMember(channelId: string): Promise<ChannelMember> {
+  const me = await getMe()
+  const client = getClient()
+  return client.get<ChannelMember>(`/channels/${channelId}/members/${me.id}`)
 }
 
 // Extract the other user's ID from a DM channel name

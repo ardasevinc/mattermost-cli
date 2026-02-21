@@ -4,26 +4,30 @@
 import { Command } from 'commander'
 import { isAgent } from 'is-ai-agent'
 import pkg from '../package.json'
-import { fetchChannel, fetchDMs, fetchThread, listChannels } from './cli'
+import {
+  fetchChannel,
+  fetchDMs,
+  fetchMentions,
+  fetchThread,
+  listChannels,
+  searchMessages,
+  showUnread,
+  watchChannel,
+} from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
 
-// Default to relative time when running under AI agents (Claude Code, Gemini CLI, etc.)
 const isRunningUnderAgent = isAgent() !== null
 
-// Resolve relative option: explicit flag > agent detection > false
 function resolveRelative(opts: { relative?: boolean }): boolean {
-  // If user explicitly set --relative or --no-relative, use that
   if (opts.relative !== undefined) return opts.relative
-  // Otherwise, default based on agent detection
   return isRunningUnderAgent
 }
 
-// Resolve redact option: CLI flag > env var > config file > default true
 function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolean }): boolean {
   if (opts.redact !== undefined) return opts.redact
   if (process.env.MM_REDACT !== undefined) return process.env.MM_REDACT !== 'false'
   if (fileConfig.redact !== undefined) return fileConfig.redact
-  return true // secure by default
+  return true
 }
 
 function validateLimit(value: string): number {
@@ -35,11 +39,20 @@ function validateLimit(value: string): number {
   return n
 }
 
+function validatePeek(value?: string): number | undefined {
+  if (value === undefined) return undefined
+  const n = parseInt(value, 10)
+  if (Number.isNaN(n) || n <= 0) {
+    console.error(`Error: --peek must be a positive number, got "${value}"`)
+    process.exit(1)
+  }
+  return n
+}
+
 const program = new Command()
 
 program.name('mm').description('Mattermost CLI - Fetch and display messages').version(pkg.version)
 
-// Global options (don't use env vars as defaults - they leak in --help)
 program
   .option('-t, --token <token>', 'Mattermost personal access token (or MM_TOKEN env)')
   .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
@@ -55,16 +68,14 @@ program
   .option('--threads', 'Show thread structure (default)')
   .option('--no-threads', 'Flatten thread replies')
 
-// Resolve config from CLI options → env vars → config file
-async function resolveConfig(options: {
-  url?: string
-  token?: string
-}): Promise<{ url: string; token: string; fileConfig: { redact?: boolean } }> {
-  // Check CLI args and env vars first
+async function resolveConfig(options: { url?: string; token?: string }): Promise<{
+  url: string
+  token: string
+  fileConfig: { redact?: boolean; mentionNames: string[] }
+}> {
   let url = options.url || process.env.MM_URL
   let token = options.token || process.env.MM_TOKEN
 
-  // Load config file (needed for url/token fallback and redact option)
   const fileConfig = await loadConfigFile()
   url = url || fileConfig.url
   token = token || fileConfig.token
@@ -90,10 +101,16 @@ async function resolveConfig(options: {
     process.exit(1)
   }
 
-  return { url, token, fileConfig: { redact: fileConfig.redact } }
+  return {
+    url,
+    token,
+    fileConfig: {
+      redact: fileConfig.redact,
+      mentionNames: fileConfig.mention_names ?? [],
+    },
+  }
 }
 
-// Config management command
 program
   .command('config')
   .description('Manage config file')
@@ -117,7 +134,6 @@ program
         return
       }
 
-      // Default: show config status
       const status = await getConfigStatus()
       console.log(`Config path: ${status.path}`)
       console.log(`Exists: ${status.exists ? 'yes' : 'no'}`)
@@ -125,7 +141,7 @@ program
         console.log(`URL configured: ${status.hasUrl ? 'yes' : 'no'}`)
         console.log(`Token configured: ${status.hasToken ? 'yes' : 'no'}`)
         if (status.insecurePerms) {
-          console.log(`\nWarning: Config file has insecure permissions.`)
+          console.log('\nWarning: Config file has insecure permissions.')
           console.log(`  Run: chmod 600 "${status.path}"`)
         }
       } else {
@@ -137,7 +153,6 @@ program
     }
   })
 
-// List channels command
 program
   .command('channels')
   .description('List all channels (DMs, public, private, group)')
@@ -162,7 +177,6 @@ program
     }
   })
 
-// Fetch DMs command
 program
   .command('dms')
   .description('Fetch direct messages')
@@ -194,7 +208,6 @@ program
     }
   })
 
-// Fetch messages from a channel
 program
   .command('channel <name>')
   .description('Fetch messages from a channel by name')
@@ -225,7 +238,119 @@ program
     }
   })
 
-// Fetch a specific thread
+program
+  .command('search <query>')
+  .description('Search messages across channels')
+  .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .option('-l, --limit <number>', 'Max results to show', '50')
+  .action(async (query, cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await searchMessages({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
+        query,
+        team: cmdOpts.team,
+        limit: validateLimit(cmdOpts.limit),
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('mentions')
+  .description('Find messages that mention you or configured aliases')
+  .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .option('-l, --limit <number>', 'Max results to show', '50')
+  .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"')
+  .option('--channel <name>', 'Scope mentions to a channel name')
+  .action(async (cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await fetchMentions({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
+        team: cmdOpts.team,
+        limit: validateLimit(cmdOpts.limit),
+        since: cmdOpts.since,
+        channel: cmdOpts.channel,
+        mentionNames: config.fileConfig.mentionNames,
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('unread')
+  .description('Show channels with unread messages')
+  .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .option('--peek <number>', 'Fetch N messages from each unread channel')
+  .action(async (cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await showUnread({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
+        team: cmdOpts.team,
+        peek: validatePeek(cmdOpts.peek),
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('watch <channel>')
+  .description('Watch a channel in real-time')
+  .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
+  .action(async (channel, cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await watchChannel({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
+        team: cmdOpts.team,
+        channel,
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
 program
   .command('thread <postId>')
   .description('Fetch and display a specific thread')
@@ -250,5 +375,4 @@ program
     }
   })
 
-// Parse and run (use parseAsync for proper async action handling)
 await program.parseAsync()

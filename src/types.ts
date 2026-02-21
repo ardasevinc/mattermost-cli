@@ -74,6 +74,20 @@ export interface PostsResponse {
   prev_post_id: string
 }
 
+export interface SearchResponse {
+  order: string[]
+  posts: Record<string, Post>
+  matches: Record<string, string[]>
+}
+
+export interface ChannelMember {
+  channel_id: string
+  user_id: string
+  msg_count: number
+  mention_count: number
+  last_viewed_at: number
+}
+
 // CLI types
 
 export interface CLIOptions {
@@ -98,6 +112,25 @@ export interface ChannelOptions extends CLIOptions {
   team?: string // team name (required if multi-team)
   limit: number
   since: string
+}
+
+export interface SearchOptions extends CLIOptions {
+  query: string
+  team?: string
+  limit: number
+}
+
+export interface MentionOptions extends CLIOptions {
+  team?: string
+  limit: number
+  since?: string
+  channel?: string
+  mentionNames: string[]
+}
+
+export interface UnreadOptions extends CLIOptions {
+  team?: string
+  peek?: number
 }
 
 // Processed message for output
@@ -139,4 +172,20 @@ export interface Redaction {
 export interface PreprocessResult {
   text: string
   redactions: Redaction[]
+}
+
+export interface WSPostEvent {
+  event: 'posted'
+  data: {
+    post: string
+    channel_type: string
+    channel_name: string
+    channel_display_name: string
+    sender_name: string
+    mentions?: string
+  }
+  broadcast: {
+    channel_id: string
+    team_id: string
+  }
 }

@@ -1,80 +1,8 @@
 // Pretty terminal output with ANSI colors
 
 import type { MessageOutput, ProcessedChannel, ProcessedMessage } from '../types'
+import { bold, cyan, dim, userColor } from '../utils/colors'
 import { formatRelativeTime, formatTime, getDateGroupLabel } from '../utils/date'
-
-// ANSI color codes
-const colors = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  italic: '\x1b[3m',
-
-  // Foreground
-  black: '\x1b[30m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m',
-  white: '\x1b[37m',
-
-  // Background
-  bgBlack: '\x1b[40m',
-  bgRed: '\x1b[41m',
-  bgGreen: '\x1b[42m',
-  bgYellow: '\x1b[43m',
-  bgBlue: '\x1b[44m',
-  bgMagenta: '\x1b[45m',
-  bgCyan: '\x1b[46m',
-  bgWhite: '\x1b[47m',
-}
-
-// Simple color helpers
-function c(text: string, ...codes: string[]): string {
-  return `${codes.join('')}${text}${colors.reset}`
-}
-
-function bold(text: string): string {
-  return c(text, colors.bold)
-}
-
-function dim(text: string): string {
-  return c(text, colors.dim)
-}
-
-function cyan(text: string): string {
-  return c(text, colors.cyan)
-}
-
-function yellow(text: string): string {
-  return c(text, colors.yellow)
-}
-
-function green(text: string): string {
-  return c(text, colors.green)
-}
-
-function magenta(text: string): string {
-  return c(text, colors.magenta)
-}
-
-function blue(text: string): string {
-  return c(text, colors.blue)
-}
-
-// Generate consistent color for username
-function userColor(username: string): string {
-  const userColors = [cyan, yellow, green, magenta, blue]
-  let hash = 0
-  for (const char of username) {
-    hash = (hash << 5) - hash + char.charCodeAt(0)
-    hash = hash & hash
-  }
-  const colorFn = userColors[Math.abs(hash) % userColors.length] ?? cyan
-  return colorFn(username)
-}
 
 function channelHeader(channel: ProcessedChannel): string {
   if (channel.type === 'dm') {

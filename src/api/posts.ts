@@ -1,6 +1,6 @@
 // Post/message fetching with pagination
 
-import type { Post, PostsResponse } from '../types'
+import type { Post, PostsResponse, SearchResponse } from '../types'
 import { getClient } from './client'
 
 interface GetPostsOptions {
@@ -80,6 +80,14 @@ export async function getPostThread(postId: string): Promise<Post[]> {
   return response.order
     .map((id) => response.posts[id])
     .filter((post): post is Post => !!post && post.delete_at === 0)
+}
+
+export async function searchPosts(teamId: string, terms: string): Promise<SearchResponse> {
+  const client = getClient()
+  return client.post<SearchResponse>(`/teams/${teamId}/posts/search`, {
+    terms,
+    is_or_search: false,
+  })
 }
 
 // Parse duration string to milliseconds

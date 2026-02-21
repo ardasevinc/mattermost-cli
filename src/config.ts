@@ -9,6 +9,7 @@ export interface FileConfig {
   url?: string
   token?: string
   redact?: boolean
+  mention_names?: string[]
 }
 
 const CONFIG_PATH = join(homedir(), '.config', 'mattermost-cli', 'config.toml')
@@ -56,11 +57,18 @@ export async function loadConfigFile(): Promise<FileConfig> {
     const url = typeof parsed.url === 'string' ? parsed.url.trim() : undefined
     const token = typeof parsed.token === 'string' ? parsed.token.trim() : undefined
     const redact = typeof parsed.redact === 'boolean' ? parsed.redact : undefined
+    const mentionNames = Array.isArray(parsed.mention_names)
+      ? parsed.mention_names
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      : undefined
 
     return {
       url: url || undefined,
       token: token || undefined,
       redact,
+      mention_names: mentionNames,
     }
   } catch {
     console.warn(`Warning: Could not parse config at ${CONFIG_PATH}`)
@@ -77,6 +85,7 @@ const CONFIG_TEMPLATE = `# Mattermost CLI Configuration
 
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
+# mention_names = ["Arda", "arda.sevinc"]
 `
 
 export async function initConfigFile(): Promise<{ created: boolean; path: string }> {
