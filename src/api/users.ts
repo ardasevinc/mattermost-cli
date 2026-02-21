@@ -29,7 +29,9 @@ export async function getUserByUsername(username: string): Promise<User> {
   // Check cache first
   const cachedId = usernameToId.get(username.toLowerCase())
   if (cachedId) {
-    return userCache.get(cachedId)!
+    const cachedUser = userCache.get(cachedId)
+    if (cachedUser) return cachedUser
+    usernameToId.delete(username.toLowerCase())
   }
 
   const client = getClient()

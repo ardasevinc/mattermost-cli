@@ -19,8 +19,8 @@ export function detectSecrets(text: string): DetectedSecret[] {
     // Reset regex state (important for global patterns)
     pattern.lastIndex = 0
 
-    let match
-    while ((match = pattern.exec(text)) !== null) {
+    let match: RegExpExecArray | null = pattern.exec(text)
+    while (match !== null) {
       // Use captured group if available, otherwise full match
       const value = match[1] || match[0]
       const offset = match[0].indexOf(value)
@@ -32,6 +32,8 @@ export function detectSecrets(text: string): DetectedSecret[] {
         seen.add(key)
         secrets.push({ type: name, value, start, end })
       }
+
+      match = pattern.exec(text)
     }
   }
 
