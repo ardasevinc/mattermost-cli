@@ -12,7 +12,7 @@ interface GetPostsOptions {
 
 export async function getChannelPosts(
   channelId: string,
-  options: GetPostsOptions = {}
+  options: GetPostsOptions = {},
 ): Promise<Post[]> {
   const { limit = 50, since, before, after } = options
   const client = getClient()
@@ -24,9 +24,7 @@ export async function getChannelPosts(
   if (before) params.set('before', before)
   if (after) params.set('after', after)
 
-  const response = await client.get<PostsResponse>(
-    `/channels/${channelId}/posts?${params}`
-  )
+  const response = await client.get<PostsResponse>(`/channels/${channelId}/posts?${params}`)
 
   // Convert posts object to array, sorted by order
   const posts = response.order
@@ -39,7 +37,7 @@ export async function getChannelPosts(
 // Fetch all posts with pagination, respecting limit and since
 export async function getAllChannelPosts(
   channelId: string,
-  options: { limit?: number; since?: number } = {}
+  options: { limit?: number; since?: number } = {},
 ): Promise<Post[]> {
   const { limit = 50, since } = options
   const allPosts: Post[] = []
@@ -90,7 +88,7 @@ export function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)([hdwm])$/i)
   if (!match) {
     throw new Error(
-      `Invalid duration format: ${duration}. Use formats like "24h", "7d", "1w", "2m"`
+      `Invalid duration format: ${duration}. Use formats like "24h", "7d", "1w", "2m"`,
     )
   }
 

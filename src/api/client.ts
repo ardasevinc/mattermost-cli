@@ -11,12 +11,7 @@ export class MattermostClient {
     this.token = token
   }
 
-  async request<T>(
-    method: string,
-    path: string,
-    body?: unknown,
-    retryCount = 0
-  ): Promise<T> {
+  async request<T>(method: string, path: string, body?: unknown, retryCount = 0): Promise<T> {
     const url = `${this.baseUrl}/api/v4${path}`
 
     const response = await fetch(url, {
@@ -31,9 +26,7 @@ export class MattermostClient {
     // Handle rate limiting with exponential backoff
     if (response.status === 429 && retryCount < this.maxRetries) {
       const retryAfter = response.headers.get('Retry-After')
-      const delay = retryAfter
-        ? parseInt(retryAfter, 10) * 1000
-        : Math.pow(2, retryCount) * 1000
+      const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2 ** retryCount * 1000
 
       await new Promise((resolve) => setTimeout(resolve, delay))
       return this.request<T>(method, path, body, retryCount + 1)
@@ -44,7 +37,7 @@ export class MattermostClient {
       throw new MattermostAPIError(
         `API request failed: ${response.status} ${response.statusText}`,
         response.status,
-        error
+        error,
       )
     }
 
@@ -72,7 +65,7 @@ export class MattermostAPIError extends Error {
   constructor(
     message: string,
     public status: number,
-    public body: string
+    public body: string,
   ) {
     super(message)
     this.name = 'MattermostAPIError'
@@ -89,9 +82,7 @@ export function initClient(baseUrl: string, token: string): MattermostClient {
 
 export function getClient(): MattermostClient {
   if (!client) {
-    throw new Error(
-      'Mattermost client not initialized. Call initClient() first.'
-    )
+    throw new Error('Mattermost client not initialized. Call initClient() first.')
   }
   return client
 }

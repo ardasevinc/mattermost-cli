@@ -3,9 +3,9 @@
 
 import { Command } from 'commander'
 import { isAgent } from 'is-ai-agent'
-import { listChannels, fetchDMs, fetchThread } from './cli'
-import { loadConfigFile, getConfigPath, initConfigFile, getConfigStatus } from './config'
 import pkg from '../package.json'
+import { fetchDMs, fetchThread, listChannels } from './cli'
+import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
 
 // Default to relative time when running under AI agents (Claude Code, Gemini CLI, etc.)
 const isRunningUnderAgent = isAgent() !== null
@@ -28,7 +28,7 @@ function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolea
 
 function validateLimit(value: string): number {
   const n = parseInt(value, 10)
-  if (isNaN(n) || n <= 0) {
+  if (Number.isNaN(n) || n <= 0) {
     console.error(`Error: --limit must be a positive number, got "${value}"`)
     process.exit(1)
   }
@@ -37,10 +37,7 @@ function validateLimit(value: string): number {
 
 const program = new Command()
 
-program
-  .name('mm')
-  .description('Mattermost CLI - Fetch and display messages')
-  .version(pkg.version)
+program.name('mm').description('Mattermost CLI - Fetch and display messages').version(pkg.version)
 
 // Global options (don't use env vars as defaults - they leak in --help)
 program
@@ -48,7 +45,10 @@ program
   .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
   .option('--json', 'Output as JSON', false)
   .option('--no-color', 'Disable colored output')
-  .option('-r, --relative', 'Show times as relative (e.g., "2 days ago"); auto-enabled under AI agents')
+  .option(
+    '-r, --relative',
+    'Show times as relative (e.g., "2 days ago"); auto-enabled under AI agents',
+  )
   .option('--no-relative', 'Show absolute dates/times')
   .option('--redact', 'Enable secret redaction (default)')
   .option('--no-redact', 'Disable secret redaction')
@@ -56,7 +56,10 @@ program
   .option('--no-threads', 'Flatten thread replies')
 
 // Resolve config from CLI options → env vars → config file
-async function resolveConfig(options: { url?: string; token?: string }): Promise<{ url: string; token: string; fileConfig: { redact?: boolean } }> {
+async function resolveConfig(options: {
+  url?: string
+  token?: string
+}): Promise<{ url: string; token: string; fileConfig: { redact?: boolean } }> {
   // Check CLI args and env vars first
   let url = options.url || process.env.MM_URL
   let token = options.token || process.env.MM_TOKEN
@@ -71,18 +74,18 @@ async function resolveConfig(options: { url?: string; token?: string }): Promise
   if (!url) {
     console.error(
       'Error: Mattermost URL required.\n' +
-      '  1. Use --url flag\n' +
-      '  2. Set MM_URL env var\n' +
-      `  3. Add to ${configPath}`
+        '  1. Use --url flag\n' +
+        '  2. Set MM_URL env var\n' +
+        `  3. Add to ${configPath}`,
     )
     process.exit(1)
   }
   if (!token) {
     console.error(
       'Error: Mattermost token required.\n' +
-      '  1. Use --token flag\n' +
-      '  2. Set MM_TOKEN env var\n' +
-      `  3. Add to ${configPath}`
+        '  1. Use --token flag\n' +
+        '  2. Set MM_TOKEN env var\n' +
+        `  3. Add to ${configPath}`,
     )
     process.exit(1)
   }

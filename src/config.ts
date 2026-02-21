@@ -1,8 +1,8 @@
 // Config file handling for ~/.config/mattermost-cli/config.toml
 
-import { homedir } from 'os'
-import { join } from 'path'
-import { stat, mkdir, writeFile, readFile, access } from 'fs/promises'
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { parse as parseTOML } from 'smol-toml'
 
 export interface FileConfig {
@@ -44,8 +44,7 @@ export async function loadConfigFile(): Promise<FileConfig> {
   // Warn if config file is readable by group/other (contains token)
   if (await hasInsecurePermissions()) {
     console.warn(
-      `Warning: ${CONFIG_PATH} has insecure permissions.\n` +
-      `  Run: chmod 600 "${CONFIG_PATH}"`
+      `Warning: ${CONFIG_PATH} has insecure permissions.\n` + `  Run: chmod 600 "${CONFIG_PATH}"`,
     )
   }
 
@@ -81,7 +80,7 @@ token = "your-personal-access-token"
 `
 
 export async function initConfigFile(): Promise<{ created: boolean; path: string }> {
-  const { dirname } = await import('path')
+  const { dirname } = await import('node:path')
 
   const dir = dirname(CONFIG_PATH)
 
@@ -109,7 +108,13 @@ export async function getConfigStatus(): Promise<{
   const exists = await fileExists(CONFIG_PATH)
 
   if (!exists) {
-    return { exists: false, path: CONFIG_PATH, hasUrl: false, hasToken: false, insecurePerms: false }
+    return {
+      exists: false,
+      path: CONFIG_PATH,
+      hasUrl: false,
+      hasToken: false,
+      insecurePerms: false,
+    }
   }
 
   const insecurePerms = await hasInsecurePermissions()

@@ -1,11 +1,7 @@
 // Pretty terminal output with ANSI colors
 
-import type { DMOutput, ProcessedMessage, ProcessedChannel } from '../types'
-import {
-  formatTime,
-  formatRelativeTime,
-  getDateGroupLabel,
-} from '../utils/date'
+import type { DMOutput, ProcessedMessage } from '../types'
+import { formatRelativeTime, formatTime, getDateGroupLabel } from '../utils/date'
 
 // ANSI color codes
 const colors = {
@@ -85,13 +81,9 @@ export interface PrettyOptions {
   relative?: boolean
 }
 
-export function formatPretty(
-  outputs: DMOutput[],
-  options: PrettyOptions | boolean = true
-): string {
+export function formatPretty(outputs: DMOutput[], options: PrettyOptions | boolean = true): string {
   // Handle legacy boolean parameter
-  const opts: PrettyOptions =
-    typeof options === 'boolean' ? { color: options } : options
+  const opts: PrettyOptions = typeof options === 'boolean' ? { color: options } : options
   const useColor = opts.color ?? true
   const relative = opts.relative ?? false
 
@@ -105,7 +97,7 @@ export function formatPretty(
     sections.push(formatDMChannelPretty(output, relative))
   }
 
-  return sections.join('\n' + dim('─'.repeat(60)) + '\n\n')
+  return sections.join(`\n${dim('─'.repeat(60))}\n\n`)
 }
 
 function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
@@ -113,7 +105,7 @@ function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
   const lines: string[] = []
 
   // Header
-  lines.push(bold(`💬 DMs with ${cyan('@' + channel.otherUser)}`))
+  lines.push(bold(`💬 DMs with ${cyan(`@${channel.otherUser}`)}`))
   lines.push('')
 
   // Group messages by date
@@ -137,10 +129,12 @@ function formatDMChannelPretty(output: DMOutput, relative: boolean): string {
   return lines.join('\n')
 }
 
-function formatMessagePretty(msg: ProcessedMessage, relative: boolean, indent: string = '  '): string {
-  const timeStr = relative
-    ? formatRelativeTime(msg.timestamp)
-    : formatTime(msg.timestamp)
+function formatMessagePretty(
+  msg: ProcessedMessage,
+  relative: boolean,
+  indent: string = '  ',
+): string {
+  const timeStr = relative ? formatRelativeTime(msg.timestamp) : formatTime(msg.timestamp)
   const time = dim(timeStr)
   const user = userColor(msg.user)
 
@@ -148,7 +142,7 @@ function formatMessagePretty(msg: ProcessedMessage, relative: boolean, indent: s
   lines.push(`${indent}${time} ${bold(user)}`)
 
   // Indent message content
-  const textIndent = indent + '  '
+  const textIndent = `${indent}  `
   const indentedText = msg.text
     .split('\n')
     .map((line) => `${textIndent}${line}`)
@@ -165,7 +159,7 @@ function formatMessagePretty(msg: ProcessedMessage, relative: boolean, indent: s
   // Render replies
   if (msg.replies && msg.replies.length > 0) {
     for (const reply of msg.replies) {
-      lines.push(formatMessagePretty(reply, relative, indent + '  ↳ '))
+      lines.push(formatMessagePretty(reply, relative, `${indent}  ↳ `))
     }
   }
 
@@ -200,15 +194,18 @@ function formatPrettyNoColor(outputs: DMOutput[], relative: boolean): string {
     sections.push(lines.join('\n'))
   }
 
-  return sections.join('\n' + '='.repeat(60) + '\n\n')
+  return sections.join(`\n${'='.repeat(60)}\n\n`)
 }
 
-function formatMessageNoColor(msg: ProcessedMessage, relative: boolean, lines: string[], indent: string): void {
-  const timeStr = relative
-    ? formatRelativeTime(msg.timestamp)
-    : formatTime(msg.timestamp)
+function formatMessageNoColor(
+  msg: ProcessedMessage,
+  relative: boolean,
+  lines: string[],
+  indent: string,
+): void {
+  const timeStr = relative ? formatRelativeTime(msg.timestamp) : formatTime(msg.timestamp)
   lines.push(`${indent}[${timeStr}] ${msg.user}`)
-  const textIndent = indent + '  '
+  const textIndent = `${indent}  `
   const indentedText = msg.text
     .split('\n')
     .map((line) => `${textIndent}${line}`)
@@ -221,26 +218,22 @@ function formatMessageNoColor(msg: ProcessedMessage, relative: boolean, lines: s
 
   if (msg.replies && msg.replies.length > 0) {
     for (const reply of msg.replies) {
-      formatMessageNoColor(reply, relative, lines, indent + '  > ')
+      formatMessageNoColor(reply, relative, lines, `${indent}  > `)
     }
   }
 }
 
-function groupByDate(
-  messages: ProcessedMessage[]
-): Map<string, ProcessedMessage[]> {
+function groupByDate(messages: ProcessedMessage[]): Map<string, ProcessedMessage[]> {
   const groups = new Map<string, ProcessedMessage[]>()
 
-  const sorted = [...messages].sort(
-    (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
-  )
+  const sorted = [...messages].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
 
   for (const msg of sorted) {
     const date = getDateGroupLabel(msg.timestamp)
     if (!groups.has(date)) {
       groups.set(date, [])
     }
-    groups.get(date)!.push(msg)
+    groups.get(date)?.push(msg)
   }
 
   return groups

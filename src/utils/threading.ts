@@ -27,7 +27,7 @@ export function groupIntoThreads(messages: ProcessedMessage[]): ProcessedMessage
 
     const root = rootMap.get(msg.rootId)
     if (root) {
-      root.replies!.push(msg)
+      root.replies?.push(msg)
     } else {
       standaloneReplies.push(msg)
     }

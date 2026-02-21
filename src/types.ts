@@ -33,8 +33,8 @@ export interface Post {
   type: string
   props: Record<string, unknown>
   hashtags: string
-  root_id: string           // empty = root post, non-empty = reply to this post
-  reply_count: number       // number of replies (root posts only)
+  root_id: string // empty = root post, non-empty = reply to this post
+  reply_count: number // number of replies (root posts only)
   file_ids: string[]
   pending_post_id: string
   metadata?: PostMetadata

@@ -1,30 +1,29 @@
 // CLI command handlers
 
+import {
+  getAllChannelPosts,
+  getChannel,
+  getDMChannelByUsername,
+  getMe,
+  getMyDMChannels,
+  getOtherUserIdFromDMChannel,
+  getPostThread,
+  getUser,
+  getUsersByIds,
+  initClient,
+  parseDuration,
+} from './api'
+import { formatJSON, formatMarkdown, formatPretty } from './formatters'
+import { preprocess } from './preprocessing'
 import type {
   Channel,
   CLIOptions,
   DMOutput,
   DMsOptions,
-  Post,
   ProcessedChannel,
   ProcessedMessage,
   Redaction,
 } from './types'
-import {
-  initClient,
-  getMyDMChannels,
-  getOtherUserIdFromDMChannel,
-  getAllChannelPosts,
-  getPostThread,
-  parseDuration,
-  getMe,
-  getUser,
-  getUsersByIds,
-  getDMChannelByUsername,
-  getChannel,
-} from './api'
-import { preprocess } from './preprocessing'
-import { formatJSON, formatMarkdown, formatPretty } from './formatters'
 import { formatDate, formatRelativeTime, groupIntoThreads } from './utils'
 
 // List all DM channels
@@ -107,7 +106,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
       try {
         const ch = await getDMChannelByUsername(username)
         if (ch) channels.push(ch)
-      } catch (err) {
+      } catch (_err) {
         console.error(`Warning: Could not find DM channel with @${username}`)
       }
     }
@@ -245,15 +244,17 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   const otherUserId = channel ? getOtherUserIdFromDMChannel(channel, me.id) : null
   const otherUser = otherUserId ? await getUser(otherUserId) : null
 
-  const outputs: DMOutput[] = [{
-    channel: {
-      id: rootPost?.channel_id || '',
-      otherUser: otherUser?.username || 'unknown',
-      otherUserId: otherUserId || 'unknown',
+  const outputs: DMOutput[] = [
+    {
+      channel: {
+        id: rootPost?.channel_id || '',
+        otherUser: otherUser?.username || 'unknown',
+        otherUserId: otherUserId || 'unknown',
+      },
+      messages: groupIntoThreads(messages),
+      redactions: allRedactions,
     },
-    messages: groupIntoThreads(messages),
-    redactions: allRedactions,
-  }]
+  ]
 
   formatOutput(outputs, options)
 }

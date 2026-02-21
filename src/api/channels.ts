@@ -27,9 +27,7 @@ export async function getMyGroupDMChannels(): Promise<Channel[]> {
   return channels.filter((ch) => ch.type === 'G')
 }
 
-export async function getDMChannelWithUser(
-  userId: string
-): Promise<Channel | null> {
+export async function getDMChannelWithUser(userId: string): Promise<Channel | null> {
   const me = await getMe()
   const channels = await getMyDMChannels()
 
@@ -43,9 +41,7 @@ export async function getDMChannelWithUser(
   )
 }
 
-export async function getDMChannelByUsername(
-  username: string
-): Promise<Channel | null> {
+export async function getDMChannelByUsername(username: string): Promise<Channel | null> {
   const user = await getUserByUsername(username)
   return getDMChannelWithUser(user.id)
 }
@@ -57,10 +53,7 @@ export async function getChannel(channelId: string): Promise<Channel> {
 
 // Extract the other user's ID from a DM channel name
 // DM channel names are formatted as "{userId1}__{userId2}" sorted alphabetically
-export function getOtherUserIdFromDMChannel(
-  channel: Channel,
-  myUserId: string
-): string | null {
+export function getOtherUserIdFromDMChannel(channel: Channel, myUserId: string): string | null {
   if (channel.type !== 'D') return null
 
   const parts = channel.name.split('__')

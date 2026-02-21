@@ -1,4 +1,4 @@
-import { test, expect, describe } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { detectSecrets, maskSecret, redactSecrets } from '../../src/preprocessing/secrets'
 
 describe('detectSecrets', () => {
@@ -48,10 +48,10 @@ describe('detectSecrets', () => {
   })
 
   test('detects newly added provider token patterns', () => {
-    const githubPat = 'github_pat_' + 'a'.repeat(22)
-    const openaiProject = 'sk-proj-' + 'A'.repeat(32)
-    const anthropic = 'sk-ant-' + 'b'.repeat(32)
-    const google = 'AIza' + 'c'.repeat(35)
+    const githubPat = `github_pat_${'a'.repeat(22)}`
+    const openaiProject = `sk-proj-${'A'.repeat(32)}`
+    const anthropic = `sk-ant-${'b'.repeat(32)}`
+    const google = `AIza${'c'.repeat(35)}`
     const text = `${githubPat} ${openaiProject} ${anthropic} ${google}`
     const secrets = detectSecrets(text)
     const types = new Set(secrets.map((s) => s.type))

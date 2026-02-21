@@ -47,8 +47,7 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
   {
     name: 'slack_webhook',
-    pattern:
-      /(https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[a-zA-Z0-9]+)/g,
+    pattern: /(https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[a-zA-Z0-9]+)/g,
   },
 
   // Discord
@@ -58,8 +57,7 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
   {
     name: 'discord_webhook',
-    pattern:
-      /(https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+)/g,
+    pattern: /(https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+)/g,
   },
 
   // JWTs
@@ -88,15 +86,13 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   // Generic API keys (labeled)
   {
     name: 'api_key',
-    pattern:
-      /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+["']?([A-Za-z0-9_\-]{20,})["']?/gi,
+    pattern: /(?:api[_-]?key|apikey|api[_-]?secret)["\s:=]+["']?([A-Za-z0-9_-]{20,})["']?/gi,
   },
 
   // Generic password fields
   {
     name: 'password',
-    pattern:
-      /(?:password|passwd|pwd|secret)["\s:=]+["']?([^\s"']{8,})["']?/gi,
+    pattern: /(?:password|passwd|pwd|secret)["\s:=]+["']?([^\s"']{8,})["']?/gi,
   },
 
   // Private keys
@@ -167,7 +163,6 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   // This catches things like randomly generated tokens
   {
     name: 'high_entropy_secret',
-    pattern:
-      /(?:token|secret|key|auth|credential)["\s:=]+["']?([A-Za-z0-9_\-]{32,64})["']?/gi,
+    pattern: /(?:token|secret|key|auth|credential)["\s:=]+["']?([A-Za-z0-9_-]{32,64})["']?/gi,
   },
 ]
