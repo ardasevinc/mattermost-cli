@@ -9,10 +9,11 @@ A TypeScript + Bun CLI tool to fetch and display direct messages from Mattermost
 |--------|----------|
 | Auth | Personal access token (env var) |
 | DM Scope | All DMs, filterable by specific users |
-| Output | Markdown default, `--json` flag, pretty terminal |
+| Threading | Threaded output by default, `--no-threads` to flatten |
+| Output | Pretty terminal for TTY, markdown for pipe/non-TTY, `--json` flag |
 | Time Range | `--since` (duration) and `--limit` (count) flags |
 | Style | One-shot command |
-| Secret Handling | Always redact API keys/tokens + credentials, partial mask (show first/last chars) |
+| Secret Handling | Redact by default; can disable via `--no-redact` / `MM_REDACT=false` / config |
 | Future | Modular design for LLM task extraction |
 
 ---
@@ -24,6 +25,7 @@ A TypeScript + Bun CLI tool to fetch and display direct messages from Mattermost
 ```bash
 MM_URL=https://mattermost.example.com
 MM_TOKEN=your-personal-access-token
+MM_REDACT=false
 ```
 
 ### Commands
@@ -38,6 +40,9 @@ mm dms [options]
 # Fetch DMs from specific user
 mm dms --user=<username>
 mm dms -u bob -u alice    # Multiple users
+
+# Fetch one thread
+mm thread <postId>
 ```
 
 ### Global Options
@@ -47,6 +52,12 @@ mm dms -u bob -u alice    # Multiple users
 --url             Mattermost server URL (or MM_URL env)
 --json            Output as JSON
 --no-color        Disable colored output
+-r, --relative    Show relative times
+--no-relative     Show absolute times
+--redact          Enable secret redaction (default)
+--no-redact       Disable secret redaction
+--threads         Show thread structure (default)
+--no-threads      Flatten thread replies
 ```
 
 ### DMs Options
@@ -56,6 +67,12 @@ mm dms -u bob -u alice    # Multiple users
 --limit, -l       Max messages to fetch (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 --channel, -c     Specific channel ID (skip channel lookup)
+```
+
+### Thread Command
+
+```bash
+thread <postId>   Fetch and display one thread
 ```
 
 ---

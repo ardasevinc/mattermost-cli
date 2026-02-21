@@ -5,6 +5,8 @@ A CLI tool to fetch and display Mattermost direct messages with automatic secret
 ## Features
 
 - Fetch DMs from all channels or filter by specific users
+- Thread-aware output by default (`--no-threads` to flatten)
+- Fetch a single thread via `mm thread <postId>`
 - Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
 - Multiple output formats: pretty terminal, markdown, JSON
 - Time-based filtering (`--since`) and message limits (`--limit`)
@@ -71,6 +73,8 @@ token = "your-personal-access-token"
 ```bash
 export MM_URL="https://mattermost.example.com"
 export MM_TOKEN="your-personal-access-token"
+# Optional: disable redaction globally
+export MM_REDACT="false"
 ```
 
 ### Option 3: CLI flags
@@ -131,7 +135,11 @@ Global:
   --url <url>             Mattermost server URL (or MM_URL env)
   --json                  Output as JSON
   --no-color              Disable colored output
+  -r, --relative          Show relative times
+  --no-relative           Show absolute times
+  --redact                Enable secret redaction (default)
   --no-redact             Disable secret redaction (or MM_REDACT=false env)
+  --threads               Show thread structure (default)
   --no-threads            Flatten thread replies
 
 DMs:
@@ -165,6 +173,9 @@ Development requires [Bun](https://bun.sh) (the published package works with any
 
 ```bash
 bun install     # Install dependencies
+bun run lint    # Biome lint
+bun run check   # Biome full check
+bun x tsc --noEmit  # Typecheck
 bun test        # Run tests
 bun run build   # Build for npm
 bun run mm      # Run CLI from source
