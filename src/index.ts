@@ -26,6 +26,15 @@ function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolea
   return true // secure by default
 }
 
+function validateLimit(value: string): number {
+  const n = parseInt(value, 10)
+  if (isNaN(n) || n <= 0) {
+    console.error(`Error: --limit must be a positive number, got "${value}"`)
+    process.exit(1)
+  }
+  return n
+}
+
 const program = new Command()
 
 program
@@ -41,6 +50,7 @@ program
   .option('--no-color', 'Disable colored output')
   .option('-r, --relative', 'Show times as relative (e.g., "2 days ago"); auto-enabled under AI agents')
   .option('--no-relative', 'Show absolute dates/times')
+  .option('--redact', 'Enable secret redaction (default)')
   .option('--no-redact', 'Disable secret redaction')
 
 // Resolve config from CLI options → env vars → config file
@@ -166,7 +176,7 @@ program
         relative: resolveRelative(globalOpts),
         redact: resolveRedact(globalOpts, config.fileConfig),
         user: cmdOpts.user || [],
-        limit: parseInt(cmdOpts.limit, 10),
+        limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,
       })

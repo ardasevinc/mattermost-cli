@@ -120,6 +120,10 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     process.exit(1)
   }
 
+  if (!options.redact) {
+    console.error('Warning: Secret redaction is disabled. Output may contain secrets.')
+  }
+
   // Parse time filter
   const since = options.since ? parseDuration(options.since) : undefined
 

@@ -29,6 +29,11 @@ export const SECRET_PATTERNS: SecretPattern[] = [
     pattern: /\b(gho_[A-Za-z0-9]{36,255})\b/g,
   },
 
+  {
+    name: 'github_fine_grained_token',
+    pattern: /\b(github_pat_[A-Za-z0-9_]{22,255})\b/g,
+  },
+
   // GitLab
   {
     name: 'gitlab_token',
@@ -123,10 +128,26 @@ export const SECRET_PATTERNS: SecretPattern[] = [
     pattern: /\b(SK[a-f0-9]{32})\b/g,
   },
 
-  // OpenAI / Anthropic
+  // OpenAI
   {
     name: 'openai_key',
     pattern: /\b(sk-[A-Za-z0-9]{32,})\b/g,
+  },
+  {
+    name: 'openai_project_key',
+    pattern: /\b(sk-proj-[A-Za-z0-9_-]{32,})\b/g,
+  },
+
+  // Anthropic
+  {
+    name: 'anthropic_key',
+    pattern: /\b(sk-ant-[A-Za-z0-9_-]{32,})\b/g,
+  },
+
+  // Google
+  {
+    name: 'google_api_key',
+    pattern: /\b(AIza[A-Za-z0-9_-]{35})\b/g,
   },
 
   // Heroku

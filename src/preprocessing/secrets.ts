@@ -23,7 +23,8 @@ export function detectSecrets(text: string): DetectedSecret[] {
     while ((match = pattern.exec(text)) !== null) {
       // Use captured group if available, otherwise full match
       const value = match[1] || match[0]
-      const start = match.index + (match[0].indexOf(value) || 0)
+      const offset = match[0].indexOf(value)
+      const start = match.index + (offset >= 0 ? offset : 0)
       const end = start + value.length
       const key = `${start}:${end}`
 

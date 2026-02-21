@@ -65,13 +65,6 @@ export interface PostsResponse {
   prev_post_id: string
 }
 
-// Config file types
-
-export interface FileConfig {
-  url?: string
-  token?: string
-}
-
 // CLI types
 
 export interface CLIOptions {
