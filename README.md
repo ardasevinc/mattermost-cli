@@ -241,6 +241,14 @@ Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while pre
 
 **Note:** Redaction happens on display. Original messages are not modified on the server.
 
+## AI Agent Skill
+
+This repo ships an agent skill for the [Vercel Skills CLI](https://github.com/vercel-labs/skills). Install it to give your AI coding agent access to Mattermost:
+
+```bash
+bunx skills@latest add ardasevinc/mattermost-cli --skill mattermost-cli
+```
+
 ## Contributing
 
 Development requires [Bun](https://bun.sh) (the published package works with any runtime).
