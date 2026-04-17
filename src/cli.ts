@@ -366,11 +366,15 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   }
 
   // `--limit` for DMs is a total output budget across all matched DM channels.
-  const selectedPostIds = new Set(takeMostRecentPosts(allPosts, options.limit).map((post) => post.id))
+  const selectedPostIds = new Set(
+    takeMostRecentPosts(allPosts, options.limit).map((post) => post.id),
+  )
   const outputs: MessageOutput[] = []
 
   for (const channel of channels) {
-    const posts = (channelPosts.get(channel.id) ?? []).filter((post) => selectedPostIds.has(post.id))
+    const posts = (channelPosts.get(channel.id) ?? []).filter((post) =>
+      selectedPostIds.has(post.id),
+    )
     if (posts.length === 0) continue
 
     const processedChannel = await buildProcessedChannel(channel, me.id)
