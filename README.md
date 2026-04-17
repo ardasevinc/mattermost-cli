@@ -119,6 +119,8 @@ mm dms --json
 mm dms --no-threads
 ```
 
+`mm dms --limit` is a total output cap across all matched DM channels, not a per-channel cap.
+
 ### Fetch a specific thread
 
 ```bash
@@ -187,7 +189,7 @@ Global:
 
 DMs:
   -u, --user <username>   Filter by username (repeatable)
-  -l, --limit <number>    Max messages to fetch (default: 50)
+  -l, --limit <number>    Max total messages across matched DMs (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   -c, --channel <id>      Specific channel ID
 

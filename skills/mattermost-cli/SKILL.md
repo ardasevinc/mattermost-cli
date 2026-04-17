@@ -71,6 +71,8 @@ mm dms --since 30d --limit 100     # more history
 mm dms -c <channel-id>             # specific DM channel by ID
 ```
 
+`mm dms --limit` is a total output cap across all matched DM channels.
+
 ### Fetch Channel Messages
 ```bash
 mm channel general                 # last 7 days from #general

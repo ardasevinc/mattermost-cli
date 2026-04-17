@@ -69,7 +69,7 @@ mm channel #dev --team myteam
 
 ```
 --user, -u        Filter by username (repeatable)
---limit, -l       Max messages to fetch (default: 50)
+--limit, -l       Max total messages across matched DMs (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 --channel, -c     Specific channel ID (skip channel lookup)
 ```
