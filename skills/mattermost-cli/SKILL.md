@@ -9,7 +9,7 @@ description: >-
   unread messages, or finding tasks mentioned in chat. Also use when the user needs context
   from team communication, wants to find action items from conversations, or needs to monitor
   a channel for updates in real-time.
-version: 1.4.1
+version: 1.4.2
 ---
 
 # Mattermost CLI
