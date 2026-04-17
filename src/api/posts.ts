@@ -34,6 +34,12 @@ export async function getChannelPosts(
   return posts
 }
 
+function byMostRecentPost<T extends Pick<Post, 'create_at' | 'id'>>(a: T, b: T): number {
+  const diff = b.create_at - a.create_at
+  if (diff !== 0) return diff
+  return a.id.localeCompare(b.id)
+}
+
 // Fetch all posts with pagination, respecting limit and since
 export async function getAllChannelPosts(
   channelId: string,
@@ -70,6 +76,13 @@ export async function getAllChannelPosts(
   }
 
   return allPosts.slice(0, limit)
+}
+
+export function takeMostRecentPosts<T extends Pick<Post, 'create_at' | 'id'>>(
+  posts: T[],
+  limit: number,
+): T[] {
+  return [...posts].sort(byMostRecentPost).slice(0, limit)
 }
 
 // Fetch a full thread (root + all replies)

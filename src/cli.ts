@@ -21,6 +21,7 @@ import {
   parseDuration,
   resolveTeamId,
   searchPosts,
+  takeMostRecentPosts,
 } from './api'
 import { formatJSON, formatMarkdown, formatPretty } from './formatters'
 import { preprocess } from './preprocessing'
@@ -345,13 +346,31 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   printRedactionWarning(options.redact)
 
   const since = options.since ? parseDuration(options.since) : undefined
-  const outputs: MessageOutput[] = []
+  const channelPosts = new Map<string, Post[]>()
+  const allPosts: Post[] = []
 
   for (const channel of channels) {
     const posts = await getAllChannelPosts(channel.id, {
       limit: options.limit,
       since,
     })
+    if (posts.length === 0) continue
+
+    channelPosts.set(channel.id, posts)
+    allPosts.push(...posts)
+  }
+
+  if (allPosts.length === 0) {
+    console.error('No messages found')
+    process.exit(1)
+  }
+
+  // `--limit` for DMs is a total output budget across all matched DM channels.
+  const selectedPostIds = new Set(takeMostRecentPosts(allPosts, options.limit).map((post) => post.id))
+  const outputs: MessageOutput[] = []
+
+  for (const channel of channels) {
+    const posts = (channelPosts.get(channel.id) ?? []).filter((post) => selectedPostIds.has(post.id))
     if (posts.length === 0) continue
 
     const processedChannel = await buildProcessedChannel(channel, me.id)
@@ -366,11 +385,6 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
       messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions,
     })
-  }
-
-  if (outputs.length === 0) {
-    console.error('No messages found')
-    process.exit(1)
   }
 
   formatOutput(outputs, options)

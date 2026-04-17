@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parseDuration } from '../../src/api/posts'
+import { parseDuration, takeMostRecentPosts } from '../../src/api/posts'
 
 describe('parseDuration', () => {
   test('parses hours', () => {
@@ -39,5 +39,31 @@ describe('parseDuration', () => {
     expect(() => parseDuration('invalid')).toThrow()
     expect(() => parseDuration('24')).toThrow()
     expect(() => parseDuration('h')).toThrow()
+  })
+})
+
+describe('takeMostRecentPosts', () => {
+  test('keeps the most recent posts across channels under a global limit', () => {
+    const posts = [
+      { id: 'a1', channel_id: 'chan-a', create_at: 1000 },
+      { id: 'b1', channel_id: 'chan-b', create_at: 5000 },
+      { id: 'a2', channel_id: 'chan-a', create_at: 4000 },
+      { id: 'b2', channel_id: 'chan-b', create_at: 3000 },
+    ]
+
+    const result = takeMostRecentPosts(posts, 2)
+
+    expect(result.map((post) => post.id)).toEqual(['b1', 'a2'])
+  })
+
+  test('uses post id as a stable tiebreaker when timestamps match', () => {
+    const posts = [
+      { id: 'post-b', channel_id: 'chan-a', create_at: 1000 },
+      { id: 'post-a', channel_id: 'chan-b', create_at: 1000 },
+    ]
+
+    const result = takeMostRecentPosts(posts, 2)
+
+    expect(result.map((post) => post.id)).toEqual(['post-a', 'post-b'])
   })
 })
