@@ -161,7 +161,15 @@ describe('message sending handlers', () => {
       .mockResolvedValueOnce(Response.json({ id: 'me', username: 'sender' }))
       .mockResolvedValueOnce(Response.json({ id: 'recipient', username: 'alice' }))
       .mockResolvedValueOnce(Response.json([]))
-      .mockResolvedValueOnce(Response.json({ id: 'channel-id', type: 'D', name: 'me__recipient' }))
+      .mockResolvedValueOnce(
+        Response.json({
+          id: '   ',
+          type: 'D',
+          name: 'me__recipient',
+          display_name: '',
+          team_id: '',
+        }),
+      )
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(

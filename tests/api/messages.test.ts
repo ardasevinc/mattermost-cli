@@ -37,6 +37,7 @@ describe('message write API', () => {
 
   test.each([
     [{ id: '', type: 'D', name: 'me__recipient' }],
+    [{ id: '   ', type: 'D', name: 'me__recipient', display_name: '', team_id: '' }],
     [{ id: 'channel', type: 'G', name: 'me__recipient' }],
     [{ id: 'channel', type: 'D', name: 'me__someone-else' }],
     [{ id: 'channel', type: 'D', name: 'me__recipient', display_name: '', team_id: 'team' }],
