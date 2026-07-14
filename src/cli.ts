@@ -275,17 +275,34 @@ async function buildOutputsFromPosts(
     RetrievalMetadata['selection'],
     'source' | 'requestedLimit' | 'since' | 'queryTruncated'
   >,
+  knownChannels: Map<string, Channel> = new Map(),
 ): Promise<MessageOutput[]> {
-  const userIds = [...new Set(posts.map((post) => post.user_id))]
-  if (userIds.length > 0) {
-    await getUsersByIds(userIds)
-  }
-
   const grouped = groupPostsByChannel(posts)
   const outputs: MessageOutput[] = []
+  const hydratedGroups: Array<{
+    channelId: string
+    seedPosts: Post[]
+    channelPosts: Post[]
+    visibleThreads: RetrievalMetadata['visibleThreads']
+  }> = []
 
-  for (const [channelId, channelPosts] of grouped) {
-    const channel = await getChannel(channelId)
+  for (const [channelId, seedPosts] of grouped) {
+    const { posts: channelPosts, visibleThreads } = await hydrateVisibleThreads(
+      seedPosts,
+      options.threads,
+    )
+    hydratedGroups.push({ channelId, seedPosts, channelPosts, visibleThreads })
+  }
+
+  const userIds = [
+    ...new Set(
+      hydratedGroups.flatMap(({ channelPosts }) => channelPosts.map((post) => post.user_id)),
+    ),
+  ]
+  if (userIds.length > 0) await getUsersByIds(userIds)
+
+  for (const { channelId, seedPosts, channelPosts, visibleThreads } of hydratedGroups) {
+    const channel = knownChannels.get(channelId) ?? (await getChannel(channelId))
     const processedChannel = await buildProcessedChannel(channel, myUserId)
     const { messages, redactions } = await processMessages(
       channelPosts,
@@ -298,11 +315,92 @@ async function buildOutputsFromPosts(
       channel: processedChannel,
       messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions,
-      retrieval: retrievalMetadata(retrieval, channelPosts.length),
+      retrieval: retrievalMetadata(
+        retrieval,
+        seedPosts.length,
+        visibleThreads,
+        channelPosts.length,
+      ),
     })
   }
 
   return outputs
+}
+
+export async function hydrateVisibleThreads(
+  seedPosts: Post[],
+  requested: boolean,
+): Promise<{ posts: Post[]; visibleThreads: RetrievalMetadata['visibleThreads'] }> {
+  if (!requested) {
+    return {
+      posts: seedPosts,
+      visibleThreads: { status: 'not_requested', hydratedRootCount: 0, failedRootIds: [] },
+    }
+  }
+
+  const postsById = new Map(seedPosts.map((post) => [post.id, post]))
+  const rootIds = [
+    ...new Set(
+      seedPosts.flatMap((post) =>
+        post.root_id ? [post.root_id] : post.reply_count > 0 ? [post.id] : [],
+      ),
+    ),
+  ]
+  if (rootIds.length === 0) {
+    return {
+      posts: seedPosts,
+      visibleThreads: { status: 'complete', hydratedRootCount: 0, failedRootIds: [] },
+    }
+  }
+
+  const failedRootIdSet = new Set<string>()
+  let hydratedRootCount = 0
+  let nextIndex = 0
+  const hydrateRoot = async (rootId: string) => {
+    const existingRoot = postsById.get(rootId)
+    const loadedReplyCount = seedPosts.filter((post) => post.root_id === rootId).length
+    if (existingRoot && loadedReplyCount >= existingRoot.reply_count) {
+      hydratedRootCount += 1
+      return
+    }
+
+    try {
+      const result = await getPostThread(rootId)
+      for (const post of result.posts) postsById.set(post.id, post)
+      const root = result.posts.find((post) => post.id === rootId && !post.root_id)
+      if (result.truncated === false && root) {
+        hydratedRootCount += 1
+      } else {
+        failedRootIdSet.add(rootId)
+        console.error(
+          `Warning: Thread ${sanitizeTerminalLabel(rootId)} could only be partially hydrated.`,
+        )
+      }
+    } catch {
+      failedRootIdSet.add(rootId)
+      console.error(`Warning: Could not hydrate thread ${sanitizeTerminalLabel(rootId)}.`)
+    }
+  }
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex
+      nextIndex += 1
+      const rootId = rootIds[index]
+      if (rootId === undefined) return
+      await hydrateRoot(rootId)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, rootIds.length) }, () => worker()))
+  const failedRootIds = rootIds.filter((rootId) => failedRootIdSet.has(rootId))
+
+  return {
+    posts: [...postsById.values()],
+    visibleThreads: {
+      status: failedRootIds.length === 0 ? 'complete' : 'partial',
+      hydratedRootCount,
+      failedRootIds,
+    },
+  }
 }
 
 function retrievalMetadata(
@@ -316,11 +414,12 @@ function retrievalMetadata(
     hydratedRootCount: 0,
     failedRootIds: [],
   },
+  visiblePostCount = selectedCount,
 ): RetrievalMetadata {
   return {
     selection: { ...selection, selectedCount },
     visibleThreads,
-    visiblePostCount: selectedCount,
+    visiblePostCount,
     deletedPostsIncluded: false,
   }
 }
@@ -500,41 +599,19 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     takeMostRecentPosts(allPosts, options.limit).map((post) => post.id),
   )
   const queryTruncated = mergeTruncation(truncationStates, allPosts.length, options.limit)
-  const outputs: MessageOutput[] = []
-
-  for (const channel of channels) {
-    const posts = (channelPosts.get(channel.id) ?? []).filter((post) =>
-      selectedPostIds.has(post.id),
-    )
-    if (posts.length === 0) continue
-
-    const processedChannel = await buildProcessedChannel(channel, me.id)
-    const userIds = [...new Set(posts.map((post) => post.user_id))]
-    if (userIds.length > 0) {
-      await getUsersByIds(userIds)
-    }
-    const { messages, redactions } = await processMessages(
-      posts,
-      me.id,
-      options.redact,
-      options.url,
-    )
-
-    outputs.push({
-      channel: processedChannel,
-      messages: options.threads ? groupIntoThreads(messages) : messages,
-      redactions,
-      retrieval: retrievalMetadata(
-        {
-          source: 'recent',
-          requestedLimit: options.limit,
-          since: since === undefined ? null : new Date(since).toISOString(),
-          queryTruncated,
-        },
-        posts.length,
-      ),
-    })
-  }
+  const selectedPosts = allPosts.filter((post) => selectedPostIds.has(post.id))
+  const outputs = await buildOutputsFromPosts(
+    selectedPosts,
+    me.id,
+    options,
+    {
+      source: 'recent',
+      requestedLimit: options.limit,
+      since: since === undefined ? null : new Date(since).toISOString(),
+      queryTruncated,
+    },
+    new Map(channels.map((channel) => [channel.id, channel])),
+  )
 
   formatOutput(outputs, options)
 }
@@ -560,33 +637,19 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
     process.exit(1)
   }
 
-  const userIds = [...new Set(posts.map((post) => post.user_id))]
-  if (userIds.length > 0) {
-    await getUsersByIds(userIds)
-  }
-
-  const processedChannel = await buildProcessedChannel(channel, me.id)
-  const { messages, redactions } = await processMessages(posts, me.id, options.redact, options.url)
-
-  formatOutput(
-    [
-      {
-        channel: processedChannel,
-        messages: options.threads ? groupIntoThreads(messages) : messages,
-        redactions,
-        retrieval: retrievalMetadata(
-          {
-            source: 'recent',
-            requestedLimit: options.limit,
-            since: since === undefined ? null : new Date(since).toISOString(),
-            queryTruncated: result.truncated,
-          },
-          posts.length,
-        ),
-      },
-    ],
+  const outputs = await buildOutputsFromPosts(
+    posts,
+    me.id,
     options,
+    {
+      source: 'recent',
+      requestedLimit: options.limit,
+      since: since === undefined ? null : new Date(since).toISOString(),
+      queryTruncated: result.truncated,
+    },
+    new Map([[channel.id, channel]]),
   )
+  formatOutput(outputs, options)
 }
 
 export async function fetchThread(options: CLIOptions & { postId: string }): Promise<void> {
@@ -607,6 +670,13 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   const channelPost = rootPost ?? posts[0]
   const channel = channelPost ? await getChannel(channelPost.channel_id) : null
   const missingRootId = rootPost ? undefined : posts.find((post) => post.root_id)?.root_id
+  const requestedRootId = rootPost?.id ?? missingRootId ?? options.postId
+  const threadComplete = result.truncated === false && rootPost !== undefined
+  if (result.truncated !== false || !rootPost) {
+    console.error(
+      `Warning: Thread ${sanitizeTerminalLabel(requestedRootId)} could only be partially hydrated.`,
+    )
+  }
 
   const userIds = [...new Set(posts.map((post) => post.user_id))]
   if (userIds.length > 0) {
@@ -638,9 +708,9 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
           },
           posts.length,
           {
-            status: result.truncated === false && rootPost ? 'complete' : 'partial',
-            hydratedRootCount: rootPost ? 1 : 0,
-            failedRootIds: missingRootId ? [missingRootId] : [],
+            status: threadComplete ? 'complete' : 'partial',
+            hydratedRootCount: threadComplete ? 1 : 0,
+            failedRootIds: threadComplete ? [] : [requestedRootId],
           },
         ),
       },
@@ -795,6 +865,27 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
     return
   }
 
+  const buildPeekOutput = async (entry: UnreadSummaryItem): Promise<MessageOutput | undefined> => {
+    const result = await getAllChannelPosts(entry.channel.id, {
+      limit: options.peek,
+      since: entry.lastViewedAt || undefined,
+    })
+    if (result.posts.length === 0) return undefined
+    const outputs = await buildOutputsFromPosts(
+      result.posts,
+      me.id,
+      options,
+      {
+        source: 'unread',
+        requestedLimit: options.peek ?? null,
+        since: entry.lastViewedAt ? new Date(entry.lastViewedAt).toISOString() : null,
+        queryTruncated: result.truncated,
+      },
+      new Map([[entry.channel.id, entry.channel]]),
+    )
+    return outputs[0]
+  }
+
   if (options.json) {
     const result: {
       unread: Array<{
@@ -817,37 +908,8 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
       const peekOutputs: MessageOutput[] = []
 
       for (const entry of sortedEntries) {
-        const result = await getAllChannelPosts(entry.channel.id, {
-          limit: options.peek,
-          since: entry.lastViewedAt || undefined,
-        })
-        const posts = result.posts
-        if (posts.length === 0) continue
-
-        const userIds = [...new Set(posts.map((post) => post.user_id))]
-        if (userIds.length > 0) await getUsersByIds(userIds)
-
-        const { messages, redactions } = await processMessages(
-          posts,
-          me.id,
-          options.redact,
-          options.url,
-        )
-
-        peekOutputs.push({
-          channel: entry.processedChannel,
-          messages: options.threads ? groupIntoThreads(messages) : messages,
-          redactions,
-          retrieval: retrievalMetadata(
-            {
-              source: 'unread',
-              requestedLimit: options.peek,
-              since: entry.lastViewedAt ? new Date(entry.lastViewedAt).toISOString() : null,
-              queryTruncated: result.truncated,
-            },
-            posts.length,
-          ),
-        })
+        const output = await buildPeekOutput(entry)
+        if (output) peekOutputs.push(output)
       }
 
       result.peek = peekOutputs
@@ -872,37 +934,8 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
   const peekOutputs: MessageOutput[] = []
 
   for (const entry of sortedEntries) {
-    const result = await getAllChannelPosts(entry.channel.id, {
-      limit: options.peek,
-      since: entry.lastViewedAt || undefined,
-    })
-    const posts = result.posts
-    if (posts.length === 0) continue
-
-    const userIds = [...new Set(posts.map((post) => post.user_id))]
-    if (userIds.length > 0) await getUsersByIds(userIds)
-
-    const { messages, redactions } = await processMessages(
-      posts,
-      me.id,
-      options.redact,
-      options.url,
-    )
-
-    peekOutputs.push({
-      channel: entry.processedChannel,
-      messages: options.threads ? groupIntoThreads(messages) : messages,
-      redactions,
-      retrieval: retrievalMetadata(
-        {
-          source: 'unread',
-          requestedLimit: options.peek,
-          since: entry.lastViewedAt ? new Date(entry.lastViewedAt).toISOString() : null,
-          queryTruncated: result.truncated,
-        },
-        posts.length,
-      ),
-    })
+    const output = await buildPeekOutput(entry)
+    if (output) peekOutputs.push(output)
   }
 
   if (peekOutputs.length > 0) {

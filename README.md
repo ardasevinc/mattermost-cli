@@ -11,7 +11,7 @@ A CLI tool to fetch and display Mattermost messages (DMs, channels, threads) wit
 - Show unread summary via `mm unread` (optional `--peek`)
 - Watch channel live via `mm watch <channel>`
 - List all channel types via `mm channels` with `--type` filtering
-- Thread-aware output by default (`--no-threads` to flatten)
+- Complete visible threads by default (`--no-threads` returns selected seeds only)
 - Fetch a single thread via `mm thread <postId>`
 - Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
 - Multiple output formats: pretty terminal, markdown, JSON, and JSON Lines for live watch
@@ -115,7 +115,7 @@ mm dms --since 30d --limit 100
 # JSON output (for piping to other tools)
 mm dms --json
 
-# Flatten thread replies
+# Return only selected seed posts (no root/sibling hydration)
 mm dms --no-threads
 ```
 
@@ -195,7 +195,7 @@ Global:
   --redact                Enable secret redaction (default)
   --no-redact             Disable secret redaction (or MM_REDACT=false env)
   --threads               Show thread structure (default)
-  --no-threads            Flatten thread replies
+  --no-threads            Return selected seed posts only (except thread command)
 
 DMs:
   -u, --user <username>   Filter by username (repeatable)
@@ -240,12 +240,16 @@ Thread:
 
 ### Retrieval coverage
 
-`--limit` counts selected seed posts, not complete visible threads. Thread grouping only groups the
-selected slice; it does not fetch missing roots or replies. JSON message outputs include additive
-`retrieval` metadata with the selected count, requested limit and time boundary, whether the query
-was proven truncated, visible post/thread coverage, and the deleted-post policy. A
+`--limit`, `--since`, and search terms select seed posts first. With threads enabled (the default),
+the CLI then fetches the complete visible thread for every selected root or reply. The resulting
+context can exceed `--limit` and can include replies outside the requested time range or search.
+`--no-threads` disables these extra requests and returns only the selected seeds, except `mm thread`
+which always fetches the requested thread. JSON message
+outputs include additive `retrieval` metadata with the selected count, requested limit and time
+boundary, whether the query was proven truncated, visible post/thread coverage, and the deleted-post policy. A
 `queryTruncated` value of `null` means bounded pagination stopped before completeness could be
-proved. Each message also includes its stable post `id` and Mattermost `permalink`.
+proved. `visibleThreads.status: "partial"` and `failedRootIds` report threads the server did not let
+the CLI prove complete. Each message also includes its stable post `id` and Mattermost `permalink`.
 
 ## Security
 

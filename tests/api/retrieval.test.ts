@@ -136,6 +136,99 @@ describe('route-aware retrieval integration', () => {
     expect((await getPostThread('root')).truncated).toBeNull()
   })
 
+  test('proves legacy thread completeness only from root reply counts', async () => {
+    const completeRoot = { ...post('complete-root', 1), root_id: '', reply_count: 1 }
+    const completeReply = { ...post('complete-reply', 2), root_id: 'complete-root', reply_count: 0 }
+    const partialRoot = { ...post('partial-root', 1), root_id: '', reply_count: 2 }
+    const partialReply = { ...post('partial-reply', 2), root_id: 'partial-root', reply_count: 0 }
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/complete-root/thread',
+        handle: () => page([completeRoot, completeReply]),
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/posts/partial-root/thread',
+        handle: () => page([partialRoot, partialReply]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await getPostThread('complete-root')).truncated).toBe(false)
+    expect((await getPostThread('partial-root')).truncated).toBeNull()
+  })
+
+  test('paginates threads with Mattermost cursor casing and dedupes posts', async () => {
+    const root = { ...post('root', 1), root_id: '', reply_count: 2 }
+    const firstReply = { ...post('reply-1', 2), root_id: 'root', reply_count: 0 }
+    const secondReply = { ...post('reply-2', 3), root_id: 'root', reply_count: 0 }
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: ({ url }) =>
+          url.searchParams.has('fromPost')
+            ? { ...page([root, firstReply, secondReply]), has_next: false }
+            : { ...page([root, firstReply]), has_next: true },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getPostThread('root')
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['root', 'reply-1', 'reply-2'])
+    expect(result.truncated).toBe(false)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.url.searchParams.get('perPage')).toBe('200')
+    expect(requests[0]?.url.searchParams.get('direction')).toBe('down')
+    expect(requests[1]?.url.searchParams.get('fromPost')).toBe('reply-1')
+    expect(requests[1]?.url.searchParams.get('fromCreateAt')).toBe('2')
+  })
+
+  test('recovers after an inclusive duplicate-only page advances the cursor', async () => {
+    const root = { ...post('root', 1), root_id: '', reply_count: 2 }
+    const firstReply = { ...post('reply-1', 2), root_id: 'root', reply_count: 0 }
+    const duplicateCursor = { ...root, id: 'cursor', create_at: 3 }
+    const secondReply = { ...post('reply-2', 4), root_id: 'root', reply_count: 0 }
+    let pageNumber = 0
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => {
+          pageNumber += 1
+          if (pageNumber === 1)
+            return { ...page([root, firstReply, duplicateCursor]), has_next: true }
+          if (pageNumber === 2) return { ...page([duplicateCursor, firstReply]), has_next: true }
+          return { ...page([duplicateCursor, secondReply]), has_next: false }
+        },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getPostThread('root')
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['root', 'reply-1', 'cursor', 'reply-2'])
+    expect(result.truncated).toBe(false)
+    expect(requests).toHaveLength(3)
+  })
+
+  test('terminates after bounded duplicate-only cursor stagnation', async () => {
+    const root = { ...post('root', 1), root_id: '', reply_count: 2 }
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({ ...page([root]), has_next: true }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await getPostThread('root')).truncated).toBe(true)
+    expect(requests).toHaveLength(3)
+  })
+
   test('search proves local truncation after accepted filtering and dedupe', async () => {
     installRouteFetch([
       {

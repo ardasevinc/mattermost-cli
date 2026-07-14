@@ -126,21 +126,66 @@ export function takeMostRecentPosts<T extends Pick<Post, 'create_at' | 'id'>>(
 // Fetch a full thread (root + all replies)
 export async function getPostThread(postId: string): Promise<PostRetrievalResult> {
   const client = getClient()
-  const response = await client.get<PostsResponse>(`/posts/${postId}/thread`)
+  const posts = new Map<string, Post>()
+  let fromPost: string | undefined
+  let fromCreateAt: number | undefined
+  let uncertain = false
+  let stagnantPages = 0
+  let successfulPages = 0
 
-  const posts = response.order
-    .map((id) => response.posts[id])
-    .filter((post): post is Post => !!post && post.delete_at === 0)
+  while (true) {
+    const params = new URLSearchParams({ perPage: '200', direction: 'down' })
+    if (fromPost !== undefined) params.set('fromPost', fromPost)
+    if (fromCreateAt !== undefined) params.set('fromCreateAt', String(fromCreateAt))
+    let response: PostsResponse
+    try {
+      response = await client.get<PostsResponse>(`/posts/${postId}/thread?${params}`)
+    } catch (error) {
+      if (successfulPages === 0) throw error
+      return { posts: [...posts.values()], truncated: null }
+    }
+    successfulPages += 1
 
-  return {
-    posts,
-    truncated:
-      response.first_inaccessible_post_time !== undefined &&
-      response.first_inaccessible_post_time > 0
-        ? null
-        : response.has_next === undefined
-          ? null
-          : response.has_next,
+    if (response.first_inaccessible_post_time) uncertain = true
+    let added = 0
+    for (const id of response.order) {
+      const post = response.posts[id]
+      if (!post || post.delete_at !== 0 || posts.has(id)) continue
+      posts.set(id, post)
+      added += 1
+    }
+
+    if (response.has_next !== true) {
+      const visible = [...posts.values()]
+      const root = visible.find((post) => !post.root_id)
+      const visibleReplyCount = root ? visible.filter((post) => post.root_id === root.id).length : 0
+      const legacyComplete =
+        response.has_next === undefined &&
+        root !== undefined &&
+        visibleReplyCount >= root.reply_count
+      return {
+        posts: visible,
+        truncated: uncertain ? null : response.has_next === false || legacyComplete ? false : null,
+      }
+    }
+
+    const cursorPost = [...response.order]
+      .reverse()
+      .map((id) => response.posts[id])
+      .find((post): post is Post => !!post)
+    if (!cursorPost) {
+      return { posts: [...posts.values()], truncated: uncertain ? null : true }
+    }
+
+    const nextFromPost = cursorPost.id
+    const nextFromCreateAt = cursorPost.create_at
+    const cursorAdvanced = nextFromPost !== fromPost || nextFromCreateAt !== fromCreateAt
+    stagnantPages = added > 0 && cursorAdvanced ? 0 : stagnantPages + 1
+    if (stagnantPages >= 2) {
+      return { posts: [...posts.values()], truncated: uncertain ? null : true }
+    }
+    fromPost = nextFromPost
+    fromCreateAt = nextFromCreateAt
   }
 }
 

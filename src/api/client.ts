@@ -3,6 +3,23 @@
 import { sanitizeTerminalLabel } from '../preprocessing'
 import { normalizeServerUrl } from './url'
 
+const MAX_RATE_LIMIT_DELAY_MS = 5 * 60 * 1000
+
+export function rateLimitDelay(response: Pick<Response, 'headers'>, retryCount: number): number {
+  const retryAfter = response.headers.get('Retry-After')
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now()
+    if (Number.isFinite(delay)) return Math.min(Math.max(delay, 0), MAX_RATE_LIMIT_DELAY_MS)
+  }
+
+  const resetSeconds = Number(response.headers.get('X-RateLimit-Reset'))
+  if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+    return Math.min(resetSeconds * 1000, MAX_RATE_LIMIT_DELAY_MS)
+  }
+  return Math.min(2 ** retryCount * 1000, MAX_RATE_LIMIT_DELAY_MS)
+}
+
 export class MattermostClient {
   private baseUrl: string
   private token: string
@@ -27,10 +44,7 @@ export class MattermostClient {
 
     // Handle rate limiting with exponential backoff
     if (response.status === 429 && retryCount < this.maxRetries) {
-      const retryAfter = response.headers.get('Retry-After')
-      const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2 ** retryCount * 1000
-
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      await new Promise((resolve) => setTimeout(resolve, rateLimitDelay(response, retryCount)))
       return this.request<T>(method, path, body, retryCount + 1)
     }
 

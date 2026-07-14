@@ -72,6 +72,7 @@ mm dms -c <channel-id>             # specific DM channel by ID
 ```
 
 `mm dms --limit` is a total output cap across all matched DM channels.
+The limit selects seed messages; complete thread context may make the visible output larger.
 
 ### Fetch Channel Messages
 ```bash
@@ -164,7 +165,7 @@ These apply to all commands:
 | `--redact` | Enable secret redaction (default) |
 | `--no-redact` | Disable secret redaction |
 | `--threads` | Show thread structure (default) |
-| `--no-threads` | Flatten thread replies |
+| `--no-threads` | Return selected seeds only, without hydration requests (except `mm thread`) |
 
 ## Output Formats
 
@@ -176,6 +177,11 @@ These apply to all commands:
 | `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 
 Under AI agents, relative time is auto-enabled ("2 days ago" instead of "29 Jan 2026"). Override with `--no-relative`.
+
+With threads enabled, limits, time windows, and search terms select seed posts first. The CLI then
+hydrates each visible thread, including its root and sibling replies as context. Inspect JSON
+`retrieval.visibleThreads` before treating that context as complete; `partial` lists unproven roots
+in `failedRootIds` while preserving all selected and successfully hydrated posts.
 
 ## Security
 

@@ -9,7 +9,7 @@ A TypeScript + Bun CLI tool to fetch and display Mattermost messages (DMs and ch
 |--------|----------|
 | Auth | Personal access token (env var) |
 | Message Scope | DMs + public/private/group channels |
-| Threading | Threaded output by default, `--no-threads` to flatten |
+| Threading | Complete visible threads by default, `--no-threads` for selected seeds only |
 | Output | Pretty terminal for TTY, markdown for pipe/non-TTY, `--json` flag |
 | Time Range | `--since` (duration) and `--limit` (count) flags |
 | Style | One-shot command |
@@ -62,7 +62,7 @@ mm channel #dev --team myteam
 --redact          Enable secret redaction (default)
 --no-redact       Disable secret redaction
 --threads         Show thread structure (default)
---no-threads      Flatten thread replies
+--no-threads      Return selected seed posts only (except thread command)
 ```
 
 ### DMs Options
@@ -94,6 +94,13 @@ channel <name>    Fetch and display one channel
 ```bash
 thread <postId>   Fetch and display one thread
 ```
+
+Selection limits, time windows, and search predicates apply to seed posts. Thread hydration runs
+after selection, so roots and sibling replies are included as context even when they fall outside
+those predicates, and visible output may exceed the requested limit. Hydration uses bounded
+concurrency and reports partial coverage rather than dropping seed posts when a thread cannot be
+proved complete. `--no-threads` performs no thread hydration requests except for `mm thread`, which
+always fetches the explicitly requested thread.
 
 ---
 

@@ -84,7 +84,7 @@ function expectMetadata(
   })
   expect(output.retrieval.visiblePostCount).toBe(expected.count)
   expect(output.retrieval.visibleThreads).toEqual({
-    status: 'not_requested',
+    status: 'complete',
     hydratedRootCount: 0,
     failedRootIds: [],
   })
@@ -138,23 +138,66 @@ describe('command-level JSON retrieval metadata', () => {
     })
   })
 
+  test('--no-threads returns only thread-shaped seeds without hydration calls', async () => {
+    const general = channel('general')
+    const seed = { ...post('root', 'general', Date.now()), reply_count: 2 }
+    const { requests } = installRouteFetch([
+      ...commonRoutes(),
+      { method: 'GET', path: '/api/v4/teams/team/channels/name/general', handle: () => general },
+      {
+        method: 'GET',
+        path: '/api/v4/channels/general/posts',
+        handle: () => page([seed]),
+      },
+    ])
+    const readOutput = outputLog()
+
+    await fetchChannel({
+      url: serverUrl,
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: false,
+      channel: 'general',
+      limit: 1,
+      since: '24h',
+    })
+
+    const [output] = readOutput() as MessageOutput[]
+    expect(output?.messages.map(({ id }) => id)).toEqual(['root'])
+    expect(output?.retrieval.visibleThreads).toEqual({
+      status: 'not_requested',
+      hydratedRootCount: 0,
+      failedRootIds: [],
+    })
+    expect(output?.retrieval.visiblePostCount).toBe(1)
+    expect(requests.some(({ url }) => url.pathname.includes('/thread'))).toBe(false)
+  })
+
   test.each([
     ['search', 'needle'],
     ['mentions', '@me'],
   ] as const)('%s keeps per-channel counts with global limit/truncation', async (source, text) => {
     const alpha = channel('alpha')
     const beta = channel('beta')
-    installRouteFetch([
+    const alphaPost = { ...post('alpha-new', 'alpha', 3, text), user_id: 'alpha-user' }
+    const betaPost = { ...post('beta-new', 'beta', 2, text), user_id: 'beta-user' }
+    const { requests } = installRouteFetch([
       ...commonRoutes(),
       {
         method: 'POST',
         path: '/api/v4/teams/team/posts/search',
-        handle: () =>
-          searchPage([
-            post('alpha-new', 'alpha', 3, text),
-            post('beta-new', 'beta', 2, text),
-            post('alpha-extra', 'alpha', 1, text),
-          ]),
+        handle: () => searchPage([alphaPost, betaPost, post('alpha-extra', 'alpha', 1, text)]),
+      },
+      {
+        method: 'POST',
+        path: '/api/v4/users/ids',
+        handle: () => [
+          { id: 'alpha-user', username: 'alpha-user' },
+          { id: 'beta-user', username: 'beta-user' },
+        ],
       },
       { method: 'GET', path: '/api/v4/channels/alpha', handle: () => alpha },
       { method: 'GET', path: '/api/v4/channels/beta', handle: () => beta },
@@ -198,6 +241,79 @@ describe('command-level JSON retrieval metadata', () => {
         truncated: true,
       })
     }
+    expect(requests.filter(({ url }) => url.pathname.endsWith('/users/ids'))).toHaveLength(1)
+  })
+
+  test.each([
+    ['search', 'needle'],
+    ['mentions', '@me'],
+  ] as const)('%s keeps matched seed counts separate from hydrated context', async (source, text) => {
+    const general = channel('general')
+    const root = { ...post('root', 'general', 1, 'older context'), reply_count: 2 }
+    const seed = { ...post('seed', 'general', 3, text), root_id: 'root' }
+    const sibling = {
+      ...post('sibling', 'general', 2, 'context sk-abcdefghijklmnopqrstuvwxyz123456'),
+      root_id: 'root',
+      user_id: 'other',
+    }
+    installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => ({ ...searchPage([seed]), has_next: false }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({ ...page([root, sibling, seed]), has_next: false }),
+      },
+      { method: 'GET', path: '/api/v4/channels/general', handle: () => general },
+      {
+        method: 'POST',
+        path: '/api/v4/users/ids',
+        handle: () => [{ id: 'other', username: 'other' }],
+      },
+    ])
+    const readOutput = outputLog()
+
+    if (source === 'search') {
+      await searchMessages({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        query: text,
+        limit: 1,
+      })
+    } else {
+      await fetchMentions({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        limit: 1,
+        mentionNames: [],
+      })
+    }
+
+    const [output] = readOutput() as MessageOutput[]
+    expect(output?.retrieval.selection.selectedCount).toBe(1)
+    expect(output?.retrieval.visiblePostCount).toBe(3)
+    expect(output?.retrieval.visibleThreads.status).toBe('complete')
+    const visible =
+      output?.messages.flatMap((message) => [message, ...(message.replies ?? [])]) ?? []
+    expect(visible.map(({ id }) => id)).toEqual(['root', 'sibling', 'seed'])
+    const hydratedSibling = visible.find(({ id }) => id === 'sibling')
+    expect(hydratedSibling?.user).toBe('other')
+    expect(hydratedSibling?.text).not.toContain('sk-abcdefghijklmnopqrstuvwxyz123456')
+    expect(hydratedSibling?.permalink).toBe(`${serverUrl}/_redirect/pl/sibling`)
   })
 
   test('unread peek reports each channel boundary and selected count', async () => {

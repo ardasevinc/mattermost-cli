@@ -66,7 +66,7 @@ program
   .option('--redact', 'Enable secret redaction (default)')
   .option('--no-redact', 'Disable secret redaction')
   .option('--threads', 'Show thread structure (default)')
-  .option('--no-threads', 'Flatten thread replies')
+  .option('--no-threads', 'Return selected seed posts only (except thread command)')
 
 async function resolveConfig(options: { url?: string; token?: string }): Promise<{
   url: string
