@@ -31,7 +31,7 @@ jobs:
         id: pack
         shell: bash
         run: |
-          tarball=$(npm pack --json | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => process.stdout.write(JSON.parse(input)[0].filename))')
+          tarball=$(npm pack --json --ignore-scripts | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => process.stdout.write(JSON.parse(input)[0].filename))')
           printf 'tarball=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
           actual=$(tar -tzf "$tarball" | LC_ALL=C sort)
           expected=$(printf '%s\n' package/LICENSE package/README.md package/dist/index.js package/package.json | LC_ALL=C sort)
