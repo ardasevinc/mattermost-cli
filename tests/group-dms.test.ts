@@ -222,6 +222,21 @@ describe('group DM retrieval', () => {
     ).rejects.toThrow(message)
   })
 
+  test('protects an active credential used as a wrong-type DM id with --no-redact', async () => {
+    const credential = 'active-dm-token'
+    const channel = { ...group(credential), type: 'G' as const }
+    installRouteFetch([
+      { method: 'GET', path: `/api/v4/channels/${channel.id}`, handle: () => channel },
+    ])
+    await expect(
+      fetchDMs({
+        ...options({ token: credential, redact: false }),
+        user: [],
+        channel: channel.id,
+      } satisfies DMsOptions),
+    ).rejects.toThrow('Channel "[REDACTED:mattermost_credential]" is not a direct-message channel.')
+  })
+
   test('discovers empty DMs with one identity request', async () => {
     const { requests } = installRouteFetch([
       { method: 'GET', path: '/api/v4/users/me', handle: () => me },

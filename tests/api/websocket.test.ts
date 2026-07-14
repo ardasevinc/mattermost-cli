@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { connectWebSocket, getSocketErrorMessage } from '../../src/api/websocket'
+import { preprocess } from '../../src/preprocessing'
 import type { Post } from '../../src/types'
 
 class FakeWebSocket {
@@ -103,6 +104,47 @@ describe('getSocketErrorMessage', () => {
 })
 
 describe('connectWebSocket', () => {
+  test('releases credentials when URL validation fails synchronously', () => {
+    expect(() => connectWebSocket('not a URL', 'invalid-url-token', vi.fn(), vi.fn())).toThrow(
+      'Invalid Mattermost URL',
+    )
+    expect(preprocess('invalid-url-token', { redact: false }).text).toBe('invalid-url-token')
+  })
+
+  test('releases credentials when the initial socket constructor throws', () => {
+    class ThrowingWebSocket {
+      constructor() {
+        throw new Error('socket construction failed')
+      }
+    }
+    expect(() =>
+      connectWebSocket('https://mm.example.com', 'constructor-token', vi.fn(), vi.fn(), {
+        WebSocket: ThrowingWebSocket as unknown as typeof WebSocket,
+      }),
+    ).toThrow('socket construction failed')
+    expect(preprocess('constructor-token', { redact: false }).text).toBe('constructor-token')
+  })
+
+  test('keeps concurrent socket credentials live and releases each on close', () => {
+    const first = connectWebSocket('https://mm.example.com', 'socket-one', vi.fn(), vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const second = connectWebSocket('https://mm.example.com', 'socket-two', vi.fn(), vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    expect(preprocess('socket-one socket-two', { redact: false }).text).toBe(
+      '[REDACTED:mattermost_credential] [REDACTED:mattermost_credential]',
+    )
+    first.close()
+    expect(preprocess('socket-one socket-two', { redact: false }).text).toBe(
+      'socket-one [REDACTED:mattermost_credential]',
+    )
+    second.close()
+    expect(preprocess('socket-one socket-two', { redact: false }).text).toBe(
+      'socket-one socket-two',
+    )
+  })
+
   test('resumes from the next expected server sequence', () => {
     const connection = connectWebSocket('https://mm.example.com/base', 'secret', vi.fn(), vi.fn(), {
       WebSocket: FakeWebSocket as unknown as typeof WebSocket,
@@ -209,6 +251,28 @@ describe('connectWebSocket', () => {
     second.close()
   })
 
+  test('turns a synchronous reconnect constructor failure into bounded fatal cleanup', async () => {
+    class ReconnectThrowingWebSocket extends FakeWebSocket {
+      constructor(url: string | URL) {
+        super(url)
+        if (FakeWebSocket.instances.length > 1) throw new Error('reconnect construction failed')
+      }
+    }
+    const credential = 'reconnect-constructor-token'
+    const onError = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', credential, vi.fn(), onError, {
+      WebSocket: ReconnectThrowingWebSocket as unknown as typeof WebSocket,
+      random: () => 0,
+    })
+    ;(FakeWebSocket.instances[0] as FakeWebSocket).drop()
+    expect(() => vi.advanceTimersByTime(800)).not.toThrow()
+    await connection.done
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith(new Error('WebSocket connection failed.'))
+    expect(preprocess(credential, { redact: false }).text).toBe(credential)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test('error plus close schedules one retry and stale socket callbacks are ignored', () => {
     const onPost = vi.fn()
     const reconnect = vi.fn()
@@ -293,6 +357,74 @@ describe('connectWebSocket', () => {
     connection.close()
   })
 
+  test('normalizes malformed optional post scalars before watch emission', () => {
+    const onPost = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', 'secret', onPost, vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    authenticate(socket)
+    posted(socket, 1, {
+      ...post,
+      reply_count: '7' as unknown as number,
+      is_pinned: 'true' as unknown as boolean,
+    })
+    expect(onPost).toHaveBeenCalledWith(expect.objectContaining({ reply_count: 0 }), 'town', 'arda')
+    expect((onPost.mock.calls[0]?.[0] as Post).is_pinned).toBeUndefined()
+    connection.close()
+  })
+
+  test('uses fixed local close text for hostile FAIL reasons', () => {
+    const credential = 'mattermost-secret-token'
+    const connection = connectWebSocket('https://mm.example.com', credential, vi.fn(), vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    socket.open()
+    socket.message({
+      status: 'FAIL',
+      seq_reply: 999,
+      error: { message: `${credential}\u202e${'x'.repeat(1000)}` },
+    })
+    expect(socket.closeCalls[0]).toEqual([4000, 'request failed'])
+    expect(JSON.stringify(socket.closeCalls)).not.toContain(credential)
+    connection.close()
+  })
+
+  test('does not mistake author-related FAIL text for authentication failure', () => {
+    const onError = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', 'secret', vi.fn(), onError, {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    socket.open()
+    socket.message({ status: 'FAIL', seq_reply: 999, error: { message: 'Author was not found' } })
+    expect(onError).not.toHaveBeenCalled()
+    expect(socket.closeCalls[0]).toEqual([4000, 'request failed'])
+    connection.close()
+  })
+
+  test('normalizes optional WebSocket timestamps outside the ECMAScript Date range', () => {
+    const onPost = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', 'secret', onPost, vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    authenticate(socket)
+    posted(socket, 1, {
+      ...post,
+      update_at: 8.64e15 + 1,
+      edit_at: -8.64e15 - 1,
+      delete_at: Number.POSITIVE_INFINITY,
+    })
+    expect(onPost).toHaveBeenCalledWith(
+      expect.objectContaining({ update_at: 1, edit_at: 0, delete_at: 0 }),
+      'town',
+      'arda',
+    )
+    connection.close()
+  })
+
   test('accepts the maximum finite ECMAScript timestamp without toISOString failure', () => {
     const onPost = vi.fn()
     const connection = connectWebSocket('https://mm.example.com', 'secret', onPost, vi.fn(), {
@@ -335,5 +467,26 @@ describe('connectWebSocket', () => {
     vi.runAllTimers()
     expect(onError).toHaveBeenCalledWith(new Error('Authentication failed. Check your token.'))
     expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(preprocess('secret', { redact: false }).text).toBe('secret')
+  })
+
+  test('cleans up before a throwing fatal-error callback and still settles done', async () => {
+    const credential = 'throwing-callback-token'
+    const onError = vi.fn(() => {
+      expect(preprocess(credential, { redact: false }).text).toBe(credential)
+      throw new Error('callback failure')
+    })
+    const connection = connectWebSocket('https://mm.example.com', credential, vi.fn(), onError, {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    socket.open()
+    const auth = JSON.parse(socket.sent[0] as string) as { seq: number }
+    expect(() =>
+      socket.message({ status: 'FAIL', seq_reply: auth.seq, error: { message: 'Unauthorized' } }),
+    ).not.toThrow()
+    await connection.done
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

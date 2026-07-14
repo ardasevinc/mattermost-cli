@@ -29,7 +29,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('rejects an invalid CLI --type value before running the command', () => {
+test('rejects an invalid CLI --type value after credential protection and before network', () => {
   const result = spawnSync('bun', ['src/index.ts', 'channels', '--type', 'bogus'], {
     cwd: process.cwd(),
     encoding: 'utf8',
@@ -38,7 +38,42 @@ test('rejects an invalid CLI --type value before running the command', () => {
   })
 
   expect(result.status).not.toBe(0)
-  expect(result.stderr).toContain('Allowed choices are all, dm, public, private, group')
+  expect(result.stderr).toContain('Invalid channel type "bogus"')
+})
+
+test.each([
+  ['CLI', ['--token', 'cli-active-token'], { MM_TOKEN: undefined }, 'cli-active-token'],
+  ['env', [], { MM_TOKEN: 'env-active-token' }, 'env-active-token'],
+])('protects the %s token in invalid pre-network --type output with --no-redact', (_, args, env, token) => {
+  const result = spawnSync(
+    'bun',
+    ['src/index.ts', '--no-redact', ...args, 'channels', '--type', token],
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, MM_URL: 'https://mattermost.test', ...env },
+      stdio: 'pipe',
+    },
+  )
+  expect(result.status).not.toBe(0)
+  expect(result.stderr).toContain('[REDACTED:mattermost_credential]')
+  expect(result.stderr).not.toContain(token)
+})
+
+test.each([
+  ['users limit', ['--token', 'bad-limit', 'users', '--limit', 'bad-limit'], {}, 'bad-limit'],
+  ['unread peek', ['unread', '--peek', 'bad-peek'], { MM_TOKEN: 'bad-peek' }, 'bad-peek'],
+  ['DM since', ['--token', 'bad-since', 'dms', '--since', 'bad-since'], {}, 'bad-since'],
+])('does not reflect invalid %s values that equal active credentials', (_, args, env, token) => {
+  const result = spawnSync('bun', ['src/index.ts', '--no-redact', ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: { ...process.env, MM_URL: 'https://mattermost.test', MM_TOKEN: undefined, ...env },
+    stdio: 'pipe',
+  })
+  expect(result.status).not.toBe(0)
+  expect(result.stderr).not.toContain(token)
+  expect(result.stderr).toMatch(/must be a positive number|must use a duration/)
 })
 
 test('rejects an invalid direct call before fetching', async () => {
@@ -117,4 +152,58 @@ test('human channel listing labels group DMs without a hash', async () => {
   const output = log.mock.calls.map(([value]) => String(value)).join('\n')
   expect(output).toContain('Group')
   expect(output).not.toContain('#Group')
+})
+
+test('normalizes malformed channel count and timestamp scalars in JSON output', async () => {
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [
+        {
+          ...channels[0],
+          total_msg_count: '9000',
+          last_post_at: 'tomorrow',
+        },
+      ],
+    },
+  ])
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  await listChannels({
+    url: 'https://mattermost.test',
+    token: 'token',
+    json: true,
+    color: false,
+    relative: false,
+    redact: false,
+    typeFilter: 'all',
+  })
+  expect(JSON.parse(String(log.mock.calls[0]?.[0]))[0]).toMatchObject({
+    messageCount: 0,
+    lastPost: null,
+  })
+})
+
+test('fails generically for a hostile unknown remote channel type', async () => {
+  const hostile = 'X\u202eactive-token'
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [{ ...channels[0], type: hostile }],
+    },
+  ])
+  await expect(
+    listChannels({
+      url: 'https://mattermost.test',
+      token: 'active-token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: false,
+      typeFilter: 'all',
+    }),
+  ).rejects.toThrow('Mattermost returned an unknown channel type.')
 })

@@ -11,10 +11,16 @@ export interface UnreadSortable {
 }
 
 export function calculateUnreadMetrics(channel: Channel, member: ChannelMember): UnreadMetrics {
+  const total = nonNegativeInteger(channel.total_msg_count)
+  const read = nonNegativeInteger(member.msg_count)
   return {
-    unreadCount: Math.max(0, channel.total_msg_count - member.msg_count),
-    mentionCount: Math.max(0, member.mention_count),
+    unreadCount: Math.max(0, total - read),
+    mentionCount: nonNegativeInteger(member.mention_count),
   }
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
 export function sortUnreadEntries<T extends UnreadSortable>(entries: T[]): T[] {

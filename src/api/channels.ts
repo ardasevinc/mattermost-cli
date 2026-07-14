@@ -1,6 +1,6 @@
 // Channel fetching with DM filtering
 
-import { sanitizeTerminalLabel } from '../preprocessing'
+import { preprocess, sanitizeTerminalLabel } from '../preprocessing'
 import type { Channel, ChannelMember, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
@@ -73,6 +73,8 @@ export async function getChannelByName(teamId: string, channelName: string): Pro
 }
 
 export function resolveTeamIdFromList(teams: Team[], teamName?: string): string {
+  const safeLabel = (value: string) =>
+    sanitizeTerminalLabel(preprocess(value, { redact: false }).text)
   if (teams.length === 0) {
     throw new Error('You are not a member of any teams.')
   }
@@ -81,8 +83,8 @@ export function resolveTeamIdFromList(teams: Team[], teamName?: string): string 
     const team = teams.find((t) => t.name === teamName || t.display_name === teamName)
     if (!team) {
       throw new Error(
-        `Team "${sanitizeTerminalLabel(teamName)}" not found. Your teams: ${teams
-          .map((team) => sanitizeTerminalLabel(team.name))
+        `Team "${safeLabel(teamName)}" not found. Your teams: ${teams
+          .map((team) => safeLabel(team.name))
           .join(', ')}`,
       )
     }
@@ -97,12 +99,7 @@ export function resolveTeamIdFromList(teams: Team[], teamName?: string): string 
 
   throw new Error(
     `You belong to multiple teams. Use --team to specify:\n` +
-      teams
-        .map(
-          (team) =>
-            `  ${sanitizeTerminalLabel(team.name)} (${sanitizeTerminalLabel(team.display_name)})`,
-        )
-        .join('\n'),
+      teams.map((team) => `  ${safeLabel(team.name)} (${safeLabel(team.display_name)})`).join('\n'),
   )
 }
 

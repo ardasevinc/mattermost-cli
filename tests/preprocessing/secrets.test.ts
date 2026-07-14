@@ -24,6 +24,13 @@ describe('detectSecrets', () => {
     expect(first?.value).toBe('AKIAIOSFODNN7EXAMPLE')
   })
 
+  test('detects temporary AWS access keys', () => {
+    expect(detectSecrets('ASIAIOSFODNN7EXAMPLE')[0]).toMatchObject({
+      type: 'aws_access_key',
+      value: 'ASIAIOSFODNN7EXAMPLE',
+    })
+  })
+
   test('detects JWTs', () => {
     const jwt =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
@@ -45,6 +52,25 @@ describe('detectSecrets', () => {
     const secrets = detectSecrets(text)
 
     expect(secrets.some((s) => s.type === 'slack_token')).toBe(true)
+  })
+
+  test('detects Slack app tokens without matching prose', () => {
+    const token = 'xapp-1-A0123456789-1234567890123-abcdef0123456789abcdef0123456789'
+    expect(detectSecrets(token)[0]).toMatchObject({ type: 'slack_app_token', value: token })
+    expect(detectSecrets('xapp-this-is-not-a-token')).toEqual([])
+  })
+
+  test('fully consumes stateless GitHub token JWT segments', () => {
+    const token = `ghs_${'a'.repeat(24)}.${'b'.repeat(32)}.${'c'.repeat(40)}`
+    const secret = detectSecrets(token).find(({ type }) => type === 'github_stateless_token')
+    expect(secret?.value).toBe(token)
+    expect(detectSecrets('ghs_two.parts')).toEqual([])
+  })
+
+  test('uses GitHub recommended stateless-token characters and consumes trailing dashes', () => {
+    const token = `ghs_${'a.b_c-'.repeat(7)}-`
+    expect(detectSecrets(`(${token})`)[0]?.value).toBe(token)
+    expect(detectSecrets(`prefix${token}`)).toEqual([])
   })
 
   test('detects newly added provider token patterns', () => {

@@ -356,7 +356,9 @@ including messages, display names, file metadata, attachments, URLs, and reactio
 Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while preventing exposure.
 
 **Note:** Redaction happens on display. Original messages are not modified on the server.
-`--no-redact` disables secret masking, but unsafe control characters are still made visible.
+`--no-redact` disables heuristic secret masking, but the exact active Mattermost credential remains
+protected. Unsafe terminal controls and Unicode bidirectional controls are always made visible;
+ordinary Unicode, emoji, and joiners are preserved.
 
 ## AI Agent Skill
 

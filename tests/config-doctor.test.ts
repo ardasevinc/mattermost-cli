@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveConfigState } from '../src/config'
 import { formatDoctorReport, runDoctor } from '../src/doctor'
+import { preprocess } from '../src/preprocessing'
 
 async function configFile(content: string, mode = 0o600): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'mm-doctor-'))
@@ -14,6 +15,15 @@ async function configFile(content: string, mode = 0o600): Promise<string> {
 }
 
 describe('doctor config resolution', () => {
+  it('registers a config-file token at resolution before output validation', async () => {
+    const token = 'file-active-token'
+    const path = await configFile(`url = "https://file.example"\ntoken = "${token}"\n`)
+    await resolveConfigState({}, {}, path)
+    expect(preprocess(`invalid=${token}`, { redact: false }).text).toBe(
+      'invalid=[REDACTED:mattermost_credential]',
+    )
+  })
+
   it('reports CLI > env > file sources without exposing values', async () => {
     const path = await configFile('url = "https://file.example"\ntoken = "file-secret"\n')
     const state = await resolveConfigState(

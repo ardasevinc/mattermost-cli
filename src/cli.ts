@@ -389,6 +389,10 @@ function arrayStringValues(value: unknown): string[] {
     : []
 }
 
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
 function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
   switch (type) {
     case 'O':
@@ -400,7 +404,7 @@ function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
     case 'G':
       return 'group'
     default:
-      throw new Error(`Unknown channel type: ${type satisfies never}`)
+      throw new Error('Mattermost returned an unknown channel type.')
   }
 }
 
@@ -744,14 +748,23 @@ function printRedactionWarning(enabled: boolean): void {
 }
 
 function buildChannelListItem(channel: ProcessedChannel, rawChannel: Channel): ChannelListItem {
+  const lastPostAt = finiteTimestamp(rawChannel.last_post_at)
   return {
     id: channel.id,
     type: channel.type,
     name: channel.name,
     displayName: channel.displayName,
-    lastPost: rawChannel.last_post_at ? new Date(rawChannel.last_post_at).toISOString() : null,
-    messageCount: rawChannel.total_msg_count,
+    lastPost: lastPostAt > 0 ? new Date(lastPostAt).toISOString() : null,
+    messageCount: nonNegativeInteger(rawChannel.total_msg_count),
   }
+}
+
+function finiteTimestamp(value: unknown): number {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isFinite(new Date(value).getTime())
+    ? value
+    : 0
 }
 
 export async function listChannels(options: {
@@ -763,14 +776,13 @@ export async function listChannels(options: {
   redact: boolean
   typeFilter: ChannelTypeFilter
 }): Promise<void> {
+  initClient(options.url, options.token)
   const validTypeFilters: readonly string[] = ['all', 'dm', 'public', 'private', 'group']
   if (!validTypeFilters.includes(options.typeFilter)) {
     throw new Error(
-      `Invalid channel type "${options.typeFilter}". Expected one of: ${validTypeFilters.join(', ')}.`,
+      `Invalid channel type "${presentOneLine(String(options.typeFilter), false)}". Expected one of: ${validTypeFilters.join(', ')}.`,
     )
   }
-
-  initClient(options.url, options.token)
 
   const me = await getMe()
   let channels = await getMyChannels(me.id)
@@ -890,12 +902,12 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
           channels.push(channel)
         } else {
           console.error(
-            `Warning: No direct-message channel exists with @${sanitizeTerminalLabel(username)}.`,
+            `Warning: No direct-message channel exists with @${presentOneLine(username, false)}.`,
           )
         }
       } catch (error) {
         if (!(error instanceof MattermostAPIError) || error.status !== 404) throw error
-        console.error(`Warning: User @${sanitizeTerminalLabel(username)} was not found.`)
+        console.error(`Warning: User @${presentOneLine(username, false)} was not found.`)
       }
     }
   } else {
@@ -1394,7 +1406,7 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
       processedChannel,
       unreadCount,
       mentionCount,
-      lastViewedAt: member.last_viewed_at,
+      lastViewedAt: nonNegativeInteger(member.last_viewed_at),
     })
   }
 

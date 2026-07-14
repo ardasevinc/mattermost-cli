@@ -4,6 +4,7 @@ import {
   normalizeChannelName,
   resolveTeamIdFromList,
 } from '../../src/api/channels'
+import { setActiveMattermostCredential } from '../../src/preprocessing'
 import type { Channel, Team } from '../../src/types'
 
 function makeDMChannel(name: string): Channel {
@@ -86,6 +87,16 @@ describe('resolveTeamIdFromList', () => {
     const teams = [makeTeam('t1', 'core'), makeTeam('t2', 'eng')]
     expect(() => resolveTeamIdFromList(teams, 'sales')).toThrow(
       'Team "sales" not found. Your teams: core, eng',
+    )
+  })
+
+  test('protects registered credentials in requested and available team labels', () => {
+    const credential = 'active-team-token'
+    setActiveMattermostCredential(credential)
+    expect(() =>
+      resolveTeamIdFromList([makeTeam('t1', credential)], `${credential}-missing`),
+    ).toThrow(
+      'Team "[REDACTED:mattermost_credential]-missing" not found. Your teams: [REDACTED:mattermost_credential]',
     )
   })
 

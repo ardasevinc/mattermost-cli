@@ -1,5 +1,6 @@
 // Base Mattermost API client with auth and error handling
 
+import { registerActiveMattermostCredential } from '../preprocessing'
 import { normalizeServerUrl } from './url'
 
 export const REQUEST_TIMEOUT_MS = 15_000
@@ -164,10 +165,16 @@ export class MattermostAPIError extends Error {
 
 // Singleton instance
 let client: MattermostClient | null = null
+let releaseClientCredential: (() => void) | undefined
 
 export function initClient(baseUrl: string, token: string): MattermostClient {
-  client = new MattermostClient(baseUrl, token)
-  return client
+  const candidate = new MattermostClient(baseUrl, token)
+  const releaseCandidateCredential = registerActiveMattermostCredential(token)
+  const releasePreviousCredential = releaseClientCredential
+  client = candidate
+  releaseClientCredential = releaseCandidateCredential
+  releasePreviousCredential?.()
+  return candidate
 }
 
 export function getClient(): MattermostClient {

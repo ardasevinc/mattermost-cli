@@ -1,4 +1,8 @@
-import { sanitizeTerminalLabel } from '../preprocessing'
+import {
+  preprocess,
+  registerActiveMattermostCredential,
+  sanitizeTerminalLabel,
+} from '../preprocessing'
 import type { Post, WSPostEvent } from '../types'
 import { normalizeServerUrl } from './url'
 
@@ -37,10 +41,13 @@ export interface WebSocketOptions {
 }
 
 export function getSocketErrorMessage(error: unknown): string {
-  if (typeof error === 'string') return sanitizeTerminalLabel(error)
+  if (typeof error === 'string')
+    return sanitizeTerminalLabel(preprocess(error, { redact: false }).text)
   if (error && typeof error === 'object' && 'message' in error) {
     const message = (error as { message?: unknown }).message
-    if (typeof message === 'string') return sanitizeTerminalLabel(message)
+    if (typeof message === 'string') {
+      return sanitizeTerminalLabel(preprocess(message, { redact: false }).text)
+    }
   }
   return 'WebSocket request failed.'
 }
@@ -59,6 +66,14 @@ function parseSocketMessage(raw: unknown): SocketMessage | null {
   } catch {
     return null
   }
+}
+
+function validTimestamp(value: unknown, fallback: number): number {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isFinite(new Date(value).getTime())
+    ? value
+    : fallback
 }
 
 function parsePostEvent(payload: SocketMessage): {
@@ -95,16 +110,22 @@ function parsePostEvent(payload: SocketMessage): {
       root_id: raw.root_id,
       create_at: raw.create_at,
       file_ids: raw.file_ids as string[],
-      update_at: typeof raw.update_at === 'number' ? raw.update_at : raw.create_at,
-      delete_at: typeof raw.delete_at === 'number' ? raw.delete_at : 0,
-      edit_at: typeof raw.edit_at === 'number' ? raw.edit_at : 0,
+      update_at: validTimestamp(raw.update_at, raw.create_at),
+      delete_at: validTimestamp(raw.delete_at, 0),
+      edit_at: validTimestamp(raw.edit_at, 0),
       type: typeof raw.type === 'string' ? raw.type : '',
       props:
         raw.props && typeof raw.props === 'object' && !Array.isArray(raw.props)
           ? (raw.props as Record<string, unknown>)
           : {},
       hashtags: typeof raw.hashtags === 'string' ? raw.hashtags : '',
-      reply_count: typeof raw.reply_count === 'number' ? raw.reply_count : 0,
+      reply_count:
+        typeof raw.reply_count === 'number' &&
+        Number.isSafeInteger(raw.reply_count) &&
+        raw.reply_count >= 0
+          ? raw.reply_count
+          : 0,
+      ...(typeof raw.is_pinned === 'boolean' ? { is_pinned: raw.is_pinned } : {}),
       pending_post_id: typeof raw.pending_post_id === 'string' ? raw.pending_post_id : '',
     }
     return {
@@ -125,6 +146,7 @@ export function connectWebSocket(
   onError: (error: Error) => void,
   channelIdOrOptions?: string | WebSocketOptions,
 ): { close: () => void; done: Promise<void> } {
+  const releaseCredential = registerActiveMattermostCredential(token)
   const options: WebSocketOptions =
     typeof channelIdOrOptions === 'string'
       ? { channelId: channelIdOrOptions }
@@ -172,15 +194,24 @@ export function connectWebSocket(
     reconnectTimer = undefined
     const active = socket
     socket = undefined
-    if (active && active.readyState < 2) active.close(1000, 'client shutdown')
+    try {
+      if (active && active.readyState < 2) active.close(1000, 'client shutdown')
+    } catch {
+      // Cleanup and credential release must not depend on a host WebSocket implementation.
+    }
+    releaseCredential()
     resolveDone()
   }
 
   const failFatal = (error: Error): void => {
     if (fatal || stopped) return
     fatal = true
-    onError(error)
     close()
+    try {
+      onError(error)
+    } catch {
+      // User callbacks cannot be allowed to bypass terminal cleanup or escape event dispatch.
+    }
   }
 
   const scheduleHeartbeat = (currentGeneration: number): void => {
@@ -204,7 +235,11 @@ export function connectWebSocket(
     options.diagnostics?.reconnect?.(reconnectAttempt, delay)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
-      connect()
+      try {
+        connect()
+      } catch {
+        failFatal(new Error('WebSocket connection failed.'))
+      }
     }, delay)
   }
 
@@ -267,14 +302,14 @@ export function connectWebSocket(
       if (payload.status === 'FAIL') {
         const message = getSocketErrorMessage(payload.error)
         const normalized = message.toLowerCase()
-        if (
-          payload.seq_reply === authSeq ||
-          normalized.includes('auth') ||
-          normalized.includes('authorized')
-        ) {
+        const isAuthenticationError =
+          /\b(?:authentication|authenticate|unauthorized|not authorized|invalid token)\b/.test(
+            normalized,
+          )
+        if (payload.seq_reply === authSeq || isAuthenticationError) {
           failFatal(new Error('Authentication failed. Check your token.'))
         } else {
-          current.close(4000, message)
+          current.close(4000, 'request failed')
         }
         return
       }
@@ -341,6 +376,11 @@ export function connectWebSocket(
     }
   }
 
-  connect()
+  try {
+    connect()
+  } catch (error) {
+    close()
+    throw error
+  }
   return { close, done }
 }

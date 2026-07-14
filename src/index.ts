@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Mattermost CLI - Entry point
 
-import { Command, Option } from 'commander'
+import { Command } from 'commander'
 import { isAgent } from 'is-ai-agent'
 import pkg from '../package.json'
 import {
@@ -20,6 +20,7 @@ import {
 } from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, resolveConfigState } from './config'
 import { formatDoctorReport, runDoctor } from './doctor'
+import { setActiveMattermostCredential } from './preprocessing'
 import { parsePositiveSafeInteger } from './validation'
 
 const isRunningUnderAgent = isAgent() !== null
@@ -39,7 +40,7 @@ function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolea
 function validateLimit(value: string): number {
   const n = parsePositiveSafeInteger(value)
   if (n === null) {
-    console.error(`Error: --limit must be a positive number, got "${value}"`)
+    console.error('Error: --limit must be a positive number.')
     process.exit(1)
   }
   return n
@@ -49,10 +50,18 @@ function validatePeek(value?: string): number | undefined {
   if (value === undefined) return undefined
   const n = parsePositiveSafeInteger(value)
   if (n === null) {
-    console.error(`Error: --peek must be a positive number, got "${value}"`)
+    console.error('Error: --peek must be a positive number.')
     process.exit(1)
   }
   return n
+}
+
+function validateDuration(value: string | undefined): string | undefined {
+  if (value !== undefined && !/^\d+[hdwm]$/i.test(value)) {
+    console.error('Error: --since must use a duration such as "24h", "7d", "1w", or "2m".')
+    process.exit(1)
+  }
+  return value
 }
 
 const program = new Command()
@@ -81,6 +90,7 @@ async function resolveConfig(options: { url?: string; token?: string }): Promise
 }> {
   const state = await resolveConfigState(options)
   const { url, token, fileConfig, configPath } = state
+  if (token) setActiveMattermostCredential(token)
   if (state.insecurePermissions) {
     console.warn(
       `Warning: ${configPath} has insecure permissions.\n` + `  Run: chmod 600 "${configPath}"`,
@@ -241,11 +251,7 @@ program
 program
   .command('channels')
   .description('List all channels (DMs, public, private, group)')
-  .addOption(
-    new Option('--type <type>', 'Filter by channel type')
-      .choices(['all', 'dm', 'public', 'private', 'group'])
-      .default('all'),
-  )
+  .option('--type <type>', 'Filter by channel type', 'all')
   .action(async (cmdOpts) => {
     const opts = program.opts()
     const config = await resolveConfig(opts)
@@ -289,7 +295,7 @@ program
         threads: globalOpts.threads ?? true,
         user: cmdOpts.user || [],
         limit: validateLimit(cmdOpts.limit),
-        since: cmdOpts.since,
+        since: validateDuration(cmdOpts.since) as string,
         channel: cmdOpts.channel,
         cursor: cmdOpts.cursor,
         sinceExplicit: command.getOptionValueSource('since') === 'cli',
@@ -321,7 +327,7 @@ program
         redact: resolveRedact(globalOpts, config.fileConfig),
         threads: globalOpts.threads ?? true,
         limit: validateLimit(cmdOpts.limit),
-        since: cmdOpts.since,
+        since: validateDuration(cmdOpts.since) as string,
         channel: cmdOpts.channel,
         cursor: cmdOpts.cursor,
         sinceExplicit: command.getOptionValueSource('since') === 'cli',
@@ -355,7 +361,7 @@ program
         channel: name,
         team: cmdOpts.team,
         limit: validateLimit(cmdOpts.limit),
-        since: cmdOpts.since,
+        since: validateDuration(cmdOpts.since) as string,
         cursor: cmdOpts.cursor,
         sinceExplicit: command.getOptionValueSource('since') === 'cli',
       })
@@ -415,7 +421,7 @@ program
         threads: globalOpts.threads ?? true,
         team: cmdOpts.team,
         limit: validateLimit(cmdOpts.limit),
-        since: cmdOpts.since,
+        since: validateDuration(cmdOpts.since),
         channel: cmdOpts.channel,
         mentionNames: config.fileConfig.mentionNames,
       })

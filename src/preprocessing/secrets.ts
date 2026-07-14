@@ -68,6 +68,7 @@ export function detectSecrets(text: string): DetectedSecret[] {
 
 // Mask a secret value, showing first and last few chars
 export function maskSecret(value: string, type: string): string {
+  if (type === 'mattermost_credential') return '[REDACTED:mattermost_credential]'
   // Very short secrets get fully redacted
   if (value.length <= 8) {
     return `[REDACTED:${type}]`
@@ -83,11 +84,27 @@ export function maskSecret(value: string, type: string): string {
 }
 
 // Redact all secrets in text, returning new text and redaction log
-export function redactSecrets(text: string): {
+export function redactSecrets(
+  text: string,
+  options: { detectPatterns?: boolean; exact?: Array<{ type: string; value: string }> } = {},
+): {
   text: string
   redactions: Redaction[]
 } {
-  const secrets = detectSecrets(text)
+  const secrets = options.detectPatterns === false ? [] : detectSecrets(text)
+  for (const exact of options.exact ?? []) {
+    if (!exact.value) continue
+    let start = text.indexOf(exact.value)
+    while (start !== -1) {
+      secrets.push({
+        type: exact.type,
+        value: exact.value,
+        start,
+        end: start + exact.value.length,
+      })
+      start = text.indexOf(exact.value, start + exact.value.length)
+    }
+  }
 
   if (secrets.length === 0) {
     return { text, redactions: [] }
@@ -104,11 +121,18 @@ export function redactSecrets(text: string): {
     // Mask the full union once so nested/overlapping matches cannot move the cursor backwards
     // and re-append part of a previously redacted value.
     const groupValue = text.slice(group.start, group.end)
-    const masked = maskSecret(groupValue, group.secrets[0]?.type ?? 'secret')
+    const dominantType = group.secrets.some(({ type }) => type === 'mattermost_credential')
+      ? 'mattermost_credential'
+      : (group.secrets[0]?.type ?? 'secret')
+    const masked = maskSecret(groupValue, dominantType)
     const emittedPosition = result.length
     result += masked
 
     const types = [...new Set(group.secrets.map((secret) => secret.type))]
+    if (dominantType === 'mattermost_credential') {
+      types.splice(types.indexOf(dominantType), 1)
+      types.unshift(dominantType)
+    }
     redactions.push({
       type: types.join('+'),
       masked,

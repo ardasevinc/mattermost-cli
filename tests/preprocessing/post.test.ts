@@ -51,6 +51,44 @@ describe('post normalization', () => {
     })
   })
 
+  test('normalizes malformed emitted post scalars', () => {
+    const malformed = makePost({
+      reply_count: '9' as unknown as number,
+      is_pinned: 'true' as unknown as boolean,
+      update_at: Number.NaN,
+      edit_at: Number.POSITIVE_INFINITY,
+      delete_at: '1' as unknown as number,
+    })
+    expect(normalize(malformed).messages[0]).toMatchObject({
+      replyCount: undefined,
+      isPinned: false,
+      updatedAt: new Date(1000),
+      isDeleted: false,
+    })
+  })
+
+  test('normalizes out-of-range timestamps and malformed adjacent strings', () => {
+    const malformed = makePost({
+      id: 7 as unknown as string,
+      user_id: null as unknown as string,
+      message: { secret: true } as unknown as string,
+      type: 42 as unknown as string,
+      root_id: false as unknown as string,
+      create_at: 8.64e15 + 1,
+      update_at: -8.64e15 - 1,
+    })
+    expect(normalize(malformed).messages[0]).toMatchObject({
+      id: '',
+      user: 'system',
+      userId: '',
+      text: '',
+      postType: '',
+      timestamp: new Date(0),
+      updatedAt: new Date(0),
+      rootId: undefined,
+    })
+  })
+
   test('never leaks stale content from a returned deleted post', () => {
     const { messages } = normalize(
       makePost({

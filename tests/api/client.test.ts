@@ -1,11 +1,35 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { MattermostClient, REQUEST_TIMEOUT_MS, rateLimitDelay } from '../../src/api/client'
+import {
+  getClient,
+  initClient,
+  MattermostClient,
+  REQUEST_TIMEOUT_MS,
+  rateLimitDelay,
+} from '../../src/api/client'
+import { preprocess } from '../../src/preprocessing'
 
 describe('MattermostClient', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  test('singleton replacement releases its prior owned credential', () => {
+    initClient('https://mattermost.example.com', 'old-client-token')
+    initClient('https://mattermost.example.com', 'new-client-token')
+    expect(preprocess('old-client-token new-client-token', { redact: false }).text).toBe(
+      'old-client-token [REDACTED:mattermost_credential]',
+    )
+  })
+
+  test('failed singleton replacement preserves the prior client and credential only', () => {
+    const previous = initClient('https://mattermost.example.com', 'old-client-token')
+    expect(() => initClient('not a URL', 'attempted-token')).toThrow('Invalid Mattermost URL')
+    expect(getClient()).toBe(previous)
+    expect(preprocess('old-client-token attempted-token', { redact: false }).text).toBe(
+      '[REDACTED:mattermost_credential] attempted-token',
+    )
   })
 
   test('does not expose remote reason phrases or the configured token', async () => {

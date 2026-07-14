@@ -4,6 +4,7 @@ import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parse as parseTOML } from 'smol-toml'
+import { setActiveMattermostCredential } from './preprocessing'
 
 export interface FileConfig {
   url?: string
@@ -101,6 +102,7 @@ export async function resolveConfigState(
   const file = await inspectConfigFile(configPath)
   const url = options.url || environment.MM_URL || file.config.url
   const token = options.token || environment.MM_TOKEN || file.config.token
+  if (token) setActiveMattermostCredential(token)
 
   return {
     url,

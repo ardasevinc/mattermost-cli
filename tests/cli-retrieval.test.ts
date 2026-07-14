@@ -12,10 +12,12 @@ import {
   mentionSearchAfterDate,
   mergeTruncation,
 } from '../src/cli'
+import { setActiveMattermostCredential } from '../src/preprocessing'
 import type { Channel, Post, PostsResponse, Redaction, User } from '../src/types'
 import { installRouteFetch } from './helpers/fake-fetch'
 
 afterEach(() => {
+  setActiveMattermostCredential(undefined)
   clearUserCache()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -322,6 +324,41 @@ describe('watch post deduplication', () => {
         'watch.fileId',
       ]),
     )
+  })
+
+  test('protects the active credential in JSON watch output with --no-redact', () => {
+    const credential = '9xuqwrwgstrb3mzrxb83nb357a'
+    initClient('https://mattermost.test', credential)
+    const lines: string[] = []
+    const handlePost = createWatchPostHandler({ json: true, color: false, redact: false }, (line) =>
+      lines.push(line),
+    )
+    handlePost(
+      {
+        id: 'post',
+        channel_id: 'channel',
+        user_id: 'user',
+        create_at: 1,
+        update_at: 1,
+        delete_at: 0,
+        edit_at: 0,
+        message: `active=${credential} unrelated=aaaaaaaaaaaaaaaaaaaaaaaaaa`,
+        type: '',
+        props: {},
+        hashtags: '',
+        file_ids: [],
+        root_id: '',
+        reply_count: 0,
+        pending_post_id: '',
+      },
+      'town',
+      'sender',
+    )
+    expect(lines[0]).not.toContain(credential)
+    expect(lines[0]).toContain('aaaaaaaaaaaaaaaaaaaaaaaaaa')
+    expect(JSON.parse(lines[0] as string).redactions).toEqual([
+      expect.objectContaining({ type: 'mattermost_credential', field: 'watch.message' }),
+    ])
   })
 })
 

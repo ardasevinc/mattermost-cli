@@ -37,6 +37,12 @@ describe('calculateUnreadMetrics', () => {
     const metrics = calculateUnreadMetrics(makeChannel(10), makeMember(20, 1))
     expect(metrics.unreadCount).toBe(0)
   })
+
+  test('normalizes malformed remote count scalars', () => {
+    const channel = makeChannel('42' as unknown as number)
+    const member = makeMember(Number.NaN, '3' as unknown as number)
+    expect(calculateUnreadMetrics(channel, member)).toEqual({ unreadCount: 0, mentionCount: 0 })
+  })
 })
 
 describe('sortUnreadEntries', () => {

@@ -302,15 +302,13 @@ export async function searchPosts(
 export function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)([hdwm])$/i)
   if (!match) {
-    throw new Error(
-      `Invalid duration format: ${duration}. Use formats like "24h", "7d", "1w", "2m"`,
-    )
+    throw new Error('Invalid duration format. Use formats like "24h", "7d", "1w", "2m".')
   }
 
   const valueText = match[1]
   const unitText = match[2]
   if (!valueText || !unitText) {
-    throw new Error(`Invalid duration format: ${duration}`)
+    throw new Error('Invalid duration format.')
   }
 
   const value = parseInt(valueText, 10)

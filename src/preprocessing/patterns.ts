@@ -11,7 +11,7 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   // AWS
   {
     name: 'aws_access_key',
-    pattern: /\b(AKIA[0-9A-Z]{16})\b/g,
+    pattern: /\b((?:AKIA|ASIA)[0-9A-Z]{16})\b/g,
   },
   {
     name: 'aws_secret_key',
@@ -20,6 +20,10 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
 
   // GitHub
+  {
+    name: 'github_stateless_token',
+    pattern: /(?<![A-Za-z0-9._-])(ghs_[A-Za-z0-9._-]{36,})(?![A-Za-z0-9._-])/g,
+  },
   {
     name: 'github_token',
     pattern: /\b(gh[pousr]_[A-Za-z0-9_]{36,255})\b/g,
@@ -41,6 +45,10 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
 
   // Slack
+  {
+    name: 'slack_app_token',
+    pattern: /(?<![A-Za-z0-9-])(xapp-[0-9]+-[A-Za-z0-9-]{16,})(?![A-Za-z0-9-])/g,
+  },
   {
     name: 'slack_token',
     pattern: /\b(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,})\b/g,

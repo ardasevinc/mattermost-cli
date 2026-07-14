@@ -30,6 +30,18 @@ function arrayValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+function validTimestamp(value: unknown, fallback = 0): number {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isFinite(new Date(value).getTime())
+    ? value
+    : fallback
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
 export function postUserIds(posts: Post[]): string[] {
   const ids = new Set<string>()
   for (const post of posts) {
@@ -58,15 +70,24 @@ export function normalizePosts(
   }
 
   const messages = posts.map((post): ProcessedMessage => {
-    const isDeleted = post.delete_at > 0
+    const rawId = stringValue(post.id) ?? ''
+    const rawUserId = stringValue(post.user_id) ?? ''
+    const rawMessage = stringValue(post.message) ?? ''
+    const rawType = stringValue(post.type) ?? ''
+    const rawRootId = stringValue(post.root_id) ?? ''
+    const createAt = validTimestamp(post.create_at)
+    const updateAt = validTimestamp(post.update_at, createAt)
+    const editAt = validTimestamp(post.edit_at)
+    const deleteAt = validTimestamp(post.delete_at)
+    const isDeleted = deleteAt > 0
     const props = record(post.props) ?? {}
     const rawOverride = stringValue(post.override_username) ?? stringValue(props.override_username)
-    const rawUsername = users.get(post.user_id)?.username ?? post.user_id
+    const rawUsername = users.get(rawUserId)?.username ?? rawUserId
     const displayUser = rawOverride
       ? clean(rawOverride, 'user', true)
-      : !post.user_id || post.type.startsWith('system_')
+      : !rawUserId || rawType.startsWith('system_')
         ? 'system'
-        : post.user_id === myUserId
+        : rawUserId === myUserId
           ? 'you'
           : clean(rawUsername, 'user', true)
 
@@ -184,27 +205,27 @@ export function normalizePosts(
       })
 
     const message: ProcessedMessage = {
-      id: clean(post.id, 'post.id', true),
-      permalink: clean(buildPermalink(serverUrl, post.id), 'post.permalink', true),
+      id: clean(rawId, 'post.id', true),
+      permalink: clean(buildPermalink(serverUrl, rawId), 'post.permalink', true),
       user: displayUser,
-      userId: clean(post.user_id, 'post.userId', true),
-      text: isDeleted ? DELETED_POST_TEXT : clean(post.message, 'post.message'),
-      timestamp: new Date(post.create_at),
-      updatedAt: new Date(post.update_at),
-      ...(post.edit_at > 0 ? { editedAt: new Date(post.edit_at) } : {}),
-      ...(post.delete_at > 0 ? { deletedAt: new Date(post.delete_at) } : {}),
+      userId: clean(rawUserId, 'post.userId', true),
+      text: isDeleted ? DELETED_POST_TEXT : clean(rawMessage, 'post.message'),
+      timestamp: new Date(createAt),
+      updatedAt: new Date(updateAt),
+      ...(editAt > 0 ? { editedAt: new Date(editAt) } : {}),
+      ...(deleteAt > 0 ? { deletedAt: new Date(deleteAt) } : {}),
       isDeleted,
-      postType: clean(post.type, 'post.type', true),
-      isSystem: post.type.startsWith('system_') || !post.user_id,
-      isPinned: post.is_pinned ?? false,
+      postType: clean(rawType, 'post.type', true),
+      isSystem: rawType.startsWith('system_') || !rawUserId,
+      isPinned: typeof post.is_pinned === 'boolean' ? post.is_pinned : false,
       files: isDeleted ? [] : rawFileIds.map((id) => clean(id, 'file.id', true)),
       fileDetails,
       attachments,
       reactions,
-      rootId: post.root_id ? clean(post.root_id, 'post.rootId', true) : undefined,
-      replyCount: post.reply_count || undefined,
+      rootId: rawRootId ? clean(rawRootId, 'post.rootId', true) : undefined,
+      replyCount: nonNegativeInteger(post.reply_count) || undefined,
     }
-    setCanonicalPostIdentity(message, post.id, post.root_id || undefined)
+    setCanonicalPostIdentity(message, rawId, rawRootId || undefined)
     return message
   })
   return { messages, redactions: allRedactions }
