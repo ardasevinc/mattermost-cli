@@ -36,6 +36,7 @@ import type {
   Channel,
   ChannelMember,
   ChannelOptions,
+  ChannelTypeFilter,
   CLIOptions,
   DMsOptions,
   MentionOptions,
@@ -500,24 +501,29 @@ export async function listChannels(options: {
   color: boolean
   relative: boolean
   redact: boolean
-  typeFilter: string
+  typeFilter: ChannelTypeFilter
 }): Promise<void> {
+  const validTypeFilters: readonly string[] = ['all', 'dm', 'public', 'private', 'group']
+  if (!validTypeFilters.includes(options.typeFilter)) {
+    throw new Error(
+      `Invalid channel type "${options.typeFilter}". Expected one of: ${validTypeFilters.join(', ')}.`,
+    )
+  }
+
   initClient(options.url, options.token)
 
   const me = await getMe()
   let channels = await getMyChannels()
 
   if (options.typeFilter !== 'all') {
-    const typeMap: Record<string, Channel['type']> = {
+    const typeMap: Record<Exclude<ChannelTypeFilter, 'all'>, Channel['type']> = {
       dm: 'D',
       public: 'O',
       private: 'P',
       group: 'G',
     }
     const filterType = typeMap[options.typeFilter]
-    if (filterType) {
-      channels = channels.filter((ch) => ch.type === filterType)
-    }
+    channels = channels.filter((ch) => ch.type === filterType)
   }
 
   const dmChannels = channels.filter((ch) => ch.type === 'D')

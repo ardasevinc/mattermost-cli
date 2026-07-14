@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Mattermost CLI - Entry point
 
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import { isAgent } from 'is-ai-agent'
 import pkg from '../package.json'
 import {
@@ -156,7 +156,11 @@ program
 program
   .command('channels')
   .description('List all channels (DMs, public, private, group)')
-  .option('--type <type>', 'Filter by type: dm, public, private, group, all', 'all')
+  .addOption(
+    new Option('--type <type>', 'Filter by channel type')
+      .choices(['all', 'dm', 'public', 'private', 'group'])
+      .default('all'),
+  )
   .action(async (cmdOpts) => {
     const opts = program.opts()
     const config = await resolveConfig(opts)

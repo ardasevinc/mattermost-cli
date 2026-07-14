@@ -132,6 +132,8 @@ export interface ChannelMember {
 
 // CLI types
 
+export type ChannelTypeFilter = 'all' | 'dm' | 'public' | 'private' | 'group'
+
 export interface CLIOptions {
   url: string
   token: string
