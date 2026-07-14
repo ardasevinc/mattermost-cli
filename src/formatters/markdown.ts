@@ -51,6 +51,12 @@ function formatChannelMarkdown(output: MessageOutput, relative: boolean): string
     lines.push(`_${output.redactions.length} secret(s) redacted_`)
   }
 
+  const state = output.retrieval.selection.queryTruncated
+  lines.push('')
+  lines.push(
+    `_Coverage: ${output.retrieval.selection.selectedCount} selected, ${output.retrieval.visiblePostCount} visible; query ${state === true ? 'truncated' : state === false ? 'complete' : 'completeness unknown'}_`,
+  )
+
   return lines.join('\n')
 }
 
@@ -59,7 +65,8 @@ function formatMessage(msg: ProcessedMessage, relative: boolean, depth: number =
   const lines: string[] = []
   const prefix = depth > 0 ? '> '.repeat(depth) : ''
 
-  lines.push(`${prefix}**${msg.user}** (${timeStr}):`)
+  const postRef = `[${msg.id}](<${msg.permalink}>)`
+  lines.push(`${prefix}**${msg.user}** (${timeStr}, ${postRef}):`)
 
   // Quote the message content
   const quotePrefix = `${prefix}> `

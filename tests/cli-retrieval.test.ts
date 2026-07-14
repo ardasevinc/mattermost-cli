@@ -4,9 +4,11 @@ import {
   BoundedPostIdSet,
   createWatchPostHandler,
   fetchDMs,
+  fetchThread,
   hasLiteralMention,
   isExactMentionPost,
   mentionSearchAfterDate,
+  mergeTruncation,
 } from '../src/cli'
 import type { Channel, Post, PostsResponse, User } from '../src/types'
 import { installRouteFetch } from './helpers/fake-fetch'
@@ -18,6 +20,15 @@ afterEach(() => {
 })
 
 describe('literal mention filtering', () => {
+  test.each([
+    [[false, false], 2, 2, false],
+    [[false, false], 3, 2, true],
+    [[true, false], 2, 2, true],
+    [[null, false], 2, 2, null],
+  ] as const)('merges global truncation states %j with %i candidates / %i limit', (states, candidates, limit, expected) => {
+    expect(mergeTruncation([...states], candidates, limit)).toBe(expected)
+  })
+
   test('ignores empty configured literals', () => {
     expect(hasLiteralMention('anything', [''])).toBe(false)
   })
@@ -144,11 +155,13 @@ describe('literal mention filtering', () => {
 
     const output = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as Array<{
       messages: Array<{ id: string }>
+      retrieval: { selection: { queryTruncated: boolean | null } }
     }>
     expect(output.flatMap(({ messages }) => messages.map(({ id }) => id))).toEqual([
       'alice-new',
       'bob-new',
     ])
+    expect(output.every(({ retrieval }) => retrieval.selection.queryTruncated === false)).toBe(true)
     expect(requests.filter(({ url }) => url.pathname.endsWith('/dm-alice/posts'))).toHaveLength(1)
     expect(requests.filter(({ url }) => url.pathname.endsWith('/dm-bob/posts'))).toHaveLength(1)
   })
@@ -198,6 +211,68 @@ describe('watch post deduplication', () => {
     expect(JSON.parse(lines[0] as string).message).not.toContain(
       'sk-abcdefghijklmnopqrstuvwxyz123456',
     )
+  })
+})
+
+describe('thread retrieval metadata', () => {
+  test('uses a reply channel and reports a missing root as partial', async () => {
+    const reply = {
+      id: 'reply',
+      channel_id: 'channel',
+      user_id: 'me',
+      create_at: 1,
+      update_at: 1,
+      delete_at: 0,
+      edit_at: 0,
+      message: 'reply',
+      type: '',
+      props: {},
+      hashtags: '',
+      file_ids: [],
+      root_id: 'missing-root',
+      reply_count: 0,
+      pending_post_id: '',
+    } satisfies Post
+    installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      {
+        method: 'GET',
+        path: '/api/v4/posts/missing-root/thread',
+        handle: () => ({ ...responsePage([reply]), has_next: false }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel',
+        handle: () => ({ id: 'channel', type: 'O', name: 'general', display_name: 'General' }),
+      },
+    ])
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await fetchThread({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: true,
+      postId: 'missing-root',
+    })
+
+    const [output] = JSON.parse(String(log.mock.calls.at(-1)?.[0]))
+    expect(output.channel.id).toBe('channel')
+    expect(output.retrieval.selection).toMatchObject({
+      source: 'thread',
+      selectedCount: 1,
+      requestedLimit: null,
+      since: null,
+      queryTruncated: false,
+    })
+    expect(output.retrieval.visibleThreads).toEqual({
+      status: 'partial',
+      hydratedRootCount: 0,
+      failedRootIds: ['missing-root'],
+    })
   })
 })
 

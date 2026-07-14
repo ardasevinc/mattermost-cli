@@ -17,6 +17,7 @@ interface MessageInput {
 function makeMessage(overrides: MessageInput): ProcessedMessage {
   return {
     id: overrides.id,
+    permalink: `https://mattermost.test/_redirect/pl/${overrides.id}`,
     user: overrides.user ?? 'user',
     userId: overrides.userId ?? 'uid',
     text: overrides.text ?? 'message',

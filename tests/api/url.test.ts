@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { assertSecureServerUrl, normalizeServerUrl } from '../../src/api/url'
+import { assertSecureServerUrl, buildPostPermalink, normalizeServerUrl } from '../../src/api/url'
 
 describe('assertSecureServerUrl', () => {
   test.each([
@@ -54,6 +54,20 @@ describe('normalizeServerUrl', () => {
   test('preserves a Mattermost subpath', () => {
     expect(normalizeServerUrl('https://mattermost.example.com/chat/')).toBe(
       'https://mattermost.example.com/chat',
+    )
+  })
+})
+
+describe('buildPostPermalink', () => {
+  test('preserves a server subpath and normalizes trailing slashes', () => {
+    expect(buildPostPermalink('https://mattermost.example.com/chat///', 'post-id')).toBe(
+      'https://mattermost.example.com/chat/_redirect/pl/post-id',
+    )
+  })
+
+  test('encodes a special post id without double-encoding the server subpath', () => {
+    expect(buildPostPermalink('https://mattermost.example.com/chat)', 'post(special)')).toBe(
+      'https://mattermost.example.com/chat)/_redirect/pl/post%28special%29',
     )
   })
 })

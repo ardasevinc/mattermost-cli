@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { getMyDMChannels } from '../../src/api/channels'
 import { initClient } from '../../src/api/client'
-import { getAllChannelPosts, searchPosts, takeMostRecentPosts } from '../../src/api/posts'
+import {
+  getAllChannelPosts,
+  getChannelPosts,
+  getPostThread,
+  searchPosts,
+  takeMostRecentPosts,
+} from '../../src/api/posts'
 import type { Channel, Post, PostsResponse, SearchResponse } from '../../src/types'
 import { installRouteFetch } from '../helpers/fake-fetch'
 
@@ -19,6 +25,168 @@ function page(items: Post[]): PostsResponse {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('route-aware retrieval integration', () => {
+  test('uses limit plus one and proves channel truncation locally', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => page([post('new', 3), post('selected', 2), post('extra', 1)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', { limit: 2 })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['new', 'selected'])
+    expect(result.truncated).toBe(true)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url.searchParams.get('per_page')).toBe('3')
+  })
+
+  test('reports unknown after two full stagnant channel pages', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => page([post('a', 2), post('b', 1), post('a', 2), post('b', 1)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', { limit: 3 })
+
+    expect(result.truncated).toBeNull()
+    expect(requests).toHaveLength(3)
+  })
+
+  test('requests channel pages without server-side thread expansion', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => page([]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    await getChannelPosts('channel')
+
+    expect(requests[0]?.url.searchParams.get('skipFetchThreads')).toBe('true')
+  })
+
+  test('continues after a raw full channel page whose posts are missing or deleted', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: ({ url }) =>
+          url.searchParams.get('page') === '0'
+            ? {
+                order: ['missing-a', 'deleted', 'missing-b'],
+                posts: { deleted: { ...post('deleted', 3), delete_at: 1 } },
+              }
+            : page([post('live', 2)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', { limit: 2 })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['live'])
+    expect(result.truncated).toBe(false)
+    expect(requests).toHaveLength(2)
+  })
+
+  test('does not claim channel exhaustion past an inaccessible post boundary', async () => {
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => ({ ...page([post('visible', 2)]), first_inaccessible_post_time: 1 }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await getAllChannelPosts('channel', { limit: 2 })).truncated).toBeNull()
+  })
+
+  test('only marks a thread complete when the API explicitly reports no next page', async () => {
+    let hasNext: boolean | undefined = false
+    let inaccessibleTime: number | undefined
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({
+          ...page([post('root', 1)]),
+          has_next: hasNext,
+          first_inaccessible_post_time: inaccessibleTime,
+        }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await getPostThread('root')).truncated).toBe(false)
+    hasNext = true
+    expect((await getPostThread('root')).truncated).toBe(true)
+    hasNext = undefined
+    expect((await getPostThread('root')).truncated).toBeNull()
+    hasNext = false
+    inaccessibleTime = 1
+    expect((await getPostThread('root')).truncated).toBeNull()
+  })
+
+  test('search proves local truncation after accepted filtering and dedupe', async () => {
+    installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => ({
+          ...page([post('new', 3), post('selected', 2), post('extra', 1)]),
+          matches: { new: ['n'], selected: ['s'], extra: ['e'] },
+        }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await searchPosts('team', 'needle', 2)
+
+    expect(result.truncated).toBe(true)
+    expect(result.order).toEqual(['new', 'selected'])
+    expect(Object.keys(result.matches)).toEqual(['new', 'selected'])
+  })
+
+  test('an empty search response proves exhaustion', async () => {
+    installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => ({ ...page([]), matches: {} }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await searchPosts('team', 'needle', 2)).truncated).toBe(false)
+  })
+
+  test('does not claim search exhaustion past an inaccessible post boundary', async () => {
+    installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => ({
+          ...page([]),
+          matches: {},
+          first_inaccessible_post_time: 1,
+          has_next: false,
+        }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await searchPosts('team', 'needle', 2)).truncated).toBeNull()
+  })
+
   test('paginates without server since and enforces exact local time, dedupe, and hard limit', async () => {
     let calls = 0
     const { requests } = installRouteFetch([
@@ -28,12 +196,15 @@ describe('route-aware retrieval integration', () => {
         handle: () => {
           calls += 1
           if (calls === 1) {
-            return page([post('p4', 130), post('p3', 120), post('p3', 120), post('p2', 110)])
+            return page([
+              post('p4', 130),
+              post('p3', 120),
+              post('p2', 110),
+              post('p1', 100),
+              post('old', 99),
+            ])
           }
-          if (calls === 2) {
-            return page([post('p2', 110), post('p1', 100), post('old', 99), post('older', 98)])
-          }
-          return page([post('old-2', 97), post('old-3', 96), post('old-4', 95), post('old-5', 94)])
+          return page([])
         },
       },
     ])
@@ -41,13 +212,17 @@ describe('route-aware retrieval integration', () => {
 
     const result = await getAllChannelPosts('channel', { since: 100, limit: 4 })
 
-    expect(result.map(({ id }) => id)).toEqual(['p4', 'p3', 'p2', 'p1'])
-    expect(requests).toHaveLength(3)
+    expect(result.posts.map(({ id }) => id)).toEqual(['p4', 'p3', 'p2', 'p1'])
+    expect(result.truncated).toBe(false)
+    expect(requests).toHaveLength(2)
     expect(requests.every(({ url }) => !url.searchParams.has('since'))).toBe(true)
-    expect(requests.map(({ url }) => url.searchParams.get('page'))).toEqual(['0', '1', '2'])
+    expect(requests.map(({ url }) => url.searchParams.get('page'))).toEqual(['0', '1'])
+    expect(requests.every(({ url }) => url.searchParams.get('skipFetchThreads') === 'true')).toBe(
+      true,
+    )
   })
 
-  test('dedupes overlapping pages and stops when pagination makes no progress', async () => {
+  test('treats a short channel page as exhausted without an extra request', async () => {
     const { requests } = installRouteFetch([
       {
         method: 'GET',
@@ -57,12 +232,10 @@ describe('route-aware retrieval integration', () => {
     ])
     initClient('https://mattermost.test', 'token')
 
-    expect((await getAllChannelPosts('channel', { limit: 3 })).map(({ id }) => id)).toEqual([
-      'p2',
-      'p1',
-    ])
-    expect(requests).toHaveLength(3)
-    expect(requests[2]?.url.searchParams.get('page')).toBe('2')
+    const result = await getAllChannelPosts('channel', { limit: 3 })
+    expect(result.posts.map(({ id }) => id)).toEqual(['p2', 'p1'])
+    expect(requests).toHaveLength(1)
+    expect(result.truncated).toBe(false)
   })
 
   test('does not skip posts sharing the timestamp at a page boundary', async () => {
@@ -72,9 +245,9 @@ describe('route-aware retrieval integration', () => {
         path: '/api/v4/channels/channel/posts',
         handle: ({ url }) => {
           const pageNumber = Number(url.searchParams.get('page'))
-          if (pageNumber === 0) return page([post('d', 100), post('c', 100)])
-          if (pageNumber === 1) return page([post('d', 100), post('c', 100)])
-          if (pageNumber === 2) return page([post('b', 100), post('a', 100)])
+          if (pageNumber === 0) return page([post('d', 100), post('c', 100), post('d', 100)])
+          if (pageNumber === 1) return page([post('d', 100), post('c', 100), post('d', 100)])
+          if (pageNumber === 2) return page([post('b', 100), post('a', 100), post('b', 100)])
           return page([post('old', 99)])
         },
       },
@@ -83,7 +256,7 @@ describe('route-aware retrieval integration', () => {
 
     const result = await getAllChannelPosts('channel', { limit: 2 })
 
-    expect(result.map(({ id }) => id)).toEqual(['a', 'b'])
+    expect(result.posts.map(({ id }) => id)).toEqual(['a', 'b'])
     expect(requests.map(({ url }) => url.searchParams.get('page'))).toEqual(['0', '1', '2', '3'])
     expect(requests.every(({ url }) => !url.searchParams.has('before'))).toBe(true)
   })
@@ -108,7 +281,8 @@ describe('route-aware retrieval integration', () => {
     const result = await searchPosts('team', 'needle', 3)
 
     expect(result.order).toEqual(['a', 'b', 'c'])
-    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1])
+    expect(result.truncated).toBeNull()
+    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2, 3])
   })
 
   test('search tolerates a duplicate-only full page before later progress', async () => {
@@ -133,7 +307,8 @@ describe('route-aware retrieval integration', () => {
     const result = await searchPosts('team', 'needle', 4)
 
     expect(result.order).toEqual(['d', 'c', 'b', 'a'])
-    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2])
+    expect(result.truncated).toBeNull()
+    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2, 3, 4])
   })
 
   test('mention-mode search completes equal-time cutoff ties', async () => {
@@ -155,14 +330,13 @@ describe('route-aware retrieval integration', () => {
     ])
     initClient('https://mattermost.test', 'token')
 
-    const response = await searchPosts('team', '@arda', 2, () => true, {
-      completeCutoffTies: true,
-    })
+    const response = await searchPosts('team', '@arda', 2, () => true)
 
     const selected = response.order
       .map((id) => response.posts[id])
       .filter((candidate): candidate is Post => !!candidate)
     expect(takeMostRecentPosts(selected, 2).map(({ id }) => id)).toEqual(['a', 'b'])
+    expect(response.truncated).toBe(true)
     expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2])
   })
 
@@ -191,7 +365,8 @@ describe('route-aware retrieval integration', () => {
     const result = await searchPosts('team', 'needle', 2)
 
     expect(result.order).toEqual(['live-a', 'live-b'])
-    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2])
+    expect(result.truncated).toBe(false)
+    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2, 3])
   })
 
   test('search continues to page two when exact local filtering rejects page one', async () => {
@@ -219,7 +394,8 @@ describe('route-aware retrieval integration', () => {
     )
 
     expect(result.order).toEqual(['exact-boundary'])
-    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1])
+    expect(result.truncated).toBeNull()
+    expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2, 3])
   })
 
   test('dedupes direct channels returned by Mattermost', async () => {

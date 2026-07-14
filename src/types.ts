@@ -72,12 +72,21 @@ export interface PostsResponse {
   posts: Record<string, Post>
   next_post_id: string
   prev_post_id: string
+  has_next?: boolean
+  first_inaccessible_post_time?: number
 }
 
 export interface SearchResponse {
   order: string[]
   posts: Record<string, Post>
   matches: Record<string, string[]>
+  first_inaccessible_post_time?: number
+  has_next?: boolean
+}
+
+export interface PostRetrievalResult {
+  posts: Post[]
+  truncated: boolean | null
 }
 
 export interface ChannelMember {
@@ -137,6 +146,7 @@ export interface UnreadOptions extends CLIOptions {
 
 export interface ProcessedMessage {
   id: string
+  permalink: string
   user: string
   userId: string
   text: string
@@ -158,6 +168,24 @@ export interface MessageOutput {
   channel: ProcessedChannel
   messages: ProcessedMessage[]
   redactions: Redaction[]
+  retrieval: RetrievalMetadata
+}
+
+export interface RetrievalMetadata {
+  selection: {
+    source: 'recent' | 'search' | 'mentions' | 'unread' | 'thread'
+    selectedCount: number
+    requestedLimit: number | null
+    since: string | null
+    queryTruncated: boolean | null
+  }
+  visibleThreads: {
+    status: 'not_requested' | 'complete' | 'partial'
+    hydratedRootCount: number
+    failedRootIds: string[]
+  }
+  visiblePostCount: number
+  deletedPostsIncluded: false
 }
 
 /** @deprecated Use MessageOutput */

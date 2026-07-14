@@ -9,6 +9,7 @@ function makeOutput(channel: ProcessedChannel): MessageOutput {
     messages: [
       {
         id: 'msg1',
+        permalink: 'https://mattermost.example.com/_redirect/pl/msg1',
         user: 'alice',
         userId: 'u1',
         text: 'hello',
@@ -17,6 +18,28 @@ function makeOutput(channel: ProcessedChannel): MessageOutput {
       },
     ],
     redactions: [],
+    retrieval: {
+      selection: {
+        source: 'recent',
+        selectedCount: 1,
+        requestedLimit: 1,
+        since: null,
+        queryTruncated: true,
+      },
+      visibleThreads: { status: 'not_requested', hydratedRootCount: 0, failedRootIds: [] },
+      visiblePostCount: 1,
+      deletedPostsIncluded: false,
+    },
+  }
+}
+
+function withTruncation(output: MessageOutput, queryTruncated: boolean | null): MessageOutput {
+  return {
+    ...output,
+    retrieval: {
+      ...output.retrieval,
+      selection: { ...output.retrieval.selection, queryTruncated },
+    },
   }
 }
 
@@ -50,6 +73,22 @@ describe('formatter channel headers', () => {
       expect(output).toContain('#secret-stuff')
       expect(output).not.toContain('undefined')
     })
+
+    test('shows a compact post id, permalink, and coverage warning', () => {
+      const output = formatPretty([makeOutput(publicChannel)], { color: false })
+      expect(output).toContain('msg1 https://mattermost.example.com/_redirect/pl/msg1')
+      expect(output).toContain('Coverage: 1 selected, 1 visible; query truncated')
+    })
+
+    test.each([
+      [false, 'query complete'],
+      [null, 'query completeness unknown'],
+    ] as const)('reports %j query coverage honestly', (state, wording) => {
+      const output = formatPretty([withTruncation(makeOutput(publicChannel), state)], {
+        color: false,
+      })
+      expect(output).toContain(wording)
+    })
   })
 
   describe('markdown formatter', () => {
@@ -67,6 +106,30 @@ describe('formatter channel headers', () => {
       const output = formatMarkdown([makeOutput(privateChannel)])
       expect(output).toContain('## #secret-stuff')
       expect(output).not.toContain('undefined')
+    })
+
+    test('links the stable post id and reports coverage', () => {
+      const output = formatMarkdown([makeOutput(publicChannel)])
+      expect(output).toContain('[msg1](<https://mattermost.example.com/_redirect/pl/msg1>)')
+      expect(output).toContain('Coverage: 1 selected, 1 visible; query truncated')
+    })
+
+    test('keeps a permalink with parentheses parseable as one markdown destination', () => {
+      const fixture = makeOutput(publicChannel)
+      const message = fixture.messages[0]
+      if (!message) throw new Error('missing formatter fixture message')
+      message.permalink = 'https://mattermost.example.com/chat)/_redirect/pl/post%28special%29'
+      expect(formatMarkdown([fixture])).toContain(
+        '[msg1](<https://mattermost.example.com/chat)/_redirect/pl/post%28special%29>)',
+      )
+    })
+
+    test.each([
+      [false, 'query complete'],
+      [null, 'query completeness unknown'],
+    ] as const)('reports %j query coverage honestly', (state, wording) => {
+      const output = formatMarkdown([withTruncation(makeOutput(publicChannel), state)])
+      expect(output).toContain(wording)
     })
   })
 })

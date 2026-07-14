@@ -238,6 +238,15 @@ Thread:
   thread <postId>         Fetch and display one thread
 ```
 
+### Retrieval coverage
+
+`--limit` counts selected seed posts, not complete visible threads. Thread grouping only groups the
+selected slice; it does not fetch missing roots or replies. JSON message outputs include additive
+`retrieval` metadata with the selected count, requested limit and time boundary, whether the query
+was proven truncated, visible post/thread coverage, and the deleted-post policy. A
+`queryTruncated` value of `null` means bounded pagination stopped before completeness could be
+proved. Each message also includes its stable post `id` and Mattermost `permalink`.
+
 ## Security
 
 This tool automatically detects and redacts secrets in message content:

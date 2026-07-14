@@ -73,6 +73,7 @@ function formatChannelPretty(output: MessageOutput, relative: boolean): string {
     lines.push('')
     lines.push(dim(`  ⚠ ${output.redactions.length} secret(s) redacted`))
   }
+  appendCoverage(lines, output)
 
   return lines.join('\n')
 }
@@ -87,7 +88,7 @@ function formatMessagePretty(
   const user = userColor(msg.user)
 
   const lines: string[] = []
-  lines.push(`${indent}${time} ${bold(user)}`)
+  lines.push(`${indent}${time} ${bold(user)} ${dim(compactPostRef(msg))}`)
 
   // Indent message content
   const textIndent = `${indent}  `
@@ -138,6 +139,7 @@ function formatPrettyNoColor(outputs: MessageOutput[], relative: boolean): strin
     if (output.redactions.length > 0) {
       lines.push(`  [${output.redactions.length} secret(s) redacted]`)
     }
+    appendCoverage(lines, output)
 
     sections.push(lines.join('\n'))
   }
@@ -152,7 +154,7 @@ function formatMessageNoColor(
   indent: string,
 ): void {
   const timeStr = relative ? formatRelativeTime(msg.timestamp) : formatTime(msg.timestamp)
-  lines.push(`${indent}[${timeStr}] ${msg.user}`)
+  lines.push(`${indent}[${timeStr}] ${msg.user} ${compactPostRef(msg)}`)
   const textIndent = `${indent}  `
   const indentedText = msg.text
     .split('\n')
@@ -169,6 +171,18 @@ function formatMessageNoColor(
       formatMessageNoColor(reply, relative, lines, `${indent}  > `)
     }
   }
+}
+
+function compactPostRef(msg: ProcessedMessage): string {
+  const id = msg.id.length > 8 ? msg.id.slice(0, 8) : msg.id
+  return `${id} ${msg.permalink}`
+}
+
+function appendCoverage(lines: string[], output: MessageOutput): void {
+  const state = output.retrieval.selection.queryTruncated
+  lines.push(
+    `  Coverage: ${output.retrieval.selection.selectedCount} selected, ${output.retrieval.visiblePostCount} visible; query ${state === true ? 'truncated' : state === false ? 'complete' : 'completeness unknown'}`,
+  )
 }
 
 function groupByDate(messages: ProcessedMessage[]): Map<string, ProcessedMessage[]> {

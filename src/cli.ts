@@ -1,6 +1,7 @@
 // CLI command handlers
 
 import {
+  buildPostPermalink,
   connectWebSocket,
   getAllChannelPosts,
   getCachedUser,
@@ -43,6 +44,7 @@ import type {
   ProcessedChannel,
   ProcessedMessage,
   Redaction,
+  RetrievalMetadata,
   SearchOptions,
   UnreadOptions,
   WatchEvent,
@@ -88,6 +90,16 @@ export class BoundedPostIdSet {
     }
     return true
   }
+}
+
+export function mergeTruncation(
+  states: Array<boolean | null>,
+  candidateCount: number,
+  limit: number,
+): boolean | null {
+  if (candidateCount > limit || states.includes(true)) return true
+  if (states.includes(null)) return null
+  return false
 }
 
 export function createWatchPostHandler(
@@ -228,6 +240,7 @@ async function processMessages(
   posts: Post[],
   myUserId: string,
   redact: boolean,
+  serverUrl: string,
 ): Promise<{ messages: ProcessedMessage[]; redactions: Redaction[] }> {
   const allRedactions: Redaction[] = []
   const messages: ProcessedMessage[] = []
@@ -240,6 +253,7 @@ async function processMessages(
 
     messages.push({
       id: post.id,
+      permalink: buildPostPermalink(serverUrl, post.id),
       user: postUser.id === myUserId ? 'you' : sanitizeTerminalLabel(postUser.username),
       userId: post.user_id,
       text,
@@ -257,6 +271,10 @@ async function buildOutputsFromPosts(
   posts: Post[],
   myUserId: string,
   options: CLIOptions,
+  retrieval: Pick<
+    RetrievalMetadata['selection'],
+    'source' | 'requestedLimit' | 'since' | 'queryTruncated'
+  >,
 ): Promise<MessageOutput[]> {
   const userIds = [...new Set(posts.map((post) => post.user_id))]
   if (userIds.length > 0) {
@@ -269,16 +287,42 @@ async function buildOutputsFromPosts(
   for (const [channelId, channelPosts] of grouped) {
     const channel = await getChannel(channelId)
     const processedChannel = await buildProcessedChannel(channel, myUserId)
-    const { messages, redactions } = await processMessages(channelPosts, myUserId, options.redact)
+    const { messages, redactions } = await processMessages(
+      channelPosts,
+      myUserId,
+      options.redact,
+      options.url,
+    )
 
     outputs.push({
       channel: processedChannel,
       messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions,
+      retrieval: retrievalMetadata(retrieval, channelPosts.length),
     })
   }
 
   return outputs
+}
+
+function retrievalMetadata(
+  selection: Pick<
+    RetrievalMetadata['selection'],
+    'source' | 'requestedLimit' | 'since' | 'queryTruncated'
+  >,
+  selectedCount: number,
+  visibleThreads: RetrievalMetadata['visibleThreads'] = {
+    status: 'not_requested',
+    hydratedRootCount: 0,
+    failedRootIds: [],
+  },
+): RetrievalMetadata {
+  return {
+    selection: { ...selection, selectedCount },
+    visibleThreads,
+    visiblePostCount: selectedCount,
+    deletedPostsIncluded: false,
+  }
 }
 
 function formatOutput(outputs: MessageOutput[], options: CLIOptions): void {
@@ -430,13 +474,16 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
 
   const since = options.since ? parseDuration(options.since) : undefined
   const channelPosts = new Map<string, Post[]>()
+  const truncationStates: Array<boolean | null> = []
   const allPosts: Post[] = []
 
   for (const channel of channels) {
-    const posts = await getAllChannelPosts(channel.id, {
+    const result = await getAllChannelPosts(channel.id, {
       limit: options.limit,
       since,
     })
+    const posts = result.posts
+    truncationStates.push(result.truncated)
     if (posts.length === 0) continue
 
     channelPosts.set(channel.id, posts)
@@ -452,6 +499,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   const selectedPostIds = new Set(
     takeMostRecentPosts(allPosts, options.limit).map((post) => post.id),
   )
+  const queryTruncated = mergeTruncation(truncationStates, allPosts.length, options.limit)
   const outputs: MessageOutput[] = []
 
   for (const channel of channels) {
@@ -465,12 +513,26 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     if (userIds.length > 0) {
       await getUsersByIds(userIds)
     }
-    const { messages, redactions } = await processMessages(posts, me.id, options.redact)
+    const { messages, redactions } = await processMessages(
+      posts,
+      me.id,
+      options.redact,
+      options.url,
+    )
 
     outputs.push({
       channel: processedChannel,
       messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions,
+      retrieval: retrievalMetadata(
+        {
+          source: 'recent',
+          requestedLimit: options.limit,
+          since: since === undefined ? null : new Date(since).toISOString(),
+          queryTruncated,
+        },
+        posts.length,
+      ),
     })
   }
 
@@ -487,10 +549,11 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
   printRedactionWarning(options.redact)
 
   const since = options.since ? parseDuration(options.since) : undefined
-  const posts = await getAllChannelPosts(channel.id, {
+  const result = await getAllChannelPosts(channel.id, {
     limit: options.limit,
     since,
   })
+  const posts = result.posts
 
   if (posts.length === 0) {
     console.error('No messages found in this channel')
@@ -503,7 +566,7 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
   }
 
   const processedChannel = await buildProcessedChannel(channel, me.id)
-  const { messages, redactions } = await processMessages(posts, me.id, options.redact)
+  const { messages, redactions } = await processMessages(posts, me.id, options.redact, options.url)
 
   formatOutput(
     [
@@ -511,6 +574,15 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
         channel: processedChannel,
         messages: options.threads ? groupIntoThreads(messages) : messages,
         redactions,
+        retrieval: retrievalMetadata(
+          {
+            source: 'recent',
+            requestedLimit: options.limit,
+            since: since === undefined ? null : new Date(since).toISOString(),
+            queryTruncated: result.truncated,
+          },
+          posts.length,
+        ),
       },
     ],
     options,
@@ -523,7 +595,8 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   printRedactionWarning(options.redact)
 
   const me = await getMe()
-  const posts = await getPostThread(options.postId)
+  const result = await getPostThread(options.postId)
+  const posts = result.posts
 
   if (posts.length === 0) {
     console.error('Thread not found or empty')
@@ -531,19 +604,21 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   }
 
   const rootPost = posts.find((post) => !post.root_id)
-  const channel = rootPost ? await getChannel(rootPost.channel_id) : null
+  const channelPost = rootPost ?? posts[0]
+  const channel = channelPost ? await getChannel(channelPost.channel_id) : null
+  const missingRootId = rootPost ? undefined : posts.find((post) => post.root_id)?.root_id
 
   const userIds = [...new Set(posts.map((post) => post.user_id))]
   if (userIds.length > 0) {
     await getUsersByIds(userIds)
   }
 
-  const { messages, redactions } = await processMessages(posts, me.id, options.redact)
+  const { messages, redactions } = await processMessages(posts, me.id, options.redact, options.url)
 
   const processedChannel = channel
     ? await buildProcessedChannel(channel, me.id)
     : {
-        id: rootPost?.channel_id || '',
+        id: channelPost?.channel_id || '',
         type: 'public' as const,
         name: 'unknown',
       }
@@ -554,6 +629,20 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
         channel: processedChannel,
         messages: groupIntoThreads(messages),
         redactions,
+        retrieval: retrievalMetadata(
+          {
+            source: 'thread',
+            requestedLimit: null,
+            since: null,
+            queryTruncated: result.truncated,
+          },
+          posts.length,
+          {
+            status: result.truncated === false && rootPost ? 'complete' : 'partial',
+            hydratedRootCount: rootPost ? 1 : 0,
+            failedRootIds: missingRootId ? [missingRootId] : [],
+          },
+        ),
       },
     ],
     options,
@@ -585,7 +674,12 @@ export async function searchMessages(options: SearchOptions): Promise<void> {
     process.exit(1)
   }
 
-  const outputs = await buildOutputsFromPosts(posts, me.id, options)
+  const outputs = await buildOutputsFromPosts(posts, me.id, options, {
+    source: 'search',
+    requestedLimit: options.limit,
+    since: null,
+    queryTruncated: response.truncated,
+  })
   formatOutput(outputs, options)
 }
 
@@ -614,18 +708,16 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
   }
 
   const dedupedPosts = new Map<string, Post>()
+  const truncationStates: Array<boolean | null> = []
 
   const searchTerms = [...new Set(baseTerms)]
 
   for (const term of searchTerms) {
     const searchTerm = [term, ...modifiers].join(' ')
-    const response = await searchPosts(
-      teamId,
-      searchTerm,
-      options.limit,
-      (post) => isExactMentionPost(post, term, since),
-      { completeCutoffTies: true },
+    const response = await searchPosts(teamId, searchTerm, options.limit, (post) =>
+      isExactMentionPost(post, term, since),
     )
+    truncationStates.push(response.truncated)
 
     for (const id of response.order) {
       const post = response.posts[id]
@@ -648,7 +740,13 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
     process.exit(1)
   }
 
-  const outputs = await buildOutputsFromPosts(posts, me.id, options)
+  const queryTruncated = mergeTruncation(truncationStates, dedupedPosts.size, options.limit)
+  const outputs = await buildOutputsFromPosts(posts, me.id, options, {
+    source: 'mentions',
+    requestedLimit: options.limit,
+    since: since === undefined ? null : new Date(since).toISOString(),
+    queryTruncated,
+  })
   formatOutput(outputs, options)
 }
 
@@ -719,21 +817,36 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
       const peekOutputs: MessageOutput[] = []
 
       for (const entry of sortedEntries) {
-        const posts = await getAllChannelPosts(entry.channel.id, {
+        const result = await getAllChannelPosts(entry.channel.id, {
           limit: options.peek,
           since: entry.lastViewedAt || undefined,
         })
+        const posts = result.posts
         if (posts.length === 0) continue
 
         const userIds = [...new Set(posts.map((post) => post.user_id))]
         if (userIds.length > 0) await getUsersByIds(userIds)
 
-        const { messages, redactions } = await processMessages(posts, me.id, options.redact)
+        const { messages, redactions } = await processMessages(
+          posts,
+          me.id,
+          options.redact,
+          options.url,
+        )
 
         peekOutputs.push({
           channel: entry.processedChannel,
           messages: options.threads ? groupIntoThreads(messages) : messages,
           redactions,
+          retrieval: retrievalMetadata(
+            {
+              source: 'unread',
+              requestedLimit: options.peek,
+              since: entry.lastViewedAt ? new Date(entry.lastViewedAt).toISOString() : null,
+              queryTruncated: result.truncated,
+            },
+            posts.length,
+          ),
         })
       }
 
@@ -759,21 +872,36 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
   const peekOutputs: MessageOutput[] = []
 
   for (const entry of sortedEntries) {
-    const posts = await getAllChannelPosts(entry.channel.id, {
+    const result = await getAllChannelPosts(entry.channel.id, {
       limit: options.peek,
       since: entry.lastViewedAt || undefined,
     })
+    const posts = result.posts
     if (posts.length === 0) continue
 
     const userIds = [...new Set(posts.map((post) => post.user_id))]
     if (userIds.length > 0) await getUsersByIds(userIds)
 
-    const { messages, redactions } = await processMessages(posts, me.id, options.redact)
+    const { messages, redactions } = await processMessages(
+      posts,
+      me.id,
+      options.redact,
+      options.url,
+    )
 
     peekOutputs.push({
       channel: entry.processedChannel,
       messages: options.threads ? groupIntoThreads(messages) : messages,
       redactions,
+      retrieval: retrievalMetadata(
+        {
+          source: 'unread',
+          requestedLimit: options.peek,
+          since: entry.lastViewedAt ? new Date(entry.lastViewedAt).toISOString() : null,
+          queryTruncated: result.truncated,
+        },
+        posts.length,
+      ),
     })
   }
 
