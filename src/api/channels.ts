@@ -76,6 +76,29 @@ export async function getDMChannelByUsername(username: string): Promise<Channel 
   return getDMChannelWithUser(user.id)
 }
 
+export async function createDirectChannel(myUserId: string, otherUserId: string): Promise<Channel> {
+  if (!myUserId || !otherUserId) throw new Error('Invalid direct-message participants.')
+  const client = getClient()
+  const channel = await client.post<unknown>('/channels/direct', [myUserId, otherUserId])
+  if (
+    typeof channel !== 'object' ||
+    channel === null ||
+    Array.isArray(channel) ||
+    typeof (channel as Record<string, unknown>).id !== 'string' ||
+    (channel as Record<string, unknown>).id === '' ||
+    (channel as Record<string, unknown>).type !== 'D' ||
+    typeof (channel as Record<string, unknown>).name !== 'string'
+  ) {
+    throw new Error('Invalid direct-message channel response.')
+  }
+
+  const directChannel = channel as Channel
+  if (getOtherUserIdFromDMChannel(directChannel, myUserId) !== otherUserId) {
+    throw new Error('Invalid direct-message channel response.')
+  }
+  return directChannel
+}
+
 export async function getChannel(channelId: string): Promise<Channel> {
   const client = getClient()
   return client.get<Channel>(`/channels/${encodeURIComponent(channelId)}`)

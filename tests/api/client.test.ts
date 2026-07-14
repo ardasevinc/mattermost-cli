@@ -3,6 +3,7 @@ import {
   getClient,
   initClient,
   MattermostClient,
+  MattermostMutationOutcomeUnknownError,
   REQUEST_TIMEOUT_MS,
   rateLimitDelay,
 } from '../../src/api/client'
@@ -177,6 +178,34 @@ describe('MattermostClient', () => {
     await expect(
       request(new MattermostClient('https://mattermost.example.com', 'fake-token')),
     ).rejects.toMatchObject({ status: 429 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([
+    'timeout',
+    'transport failure',
+  ] as const)('does not retry a mutation after a %s and reports an unknown outcome', async (kind) => {
+    vi.useFakeTimers()
+    const fetchMock =
+      kind === 'timeout'
+        ? vi.fn(
+            (_url: string, init?: RequestInit) =>
+              new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () =>
+                  reject(new DOMException('secret mutation body', 'AbortError')),
+                )
+              }),
+          )
+        : vi.fn().mockRejectedValue(new TypeError('secret transport detail'))
+    vi.stubGlobal('fetch', fetchMock)
+    const request = new MattermostClient('https://mattermost.example.com', 'fake-token').post(
+      '/posts',
+      { message: 'secret message' },
+    )
+    const rejection = expect(request).rejects.toBeInstanceOf(MattermostMutationOutcomeUnknownError)
+
+    if (kind === 'timeout') await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS)
+    await rejection
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 

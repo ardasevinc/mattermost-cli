@@ -13,6 +13,54 @@ interface GetPostsOptions {
 
 const MAX_SEARCH_SCAN_PAGES = 100
 
+export interface CreatedPostReceipt {
+  id: string
+  channelId: string
+  userId: string
+  createAt: number
+  pendingPostId: string
+}
+
+export async function createPost(
+  channelId: string,
+  message: string,
+  pendingPostId: string = crypto.randomUUID(),
+): Promise<CreatedPostReceipt> {
+  if (!channelId) throw new Error('A destination channel is required.')
+  if (!message.trim()) throw new Error('Message cannot be empty.')
+  if (!pendingPostId) throw new Error('A pending post ID is required.')
+
+  const post = await getClient().post<unknown>('/posts', {
+    channel_id: channelId,
+    message,
+    pending_post_id: pendingPostId,
+  })
+  if (typeof post !== 'object' || post === null || Array.isArray(post)) {
+    throw new Error('Invalid create-post response.')
+  }
+  const raw = post as Record<string, unknown>
+  if (
+    typeof raw.id !== 'string' ||
+    raw.id.length === 0 ||
+    raw.channel_id !== channelId ||
+    typeof raw.user_id !== 'string' ||
+    raw.user_id.length === 0 ||
+    typeof raw.create_at !== 'number' ||
+    !Number.isFinite(raw.create_at) ||
+    raw.create_at <= 0
+  ) {
+    throw new Error('Invalid create-post response.')
+  }
+
+  return {
+    id: raw.id,
+    channelId,
+    userId: raw.user_id,
+    createAt: raw.create_at,
+    pendingPostId,
+  }
+}
+
 export async function getChannelPosts(
   channelId: string,
   options: GetPostsOptions = {},

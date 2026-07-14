@@ -34,6 +34,15 @@ function waitForRetry(delay: number, reason: string, attempt: number): Promise<v
 class RequestTimeoutError extends Error {}
 class RequestTransportError extends Error {}
 
+export class MattermostMutationOutcomeUnknownError extends Error {
+  constructor() {
+    super(
+      'Mattermost did not confirm the write. Its outcome is unknown; do not retry automatically.',
+    )
+    this.name = 'MattermostMutationOutcomeUnknownError'
+  }
+}
+
 interface RequestAttempt<T> {
   response: Response
   data?: T
@@ -102,6 +111,9 @@ export class MattermostClient {
         throw error
       }
       if (!retrySafe || retryCount >= MAX_RETRIES) {
+        if (!retrySafe && method !== 'GET') {
+          throw new MattermostMutationOutcomeUnknownError()
+        }
         if (error instanceof RequestTimeoutError) {
           throw new Error(`Mattermost request timed out after ${REQUEST_TIMEOUT_MS}ms.`)
         }
