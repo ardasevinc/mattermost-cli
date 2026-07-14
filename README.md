@@ -195,7 +195,17 @@ stderr, so they never corrupt the JSONL stream. Stop cleanly with either `SIGINT
 mm config           # Show config file status
 mm config --path    # Print config file path
 mm config --init    # Create config file with template
+mm doctor           # Check config, server health, and authentication
+mm --json doctor    # Stable { ok, checks } diagnostic envelope
 ```
+
+`doctor` is read-only and inspects partial configuration without aborting early. Missing URL or
+token makes readiness fail, while an available URL is still pinged and unavailable checks are
+reported as skipped. It reports whether credentials came
+from CLI flags, environment variables, a file, or are missing, never their values. Server checks
+expose only ping health fields; authentication exposes only user ID and username. An insecure
+config file is fatal whenever it stores a token, even if another source overrides it, and a warning
+otherwise. Network checks have independent bounded timeouts.
 
 ### Inspect identity, teams, and users
 

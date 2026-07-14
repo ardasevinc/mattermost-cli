@@ -12,6 +12,20 @@ export interface FileConfig {
   mention_names?: string[]
 }
 
+export type ConfigSource = 'cli' | 'env' | 'file' | 'missing'
+
+export interface ResolvedConfigState {
+  url?: string
+  token?: string
+  urlSource: ConfigSource
+  tokenSource: ConfigSource
+  fileConfig: FileConfig
+  configPath: string
+  fileExists: boolean
+  insecurePermissions: boolean
+  fileError?: 'read' | 'parse'
+}
+
 const CONFIG_PATH = join(homedir(), '.config', 'mattermost-cli', 'config.toml')
 
 /**
@@ -28,32 +42,32 @@ async function hasInsecurePermissions(): Promise<boolean> {
   }
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function inspectConfigFile(configPath: string): Promise<{
+  config: FileConfig
+  exists: boolean
+  insecurePermissions: boolean
+  error?: 'read' | 'parse'
+}> {
+  let insecurePermissions = false
   try {
-    await access(path)
-    return true
+    const stats = await stat(configPath)
+    insecurePermissions = (stats.mode & 0o077) !== 0
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { config: {}, exists: false, insecurePermissions: false }
+    }
+    return { config: {}, exists: true, insecurePermissions: false, error: 'read' }
+  }
+
+  let content: string
+  try {
+    content = await readFile(configPath, 'utf-8')
   } catch {
-    return false
-  }
-}
-
-export async function loadConfigFile(): Promise<FileConfig> {
-  if (!(await fileExists(CONFIG_PATH))) {
-    return {}
-  }
-
-  // Warn if config file is readable by group/other (contains token)
-  if (await hasInsecurePermissions()) {
-    console.warn(
-      `Warning: ${CONFIG_PATH} has insecure permissions.\n` + `  Run: chmod 600 "${CONFIG_PATH}"`,
-    )
+    return { config: {}, exists: true, insecurePermissions, error: 'read' }
   }
 
   try {
-    const content = await readFile(CONFIG_PATH, 'utf-8')
     const parsed = parseTOML(content)
-
-    // Trim and treat empty strings as undefined
     const url = typeof parsed.url === 'string' ? parsed.url.trim() : undefined
     const token = typeof parsed.token === 'string' ? parsed.token.trim() : undefined
     const redact = typeof parsed.redact === 'boolean' ? parsed.redact : undefined
@@ -65,15 +79,76 @@ export async function loadConfigFile(): Promise<FileConfig> {
       : undefined
 
     return {
-      url: url || undefined,
-      token: token || undefined,
-      redact,
-      mention_names: mentionNames,
+      config: {
+        url: url || undefined,
+        token: token || undefined,
+        redact,
+        mention_names: mentionNames,
+      },
+      exists: true,
+      insecurePermissions,
     }
   } catch {
-    console.warn(`Warning: Could not parse config at ${CONFIG_PATH}`)
-    return {}
+    return { config: {}, exists: true, insecurePermissions, error: 'parse' }
   }
+}
+
+export async function resolveConfigState(
+  options: { url?: string; token?: string },
+  environment: NodeJS.ProcessEnv = process.env,
+  configPath = CONFIG_PATH,
+): Promise<ResolvedConfigState> {
+  const file = await inspectConfigFile(configPath)
+  const url = options.url || environment.MM_URL || file.config.url
+  const token = options.token || environment.MM_TOKEN || file.config.token
+
+  return {
+    url,
+    token,
+    urlSource: options.url
+      ? 'cli'
+      : environment.MM_URL
+        ? 'env'
+        : file.config.url
+          ? 'file'
+          : 'missing',
+    tokenSource: options.token
+      ? 'cli'
+      : environment.MM_TOKEN
+        ? 'env'
+        : file.config.token
+          ? 'file'
+          : 'missing',
+    fileConfig: file.config,
+    configPath,
+    fileExists: file.exists,
+    insecurePermissions: file.insecurePermissions,
+    fileError: file.error,
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function loadConfigFile(): Promise<FileConfig> {
+  const state = await inspectConfigFile(CONFIG_PATH)
+  if (state.insecurePermissions) {
+    console.warn(
+      `Warning: ${CONFIG_PATH} has insecure permissions.\n` + `  Run: chmod 600 "${CONFIG_PATH}"`,
+    )
+  }
+  if (state.error) {
+    console.warn(
+      `Warning: Could not ${state.error === 'parse' ? 'parse' : 'read'} config at ${CONFIG_PATH}`,
+    )
+  }
+  return state.config
 }
 
 export function getConfigPath(): string {

@@ -123,6 +123,17 @@ always fetches the explicitly requested thread.
 
 ## Secret Redaction
 
+`mm doctor` performs only `GET /system/ping?get_server_status=true` and, when both URL and token are
+available, `GET /users/me`. It always emits configuration, server, and authentication checks with
+`pass`, `warn`, `fail`, or `skipped` status. JSON is `{ "ok": boolean, "checks": [...] }`; `ok` is
+false and the exit status is nonzero when any check fails. Credential values, raw remote bodies,
+and arbitrary ping/user fields are never emitted. Missing optional ping fields are reported as
+`unknown`, not inferred healthy. Missing URL or token is a configuration failure, but all checks
+are still emitted and any possible ping still runs. Each request has an independent bounded
+timeout. Every remote string passes through control-character sanitization and, when enabled, the
+normal secret-redaction pipeline. A configured token is never emitted even with redaction disabled.
+An insecure file containing a token fails regardless of which credential source wins precedence.
+
 The CLI automatically detects and redacts secrets including:
 
 - AWS access keys and secret keys

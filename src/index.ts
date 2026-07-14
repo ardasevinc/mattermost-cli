@@ -18,7 +18,8 @@ import {
   showWhoAmI,
   watchChannel,
 } from './cli'
-import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
+import { getConfigPath, getConfigStatus, initConfigFile, resolveConfigState } from './config'
+import { formatDoctorReport, runDoctor } from './doctor'
 import { parsePositiveSafeInteger } from './validation'
 
 const isRunningUnderAgent = isAgent() !== null
@@ -78,14 +79,18 @@ async function resolveConfig(options: { url?: string; token?: string }): Promise
   token: string
   fileConfig: { redact?: boolean; mentionNames: string[] }
 }> {
-  let url = options.url || process.env.MM_URL
-  let token = options.token || process.env.MM_TOKEN
-
-  const fileConfig = await loadConfigFile()
-  url = url || fileConfig.url
-  token = token || fileConfig.token
-
-  const configPath = getConfigPath()
+  const state = await resolveConfigState(options)
+  const { url, token, fileConfig, configPath } = state
+  if (state.insecurePermissions) {
+    console.warn(
+      `Warning: ${configPath} has insecure permissions.\n` + `  Run: chmod 600 "${configPath}"`,
+    )
+  }
+  if (state.fileError) {
+    console.warn(
+      `Warning: Could not ${state.fileError === 'parse' ? 'parse' : 'read'} config at ${configPath}`,
+    )
+  }
 
   if (!url) {
     console.error(
@@ -115,6 +120,19 @@ async function resolveConfig(options: { url?: string; token?: string }): Promise
     },
   }
 }
+
+program
+  .command('doctor')
+  .description('Check configuration, server health, and authentication')
+  .action(async () => {
+    const opts = program.opts()
+    const config = await resolveConfigState(opts)
+    const report = await runDoctor(config, {
+      redact: resolveRedact(opts, config.fileConfig),
+    })
+    console.log(opts.json ? JSON.stringify(report) : formatDoctorReport(report))
+    if (!report.ok) process.exitCode = 1
+  })
 
 program
   .command('config')

@@ -43,6 +43,7 @@ The `mm` CLI must be installed and configured:
 
 ```bash
 mm channels  # test if working
+mm doctor    # diagnose partial configuration and connectivity safely
 ```
 
 If it fails, configure credentials using one of:
@@ -154,7 +155,13 @@ mm thread <postId>                 # fetch root post + all replies
 mm config                # show config status
 mm config --init         # create config file template
 mm config --path         # print config file path
+mm doctor                # read-only config, server, and auth checks
+mm --json doctor         # stable diagnostic envelope
 ```
+
+Use `doctor` for setup failures. It reports credential sources but never values or raw server error
+bodies, and it can still ping a configured server when the token is missing. Missing credentials
+make readiness fail after all checks print; network checks use independent bounded timeouts.
 
 ## Quick Reference
 
