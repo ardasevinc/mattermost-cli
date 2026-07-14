@@ -87,7 +87,9 @@ export async function createDirectChannel(myUserId: string, otherUserId: string)
     typeof (channel as Record<string, unknown>).id !== 'string' ||
     (channel as Record<string, unknown>).id === '' ||
     (channel as Record<string, unknown>).type !== 'D' ||
-    typeof (channel as Record<string, unknown>).name !== 'string'
+    typeof (channel as Record<string, unknown>).name !== 'string' ||
+    typeof (channel as Record<string, unknown>).display_name !== 'string' ||
+    (channel as Record<string, unknown>).team_id !== ''
   ) {
     throw new MattermostMutationOutcomeUnknownError()
   }

@@ -26,6 +26,17 @@ function channel(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function captureStdout(): () => string {
+  let output = ''
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+    output += String(chunk)
+    const callback = args.find((arg) => typeof arg === 'function')
+    if (typeof callback === 'function') callback()
+    return true
+  })
+  return () => output
+}
+
 describe('message sending handlers', () => {
   afterEach(() => {
     clearUserCache()
@@ -128,14 +139,14 @@ describe('message sending handlers', () => {
       )
     vi.stubGlobal('fetch', fetchMock)
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000000')
-    const output = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const output = captureStdout()
 
     await sendDirectMessage({ ...base, username: 'alice', message: 'very private' })
 
     expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(fetchMock.mock.calls[3]?.[0]).toBe('https://mattermost.test/api/v4/channels/direct')
     expect(fetchMock.mock.calls[4]?.[0]).toBe('https://mattermost.test/api/v4/posts')
-    const receiptText = String(output.mock.calls[0]?.[0])
+    const receiptText = output()
     expect(receiptText).not.toContain('very private')
     expect(JSON.parse(receiptText)).toMatchObject({
       status: 'sent',
@@ -150,7 +161,7 @@ describe('message sending handlers', () => {
       .mockResolvedValueOnce(Response.json({ id: 'me', username: 'sender' }))
       .mockResolvedValueOnce(Response.json({ id: 'recipient', username: 'alice' }))
       .mockResolvedValueOnce(Response.json([]))
-      .mockResolvedValueOnce(Response.json({ id: 'wrong', type: 'G', name: 'bad' }))
+      .mockResolvedValueOnce(Response.json({ id: 'channel-id', type: 'D', name: 'me__recipient' }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(
@@ -177,17 +188,34 @@ describe('message sending handlers', () => {
         }),
       )
     vi.stubGlobal('fetch', fetchMock)
-    const output = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const output = captureStdout()
 
     await sendGroupMessage({ ...base, channelId: 'channel-id', message: 'hello group' })
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://mattermost.test/api/v4/posts')
-    expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+    expect(JSON.parse(output())).toMatchObject({
       status: 'sent',
       destination: { type: 'group', label: 'Test Group', channelId: 'channel-id' },
       post: { id: 'post-id' },
     })
+  })
+
+  test('rejects a malformed sender identity before posting to a group', async () => {
+    const group = channel({ type: 'G', name: 'group-name', display_name: 'Test Group' })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(group))
+      .mockResolvedValueOnce(Response.json({}))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      sendGroupMessage({ ...base, channelId: 'channel-id', message: 'must not send' }),
+    ).rejects.toThrow('invalid identity response')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls.map(([request]) => String(request))).not.toContain(
+      'https://mattermost.test/api/v4/posts',
+    )
   })
 
   test('reports confirmed delivery distinctly when receipt output fails', async () => {
@@ -205,8 +233,10 @@ describe('message sending handlers', () => {
         }),
       )
     vi.stubGlobal('fetch', fetchMock)
-    vi.spyOn(console, 'log').mockImplementation(() => {
-      throw new Error('broken pipe')
+    vi.spyOn(process.stdout, 'write').mockImplementation((_chunk, ...args) => {
+      const callback = args.find((arg) => typeof arg === 'function')
+      if (typeof callback === 'function') callback(new Error('broken pipe'))
+      return false
     })
 
     await expect(
@@ -262,5 +292,38 @@ describe('message sending handlers', () => {
     expect(receipt).not.toContain(base.token)
     expect(receipt).not.toContain('\u001b')
     expect(receipt).toContain('[REDACTED:mattermost_credential]')
+  })
+
+  test.each([
+    true,
+    false,
+  ])('protects the active credential in both post ID and permalink when redact=%s', async (redact) => {
+    const group = channel({ type: 'G', name: 'group-name', display_name: 'Test Group' })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(group))
+      .mockResolvedValueOnce(Response.json({ id: 'me', username: 'sender' }))
+      .mockResolvedValueOnce(
+        Response.json({
+          id: base.token,
+          channel_id: 'channel-id',
+          user_id: 'me',
+          create_at: 1_784_023_427_000,
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const output = captureStdout()
+
+    await sendGroupMessage({
+      ...base,
+      redact,
+      channelId: 'channel-id',
+      message: 'safe message',
+    })
+
+    const receipt = output()
+    expect(receipt).not.toContain(base.token)
+    expect(receipt).toContain('[REDACTED:mattermost_credential]')
+    expect(JSON.parse(receipt).post.permalink).not.toContain(base.token)
   })
 })

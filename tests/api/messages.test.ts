@@ -18,6 +18,8 @@ describe('message write API', () => {
         id: 'dm-channel',
         type: 'D',
         name: 'me__recipient',
+        display_name: '',
+        team_id: '',
       }),
     )
     vi.stubGlobal('fetch', fetchMock)
@@ -37,6 +39,7 @@ describe('message write API', () => {
     [{ id: '', type: 'D', name: 'me__recipient' }],
     [{ id: 'channel', type: 'G', name: 'me__recipient' }],
     [{ id: 'channel', type: 'D', name: 'me__someone-else' }],
+    [{ id: 'channel', type: 'D', name: 'me__recipient', display_name: '', team_id: 'team' }],
     [null],
   ])('rejects a malformed or mismatched direct-channel response', async (response) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(response)))
@@ -86,6 +89,7 @@ describe('message write API', () => {
     [{ id: 'post', channel_id: 'wrong', user_id: 'sender', create_at: 1 }],
     [{ id: 'post', channel_id: 'channel-id', user_id: '', create_at: 1 }],
     [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: Number.NaN }],
+    [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: 1e100 }],
     [null],
   ])('rejects a malformed or mismatched create-post response', async (response) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(response)))

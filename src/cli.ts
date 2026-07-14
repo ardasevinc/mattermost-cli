@@ -1025,28 +1025,46 @@ export async function listChannels(options: {
   console.log(`\nTotal: ${output.length} channels`)
 }
 
-function emitSendReceipt(receipt: SendReceipt, json: boolean): void {
+function renderSendReceipt(receipt: SendReceipt, json: boolean): string {
   if (json) {
-    console.log(JSON.stringify(receipt, null, 2))
-    return
+    return JSON.stringify(receipt, null, 2)
   }
   const destination = receipt.destination.channelId
     ? `${receipt.destination.label} [${receipt.destination.channelId}]`
     : receipt.destination.label
   if (receipt.status === 'dry_run') {
-    console.log(
-      receipt.destination.willCreate
-        ? `Would create a conversation with ${destination}, then send one message.`
-        : `Would send one message to ${destination}.`,
-    )
-    return
+    return receipt.destination.willCreate
+      ? `Would create a conversation with ${destination}, then send one message.`
+      : `Would send one message to ${destination}.`
   }
-  console.log(`Sent one message to ${destination}. Post ${receipt.post?.id}.`)
+  return `Sent one message to ${destination}. Post ${receipt.post?.id}.`
 }
 
-function emitConfirmedSendReceipt(receipt: SendReceipt, json: boolean): void {
+function emitSendReceipt(receipt: SendReceipt, json: boolean): void {
+  console.log(renderSendReceipt(receipt, json))
+}
+
+async function writeConfirmedSendReceipt(receipt: SendReceipt, json: boolean): Promise<void> {
   try {
-    emitSendReceipt(receipt, json)
+    const output = `${renderSendReceipt(receipt, json)}\n`
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        cleanup()
+        reject(error)
+      }
+      const cleanup = () => process.stdout.off('error', onError)
+      process.stdout.once('error', onError)
+      try {
+        process.stdout.write(output, (error) => {
+          cleanup()
+          if (error) reject(error)
+          else resolve()
+        })
+      } catch (error) {
+        cleanup()
+        reject(error)
+      }
+    })
   } catch {
     throw new MattermostDeliveryConfirmedError()
   }
@@ -1119,7 +1137,8 @@ export async function sendDirectMessage(options: SendDirectMessageOptions): Prom
   }
   const post = await createPost(channel.id, options.message)
   if (post.userId !== me.id) throw new MattermostMutationOutcomeUnknownError()
-  emitConfirmedSendReceipt(
+  const safePostId = safeSendLabel(post.id, options.redact)
+  await writeConfirmedSendReceipt(
     {
       status: 'sent',
       destination: {
@@ -1129,10 +1148,10 @@ export async function sendDirectMessage(options: SendDirectMessageOptions): Prom
         willCreate: false,
       },
       post: {
-        id: safeSendLabel(post.id, options.redact),
+        id: safePostId,
         createAt: new Date(post.createAt).toISOString(),
         pendingPostId: safeSendLabel(post.pendingPostId, options.redact),
-        permalink: buildPostPermalink(options.url, post.id),
+        permalink: safeSendLabel(buildPostPermalink(options.url, safePostId), options.redact),
       },
     },
     options.json,
@@ -1165,17 +1184,21 @@ export async function sendGroupMessage(options: SendGroupMessageOptions): Promis
 
   if (options.message === undefined) throw new Error('Message content is required.')
   const me = await getMe()
+  if (typeof me?.id !== 'string' || me.id.length === 0) {
+    throw new Error('Mattermost returned an invalid identity response.')
+  }
   const post = await createPost(channel.id, options.message)
   if (post.userId !== me.id) throw new MattermostMutationOutcomeUnknownError()
-  emitConfirmedSendReceipt(
+  const safePostId = safeSendLabel(post.id, options.redact)
+  await writeConfirmedSendReceipt(
     {
       status: 'sent',
       destination: { type: 'group', label, channelId, willCreate: false },
       post: {
-        id: safeSendLabel(post.id, options.redact),
+        id: safePostId,
         createAt: new Date(post.createAt).toISOString(),
         pendingPostId: safeSendLabel(post.pendingPostId, options.redact),
-        permalink: buildPostPermalink(options.url, post.id),
+        permalink: safeSendLabel(buildPostPermalink(options.url, safePostId), options.redact),
       },
     },
     options.json,

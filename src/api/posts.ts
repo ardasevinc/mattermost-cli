@@ -47,7 +47,8 @@ export async function createPost(
     raw.user_id.length === 0 ||
     typeof raw.create_at !== 'number' ||
     !Number.isFinite(raw.create_at) ||
-    raw.create_at <= 0
+    raw.create_at <= 0 ||
+    Number.isNaN(new Date(raw.create_at).getTime())
   ) {
     throw new MattermostMutationOutcomeUnknownError()
   }

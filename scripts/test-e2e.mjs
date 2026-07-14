@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const composeFile = path.join(root, 'tests/e2e/compose.yml')
-const project = 'mattermost-cli-e2e'
-const port = process.env.MM_E2E_PORT || '18065'
-const url = `http://127.0.0.1:${port}`
+const project = `mattermost-cli-e2e-${process.pid}-${randomUUID().slice(0, 8)}`
+const requestedPort = process.env.MM_E2E_PORT || '0'
 const compose = ['compose', '-p', project, '-f', composeFile]
 
 function run(command, args, options = {}) {
@@ -14,7 +14,7 @@ function run(command, args, options = {}) {
     cwd: root,
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
-    env: { ...process.env, MM_E2E_PORT: port, ...options.env },
+    env: { ...process.env, MM_E2E_PORT: requestedPort, ...options.env },
   })
   if (result.status !== 0) {
     if (options.capture) {
@@ -35,16 +35,26 @@ function mmctl(args, capture = false) {
 }
 
 function cleanup() {
-  spawnSync('docker', [...compose, 'down', '--volumes', '--remove-orphans'], {
-    cwd: root,
-    stdio: 'inherit',
-    env: { ...process.env, MM_E2E_PORT: port },
-  })
+  run('docker', [...compose, 'down', '--volumes', '--remove-orphans'])
+  const containers = run('docker', [...compose, 'ps', '-aq'], { capture: true }).trim()
+  const volumes = run(
+    'docker',
+    ['volume', 'ls', '-q', '--filter', `label=com.docker.compose.project=${project}`],
+    { capture: true },
+  ).trim()
+  if (containers || volumes) {
+    throw new Error('Docker E2E cleanup left project resources behind')
+  }
 }
 
 try {
-  cleanup()
   run('docker', [...compose, 'up', '-d', '--wait', '--wait-timeout', '180'])
+  const published = run('docker', [...compose, 'port', 'mattermost', '8065'], {
+    capture: true,
+  }).trim()
+  const port = published.match(/:(\d+)$/)?.[1]
+  if (!port) throw new Error('Docker did not report the Mattermost E2E port')
+  const url = `http://127.0.0.1:${port}`
 
   mmctl([
     '--quiet',
