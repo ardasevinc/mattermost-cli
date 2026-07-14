@@ -14,12 +14,12 @@ A CLI tool to fetch and display Mattermost messages (DMs, channels, threads) wit
 - Thread-aware output by default (`--no-threads` to flatten)
 - Fetch a single thread via `mm thread <postId>`
 - Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
-- Multiple output formats: pretty terminal, markdown, JSON
+- Multiple output formats: pretty terminal, markdown, JSON, and JSON Lines for live watch
 - Time-based filtering (`--since`) and message limits (`--limit`)
 
 ## Prerequisites
 
-- Node.js >= 22.0.0 or [Bun](https://bun.sh) >= 1.0.0
+- Node.js >= 22.0.0
 - Mattermost personal access token
 
 ## Installation
@@ -162,7 +162,17 @@ mm unread --peek 5
 mm watch general
 mm watch dev --team myteam
 mm watch --dm alice
+mm --json watch general >> mattermost-posts.jsonl
 ```
+
+Watch emits only newly posted events. It reconnects automatically with bounded backoff and resumes
+from the next expected WebSocket sequence when Mattermost preserves the connection. Sequence gaps
+or a changed server connection are reported, but watch does not perform REST backfill.
+
+With `--json`, stdout is JSON Lines: one redacted post object per line, suitable for piping or
+append-only logs. Connection status, retries, malformed-event warnings, and gap diagnostics go to
+stderr, so they never corrupt the JSONL stream. Stop cleanly with either `SIGINT` (Ctrl+C) or
+`SIGTERM`.
 
 ### Manage configuration
 
@@ -178,7 +188,7 @@ mm config --init    # Create config file with template
 Global:
   -t, --token <token>     Mattermost personal access token (or MM_TOKEN env)
   --url <url>             Mattermost server URL (or MM_URL env)
-  --json                  Output as JSON
+  --json                  Output as JSON (JSON Lines for watch)
   --no-color              Disable colored output
   -r, --relative          Show relative times
   --no-relative           Show absolute times
@@ -220,7 +230,7 @@ Unread:
   --peek <number>         Fetch N recent unread messages per channel
 
 Watch:
-  watch [channel]         Live tail a channel (Ctrl+C to stop)
+  watch [channel]         Live posted events with automatic reconnect
   --team <name>           Team name (required if multiple teams)
   --dm <username>         Watch a DM conversation instead of a channel
 
@@ -253,15 +263,16 @@ bunx skills@latest add ardasevinc/mattermost-cli --skill mattermost-cli
 
 ## Contributing
 
-Development requires [Bun](https://bun.sh) (the published package works with any runtime).
+The published CLI targets Node.js >= 22. Development uses Bun 1.3.14 (matching `@types/bun`).
 
 ```bash
-bun install     # Install dependencies
+bun install --frozen-lockfile  # Install exact dependencies
 bun run lint    # Biome lint
 bun run check   # Biome full check
-bun x tsc --noEmit  # Typecheck
+bun run typecheck  # Typecheck
 bun run test    # Run tests with Vitest
 bun run build   # Build for npm
+bun run verify  # Full release verification
 bun run mm      # Run CLI from source
 ```
 

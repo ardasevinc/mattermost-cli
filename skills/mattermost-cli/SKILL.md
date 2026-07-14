@@ -114,9 +114,12 @@ Channels are sorted by mentions first, then by unread count.
 mm watch general                   # live-stream channel messages
 mm watch general --team myteam     # specify team
 mm watch --dm alice                # live-stream DMs with a user
+mm --json watch general            # redacted JSON Lines on stdout
 ```
 
-WebSocket-based, streams new messages as they arrive. Ctrl+C to stop.
+WebSocket-based and limited to newly posted messages. It reconnects automatically and resumes from
+the next event sequence when Mattermost preserves the connection. JSON mode writes one event per
+stdout line; connection and gap diagnostics stay on stderr. Ctrl+C or SIGTERM stops cleanly.
 
 ### Fetch a Thread
 ```bash
@@ -154,7 +157,7 @@ These apply to all commands:
 
 | Flag | Effect |
 |------|--------|
-| `--json` | JSON output (default: pretty terminal) |
+| `--json` | JSON output; JSON Lines for `watch` |
 | `--no-color` | Disable ANSI colors |
 | `-r, --relative` | Relative timestamps ("2 days ago") |
 | `--no-relative` | Absolute timestamps |
@@ -170,6 +173,7 @@ These apply to all commands:
 | Terminal (TTY) | Pretty | Reading directly — colors, grouping, thread indentation |
 | Piped / non-TTY | Markdown | Passing to other tools or LLMs |
 | `--json` flag | JSON | Parsing, analysis, programmatic access |
+| `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 
 Under AI agents, relative time is auto-enabled ("2 days ago" instead of "29 Jan 2026"). Override with `--no-relative`.
 

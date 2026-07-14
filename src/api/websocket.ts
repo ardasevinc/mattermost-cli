@@ -7,33 +7,53 @@ interface SocketMessage {
   status?: string
   error?: unknown
   data?: Record<string, unknown>
+  seq?: number
+  seq_reply?: number
+}
+
+export interface WebSocketGap {
+  expected: number
+  received: number
+  reason: 'sequence_mismatch' | 'connection_changed'
+}
+
+export interface WebSocketDiagnostics {
+  reconnect?: (attempt: number, delayMs: number) => void
+  gap?: (gap: WebSocketGap) => void
+  connected?: () => void
+  malformed?: (message: string) => void
+}
+
+export interface WebSocketOptions {
+  channelId?: string
+  diagnostics?: WebSocketDiagnostics
+  WebSocket?: typeof globalThis.WebSocket
+  random?: () => number
+  handshakeTimeoutMs?: number
+  heartbeatIntervalMs?: number
+  heartbeatTimeoutMs?: number
+  backoffBaseMs?: number
+  backoffMaxMs?: number
 }
 
 export function getSocketErrorMessage(error: unknown): string {
-  if (typeof error === 'string') {
-    return sanitizeTerminalLabel(error)
-  }
-
+  if (typeof error === 'string') return sanitizeTerminalLabel(error)
   if (error && typeof error === 'object' && 'message' in error) {
     const message = (error as { message?: unknown }).message
-    if (typeof message === 'string') {
-      return sanitizeTerminalLabel(message)
-    }
+    if (typeof message === 'string') return sanitizeTerminalLabel(message)
   }
-
   return 'WebSocket request failed.'
 }
 
-function toWebSocketBaseUrl(serverUrl: string): string {
+function toWebSocketUrl(serverUrl: string): URL {
   const url = new URL(normalizeServerUrl(serverUrl))
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-
-  return url.toString().replace(/\/+$/, '')
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/api/v4/websocket`
+  return url
 }
 
 function parseSocketMessage(raw: unknown): SocketMessage | null {
   if (typeof raw !== 'string') return null
-
   try {
     return JSON.parse(raw) as SocketMessage
   } catch {
@@ -45,100 +65,247 @@ function parsePostEvent(payload: SocketMessage): {
   post: Post
   channelName: string
   senderName: string
-  broadcastChannelId?: string
 } | null {
   if (payload.event !== 'posted' || !payload.data) return null
-
   const event = payload as unknown as WSPostEvent
-  const postJson = event.data.post
-
+  if (typeof event.data.post !== 'string') return null
   try {
-    const post = JSON.parse(postJson) as Post
+    const post = JSON.parse(event.data.post) as Post
+    if (!post || typeof post.id !== 'string' || typeof post.channel_id !== 'string') return null
     return {
       post,
-      channelName: event.data.channel_name,
-      senderName: event.data.sender_name,
-      broadcastChannelId: event.broadcast?.channel_id,
+      channelName: typeof event.data.channel_name === 'string' ? event.data.channel_name : '',
+      senderName: typeof event.data.sender_name === 'string' ? event.data.sender_name : '',
     }
   } catch {
-    console.error('Warning: Could not parse websocket post payload. Skipping event.')
     return null
   }
 }
 
+/** A resumable Mattermost WebSocket. Reconnection is scheduled only from onclose. */
 export function connectWebSocket(
   serverUrl: string,
   token: string,
   onPost: (post: Post, channelName: string, senderName: string) => void,
   onError: (error: Error) => void,
-  channelId?: string,
-): { close: () => void } {
-  const wsBaseUrl = toWebSocketBaseUrl(serverUrl)
-  const wsUrl = `${wsBaseUrl}/api/v4/websocket`
+  channelIdOrOptions?: string | WebSocketOptions,
+): { close: () => void; done: Promise<void> } {
+  const options: WebSocketOptions =
+    typeof channelIdOrOptions === 'string'
+      ? { channelId: channelIdOrOptions }
+      : (channelIdOrOptions ?? {})
+  const Socket = options.WebSocket ?? globalThis.WebSocket
+  const random = options.random ?? Math.random
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? 15_000
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 30_000
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 10_000
+  const backoffBaseMs = options.backoffBaseMs ?? 1_000
+  const backoffMaxMs = options.backoffMaxMs ?? 30_000
 
-  let closedByClient = false
-  let hasErrored = false
+  let socket: WebSocket | undefined
+  let generation = 0
+  let stopped = false
+  let fatal = false
+  let reconnectAttempt = 0
+  let connectionId: string | undefined
+  let nextServerSequence = 0
+  let actionSequence = 1
+  let handshakeTimer: ReturnType<typeof setTimeout> | undefined
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined
+  let pongTimer: ReturnType<typeof setTimeout> | undefined
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let pendingPingSeq: number | undefined
+  let resolveDone!: () => void
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve
+  })
 
-  const emitError = (error: Error): void => {
-    if (hasErrored) return
-    hasErrored = true
+  const clearConnectionTimers = (): void => {
+    if (handshakeTimer) clearTimeout(handshakeTimer)
+    if (heartbeatTimer) clearTimeout(heartbeatTimer)
+    if (pongTimer) clearTimeout(pongTimer)
+    handshakeTimer = heartbeatTimer = pongTimer = undefined
+    pendingPingSeq = undefined
+  }
+
+  const close = (): void => {
+    if (stopped) return
+    stopped = true
+    generation++
+    clearConnectionTimers()
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = undefined
+    const active = socket
+    socket = undefined
+    if (active && active.readyState < 2) active.close(1000, 'client shutdown')
+    resolveDone()
+  }
+
+  const failFatal = (error: Error): void => {
+    if (fatal || stopped) return
+    fatal = true
     onError(error)
+    close()
   }
 
-  const socket = new WebSocket(wsUrl)
-
-  socket.onopen = () => {
-    socket.send(
-      JSON.stringify({
-        seq: 1,
-        action: 'authentication_challenge',
-        data: { token },
-      }),
-    )
+  const scheduleHeartbeat = (currentGeneration: number): void => {
+    if (stopped || currentGeneration !== generation) return
+    heartbeatTimer = setTimeout(() => {
+      if (stopped || currentGeneration !== generation || !socket || socket.readyState !== 1) return
+      pendingPingSeq = actionSequence++
+      socket.send(JSON.stringify({ seq: pendingPingSeq, action: 'ping', data: {} }))
+      pongTimer = setTimeout(() => {
+        if (stopped || currentGeneration !== generation) return
+        socket?.close(4000, 'heartbeat timeout')
+      }, heartbeatTimeoutMs)
+    }, heartbeatIntervalMs)
   }
 
-  socket.onmessage = (event) => {
-    const payload = parseSocketMessage(event.data)
-    if (!payload) return
+  const scheduleReconnect = (): void => {
+    if (stopped || fatal || reconnectTimer) return
+    const exponential = Math.min(backoffMaxMs, backoffBaseMs * 2 ** reconnectAttempt)
+    const delay = Math.round(exponential * (0.8 + random() * 0.4))
+    reconnectAttempt++
+    options.diagnostics?.reconnect?.(reconnectAttempt, delay)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined
+      connect()
+    }, delay)
+  }
 
-    if (payload.status === 'FAIL') {
-      const errorMessage = getSocketErrorMessage(payload.error)
-      const errorText = errorMessage.toLowerCase()
-      if (errorText.includes('authentication') || errorText.includes('not authorized')) {
-        emitError(new Error('Authentication failed. Check your token.'))
-      } else {
-        emitError(new Error(errorMessage))
+  const connect = (): void => {
+    if (stopped || fatal) return
+    const currentGeneration = ++generation
+    const url = toWebSocketUrl(serverUrl)
+    if (connectionId) {
+      url.searchParams.set('connection_id', connectionId)
+      url.searchParams.set('sequence_number', String(nextServerSequence))
+    }
+    const current = new Socket(url.toString())
+    socket = current
+    let authenticated = false
+    let helloReceived = false
+    let authSeq = -1
+
+    const completeHandshake = (): void => {
+      if (!authenticated || !helloReceived || currentGeneration !== generation) return
+      if (handshakeTimer) clearTimeout(handshakeTimer)
+      handshakeTimer = undefined
+      reconnectAttempt = 0
+      options.diagnostics?.connected?.()
+      scheduleHeartbeat(currentGeneration)
+    }
+
+    const rejectSequence = (received: number): void => {
+      options.diagnostics?.gap?.({
+        expected: nextServerSequence,
+        received,
+        reason: 'sequence_mismatch',
+      })
+      current.close(4000, 'sequence mismatch')
+    }
+
+    handshakeTimer = setTimeout(() => {
+      if (currentGeneration === generation) current.close(4000, 'handshake timeout')
+    }, handshakeTimeoutMs)
+
+    current.onopen = () => {
+      if (currentGeneration !== generation || stopped) return
+      authSeq = actionSequence++
+      current.send(
+        JSON.stringify({
+          seq: authSeq,
+          action: 'authentication_challenge',
+          data: { token },
+        }),
+      )
+    }
+
+    current.onmessage = (event) => {
+      if (currentGeneration !== generation || stopped) return
+      const payload = parseSocketMessage(event.data)
+      if (!payload) {
+        options.diagnostics?.malformed?.('Malformed WebSocket message skipped.')
+        return
       }
-      socket.close()
-      return
+
+      if (payload.status === 'FAIL') {
+        const message = getSocketErrorMessage(payload.error)
+        const normalized = message.toLowerCase()
+        if (
+          payload.seq_reply === authSeq ||
+          normalized.includes('auth') ||
+          normalized.includes('authorized')
+        ) {
+          failFatal(new Error('Authentication failed. Check your token.'))
+        } else {
+          current.close(4000, message)
+        }
+        return
+      }
+
+      if (payload.status === 'OK' && payload.seq_reply === authSeq) {
+        authenticated = true
+        completeHandshake()
+      } else if (payload.status === 'OK' && payload.seq_reply === pendingPingSeq && pongTimer) {
+        clearTimeout(pongTimer)
+        pongTimer = undefined
+        pendingPingSeq = undefined
+        scheduleHeartbeat(currentGeneration)
+      }
+
+      if (payload.event) {
+        if (typeof payload.seq !== 'number') {
+          options.diagnostics?.malformed?.('WebSocket event without a sequence skipped.')
+          return
+        }
+        if (payload.event === 'hello' && typeof payload.data?.connection_id === 'string') {
+          const receivedConnectionId = payload.data.connection_id
+          if (connectionId && receivedConnectionId !== connectionId) {
+            options.diagnostics?.gap?.({
+              expected: nextServerSequence,
+              received: payload.seq,
+              reason: 'connection_changed',
+            })
+            nextServerSequence = 0
+          }
+          connectionId = receivedConnectionId
+        }
+        if (payload.seq !== nextServerSequence) {
+          rejectSequence(payload.seq)
+          return
+        }
+        nextServerSequence = payload.seq + 1
+        if (payload.event === 'hello') {
+          helloReceived = true
+          completeHandshake()
+        }
+      }
+
+      if (!authenticated || !helloReceived || payload.event !== 'posted') return
+      const parsed = parsePostEvent(payload)
+      if (!parsed) {
+        options.diagnostics?.malformed?.('Malformed WebSocket post payload skipped.')
+        return
+      }
+      if (options.channelId && parsed.post.channel_id !== options.channelId) return
+      onPost(parsed.post, parsed.channelName, parsed.senderName)
     }
 
-    const parsedPost = parsePostEvent(payload)
-    if (!parsedPost) return
-
-    const eventChannelId = parsedPost.broadcastChannelId || parsedPost.post.channel_id
-    if (channelId && eventChannelId !== channelId) {
-      return
+    current.onerror = () => {
+      if (currentGeneration !== generation || stopped) return
+      if (current.readyState < 2) current.close(4000, 'connection failure')
     }
 
-    onPost(parsedPost.post, parsedPost.channelName, parsedPost.senderName)
+    current.onclose = () => {
+      if (currentGeneration !== generation || stopped) return
+      generation++
+      clearConnectionTimers()
+      if (socket === current) socket = undefined
+      scheduleReconnect()
+    }
   }
 
-  socket.onerror = () => {
-    emitError(new Error(`WebSocket connection failure: ${wsUrl}`))
-  }
-
-  socket.onclose = (event) => {
-    if (closedByClient || hasErrored) return
-
-    const reason = event.reason ? ` (${sanitizeTerminalLabel(event.reason)})` : ''
-    emitError(new Error(`WebSocket connection closed: code ${event.code}${reason}`))
-  }
-
-  return {
-    close: () => {
-      closedByClient = true
-      socket.close()
-    },
-  }
+  connect()
+  return { close, done }
 }

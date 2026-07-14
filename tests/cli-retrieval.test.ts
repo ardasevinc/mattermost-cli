@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { clearUserCache } from '../src/api/users'
-import { fetchDMs, hasLiteralMention, isExactMentionPost, mentionSearchAfterDate } from '../src/cli'
+import {
+  BoundedPostIdSet,
+  createWatchPostHandler,
+  fetchDMs,
+  hasLiteralMention,
+  isExactMentionPost,
+  mentionSearchAfterDate,
+} from '../src/cli'
 import type { Channel, Post, PostsResponse, User } from '../src/types'
 import { installRouteFetch } from './helpers/fake-fetch'
 
@@ -144,6 +151,53 @@ describe('literal mention filtering', () => {
     ])
     expect(requests.filter(({ url }) => url.pathname.endsWith('/dm-alice/posts'))).toHaveLength(1)
     expect(requests.filter(({ url }) => url.pathname.endsWith('/dm-bob/posts'))).toHaveLength(1)
+  })
+})
+
+describe('watch post deduplication', () => {
+  test('suppresses repeats while bounding retained post ids', () => {
+    const ids = new BoundedPostIdSet(2)
+    expect(ids.add('one')).toBe(true)
+    expect(ids.add('one')).toBe(false)
+    expect(ids.add('two')).toBe(true)
+    expect(ids.add('three')).toBe(true)
+    expect(ids.add('one')).toBe(true)
+  })
+
+  test('writes synchronous redacted JSONL in event order and suppresses duplicate ids', () => {
+    const lines: string[] = []
+    const handlePost = createWatchPostHandler({ json: true, color: false, redact: true }, (line) =>
+      lines.push(line),
+    )
+    const makePost = (id: string, message: string, createAt: number) =>
+      ({
+        id,
+        channel_id: 'channel-1',
+        user_id: 'user-1',
+        create_at: createAt,
+        update_at: createAt,
+        delete_at: 0,
+        edit_at: 0,
+        message,
+        type: '',
+        props: {},
+        hashtags: '',
+        file_ids: [],
+        root_id: '',
+        reply_count: 0,
+        pending_post_id: '',
+      }) satisfies Post
+
+    handlePost(makePost('one', 'first sk-abcdefghijklmnopqrstuvwxyz123456', 1), 'town', 'arda')
+    handlePost(makePost('two', 'second', 2), 'town', 'arda')
+    handlePost(makePost('one', 'duplicate', 3), 'town', 'arda')
+
+    expect(lines).toHaveLength(2)
+    expect(lines.every((line) => !line.includes('\n'))).toBe(true)
+    expect(lines.map((line) => JSON.parse(line).postId)).toEqual(['one', 'two'])
+    expect(JSON.parse(lines[0] as string).message).not.toContain(
+      'sk-abcdefghijklmnopqrstuvwxyz123456',
+    )
   })
 })
 

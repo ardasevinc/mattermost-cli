@@ -23,7 +23,13 @@ import {
   searchPosts,
   takeMostRecentPosts,
 } from './api'
-import { formatJSON, formatMarkdown, formatPretty } from './formatters'
+import {
+  formatJSON,
+  formatMarkdown,
+  formatPretty,
+  formatWatchEvent,
+  formatWatchJSON,
+} from './formatters'
 import { preprocess, sanitizeTerminalLabel } from './preprocessing'
 import type {
   Channel,
@@ -39,16 +45,14 @@ import type {
   Redaction,
   SearchOptions,
   UnreadOptions,
+  WatchEvent,
 } from './types'
 import {
   calculateUnreadMetrics,
-  dim,
   formatDate,
   formatRelativeTime,
-  formatTime,
   groupIntoThreads,
   sortUnreadEntries,
-  userColor,
 } from './utils'
 
 interface ChannelListItem {
@@ -66,6 +70,57 @@ interface UnreadSummaryItem {
   unreadCount: number
   mentionCount: number
   lastViewedAt: number
+}
+
+export class BoundedPostIdSet {
+  private readonly ids = new Set<string>()
+  private readonly order: string[] = []
+
+  constructor(private readonly limit = 1000) {}
+
+  add(id: string): boolean {
+    if (this.ids.has(id)) return false
+    this.ids.add(id)
+    this.order.push(id)
+    if (this.order.length > this.limit) {
+      const expired = this.order.shift()
+      if (expired) this.ids.delete(expired)
+    }
+    return true
+  }
+}
+
+export function createWatchPostHandler(
+  options: Pick<CLIOptions, 'json' | 'color' | 'redact'>,
+  write: (line: string) => void = console.log,
+): (post: Post, channelName: string, senderName: string) => void {
+  const seenPostIds = new BoundedPostIdSet()
+
+  return (post, channelName, senderName) => {
+    if (!seenPostIds.add(post.id)) return
+    const username = sanitizeTerminalLabel(
+      getCachedUser(post.user_id)?.username || senderName || 'unknown',
+    )
+    const { text, redactions } = preprocess(post.message, { redact: options.redact })
+    const event: WatchEvent = {
+      type: 'posted',
+      postId: post.id,
+      channelId: post.channel_id,
+      channelName: sanitizeTerminalLabel(channelName),
+      sender: username,
+      senderId: post.user_id,
+      message: text,
+      timestamp: new Date(post.create_at).toISOString(),
+      rootId: post.root_id || undefined,
+      fileIds: post.file_ids || [],
+      redactions,
+    }
+    write(
+      options.json
+        ? formatWatchJSON(event)
+        : formatWatchEvent(event, options.color && Boolean(process.stdout.isTTY)),
+    )
+  }
 }
 
 function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
@@ -733,10 +788,6 @@ export async function watchChannel(
 ): Promise<void> {
   initClient(options.url, options.token)
 
-  if (options.json) {
-    console.error('Warning: --json is ignored for watch mode.')
-  }
-
   printRedactionWarning(options.redact)
 
   if (options.channel && options.dm) {
@@ -763,58 +814,52 @@ export async function watchChannel(
     channel.type === 'D'
       ? `DMs with @${sanitizeTerminalLabel(options.dm ?? '')}`
       : `#${sanitizeTerminalLabel(channel.name)}`
-  console.log(`Watching ${watchTarget} (Ctrl+C to stop)`)
+  console.error(`Watching ${watchTarget} (Ctrl+C to stop)`)
 
   await new Promise<void>((resolve, reject) => {
     let closed = false
+    const handlePost = createWatchPostHandler(options)
 
     const closeAndCleanup = (closeSocket: () => void): void => {
       if (closed) return
       closed = true
       process.off('SIGINT', handleSigint)
+      process.off('SIGTERM', handleSigterm)
       closeSocket()
     }
 
-    const handleSigint = (): void => {
+    const handleSignal = (): void => {
       closeAndCleanup(connection.close)
       resolve()
     }
+    const handleSigint = handleSignal
+    const handleSigterm = handleSignal
 
     const connection = connectWebSocket(
       options.url,
       options.token,
-      (post, _channelName, senderName) => {
-        void (async () => {
-          const cachedUser = getCachedUser(post.user_id)
-          let username = cachedUser?.username || senderName || 'unknown'
-
-          if (!cachedUser) {
-            try {
-              username = (await getUser(post.user_id)).username
-            } catch {
-              // keep senderName fallback
-            }
-          }
-
-          username = sanitizeTerminalLabel(username)
-          const { text } = preprocess(post.message, { redact: options.redact })
-          const message = text.replace(/\s+/g, ' ').trim() || '[empty message]'
-          const time = formatTime(new Date(post.create_at))
-
-          if (options.color) {
-            console.log(`${dim(`[${time}]`)} ${userColor(username)}: ${message}`)
-          } else {
-            console.log(`[${time}] ${username}: ${message}`)
-          }
-        })()
-      },
+      handlePost,
       (error) => {
         closeAndCleanup(connection.close)
         reject(error)
       },
-      channel.id,
+      {
+        channelId: channel.id,
+        diagnostics: {
+          reconnect: (attempt, delayMs) =>
+            console.error(
+              `WebSocket disconnected; reconnecting in ${delayMs}ms (attempt ${attempt}).`,
+            ),
+          gap: ({ expected, received }) =>
+            console.error(
+              `Warning: WebSocket sequence gap detected (expected ${expected}, received ${received}); live events may be missing.`,
+            ),
+          malformed: (message) => console.error(`Warning: ${message}`),
+        },
+      },
     )
 
     process.on('SIGINT', handleSigint)
+    process.on('SIGTERM', handleSigterm)
   })
 }

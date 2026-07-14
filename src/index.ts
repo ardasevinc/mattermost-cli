@@ -56,7 +56,7 @@ program.name('mm').description('Mattermost CLI - Fetch and display messages').ve
 program
   .option('-t, --token <token>', 'Mattermost personal access token (or MM_TOKEN env)')
   .option('--url <url>', 'Mattermost server URL (or MM_URL env)')
-  .option('--json', 'Output as JSON', false)
+  .option('--json', 'Output as JSON (JSON Lines for watch)', false)
   .option('--no-color', 'Disable colored output')
   .option(
     '-r, --relative',
@@ -327,7 +327,7 @@ program
 
 program
   .command('watch [channel]')
-  .description('Watch a channel or DM in real-time')
+  .description('Watch posted events in a channel or DM with automatic reconnect')
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
   .option('--dm <username>', 'Watch direct messages with a username')
   .action(async (channel, cmdOpts) => {

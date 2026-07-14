@@ -55,7 +55,7 @@ mm channel #dev --team myteam
 ```
 --token, -t       Mattermost personal access token (or MM_TOKEN env)
 --url             Mattermost server URL (or MM_URL env)
---json            Output as JSON
+--json            Output as JSON (JSON Lines for watch)
 --no-color        Disable colored output
 -r, --relative    Show relative times
 --no-relative     Show absolute times
@@ -133,11 +133,16 @@ Redaction uses partial masking to show first/last characters:
 - Includes redaction log
 - Good for programmatic use
 
+### JSON Lines (`--json watch ...`)
+- One redacted `posted` event per stdout line
+- Connection, retry, malformed-event, and gap diagnostics on stderr
+- Automatic reconnect with next-sequence resume when the server preserves the connection
+- Changed connections and sequence gaps are reported honestly; no implicit REST backfill
+
 ---
 
 ## Future Extensions (Not in current scope)
 
-- `--watch` mode for real-time polling
 - LLM task extraction module
 - SQLite cache for offline access
 - Interactive TUI mode

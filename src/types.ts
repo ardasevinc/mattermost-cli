@@ -189,3 +189,17 @@ export interface WSPostEvent {
     team_id: string
   }
 }
+
+export interface WatchEvent {
+  type: 'posted'
+  postId: string
+  channelId: string
+  channelName: string
+  sender: string
+  senderId: string
+  message: string
+  timestamp: string
+  rootId?: string
+  fileIds: string[]
+  redactions: Redaction[]
+}
