@@ -106,7 +106,7 @@ test('unread propagates a direct-channel membership request failure', async () =
         .pathname
       if (path.endsWith('/users/me')) return response(me)
       if (path.endsWith('/users/me/teams')) {
-        return response([{ id: 'team', name: 'team', display_name: 'Team' }])
+        return response([{ id: 'team', name: 'team', display_name: 'Team', type: 'O' }])
       }
       if (path.endsWith('/users/me/channels')) return response([{ ...dm, total_msg_count: 1 }])
       if (path.endsWith('/users/me/teams/team/channels/members')) return response([])

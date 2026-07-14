@@ -25,6 +25,7 @@ const me = { id: 'me', username: 'me' }
 const team = { id: 'team', name: 'team', display_name: 'Team', type: 'O' }
 const general = {
   id: 'general',
+  team_id: 'team',
   type: 'O',
   name: 'general',
   display_name: 'General',
@@ -128,6 +129,34 @@ afterEach(() => {
   clearUserCache()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+test.each([
+  [
+    'search',
+    () => searchMessages({ ...baseOptions, query: 'needle', limit: 50 } satisfies SearchOptions),
+  ],
+  [
+    'mentions',
+    () => fetchMentions({ ...baseOptions, limit: 50, mentionNames: [] } satisfies MentionOptions),
+  ],
+  ['unread', () => showUnread({ ...baseOptions } satisfies UnreadOptions)],
+] as const)('%s rejects a malformed single team before any scoped request', async (_name, run) => {
+  const { requests } = installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => me },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/teams',
+      handle: () => [{ name: 'team', display_name: 'Team', type: 'O' }],
+    },
+  ])
+
+  await expect(run()).rejects.toThrow('Invalid teams response.')
+  const paths = requests.map(({ method, url }) => `${method} ${url.pathname}`)
+  expect(paths.at(-1)).toBe('GET /api/v4/users/me/teams')
+  expect(paths.some((path) => path.includes('/posts/search'))).toBe(false)
+  expect(paths.some((path) => path.includes('/channels/members'))).toBe(false)
+  expect(paths.some((path) => path.endsWith('/channels'))).toBe(false)
 })
 
 describe.each(emptyCommands)('$name empty reads', ({ install, run }) => {

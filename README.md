@@ -98,6 +98,12 @@ mm channels --json
 mm channels --type public
 ```
 
+`channels` is account-wide and deduplicates channel IDs. JSON items use the narrow schema
+`{ id, type, name, displayName?, team, lastPost, messageCount }`: `team` is
+`{ id, name, displayName? }` for public/private channels and `null` for direct/group messages.
+Human public/private labels use `team-slug/#channel`, and every row includes the channel ID needed
+by explicit D/G fetches.
+
 ### Fetch direct messages
 
 ```bash
@@ -149,7 +155,7 @@ mm thread <post-id>
 ```bash
 mm channel general
 mm channel general --cursor <opaque>
-mm channel #dev --team myteam
+mm channel '#dev' --team myteam
 ```
 
 ### Search messages
@@ -157,7 +163,11 @@ mm channel #dev --team myteam
 ```bash
 mm search "deployment"
 mm search "from:alice in:general after:2026-02-01"
+mm search "deployment" --team myteam
 ```
+
+Search is scoped to one team. Accounts with multiple memberships must pass `--team`; results are
+not guaranteed to include DMs or group DMs.
 
 ### Find mentions
 
@@ -165,7 +175,10 @@ mm search "from:alice in:general after:2026-02-01"
 mm mentions
 mm mentions --since 7d
 mm mentions --channel general --limit 20
+mm mentions --team myteam
 ```
+
+Mentions use the same single-team search scope and are not guaranteed to include DMs or group DMs.
 
 ### Show unread channels
 
@@ -173,6 +186,9 @@ mm mentions --channel general --limit 20
 mm unread
 mm unread --peek 5
 ```
+
+Unread resolves one team for public/private channels while including account-global, deduplicated
+DMs and group DMs. Multi-team accounts must pass `--team`.
 
 ### Watch a channel live
 
@@ -259,7 +275,7 @@ Group DMs:
   --cursor <opaque>       Resume that channel's deterministic history
 
 Channels:
-  channels --type <type>  Filter list by type: dm, public, private, group, all
+  channels --type <type>  Filter the account-wide list: dm, public, private, group, all
 
 Users:
   users [query]            List or search active users
@@ -269,19 +285,19 @@ Users:
 Channel:
   channel <name>          Fetch messages from one channel
   --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max messages to fetch (default: 50)
+  -l, --limit <number>    Max seed messages; thread context may exceed it (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   --cursor <opaque>       Resume deterministic channel history
 
 Search:
   search <query>          Search messages (supports Mattermost search modifiers)
   --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max results (default: 50)
+  -l, --limit <number>    Max seed results; thread context may exceed it (default: 50)
 
 Mentions:
   mentions                Find @username + configured alias mentions
   --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max results (default: 50)
+  -l, --limit <number>    Max seed results; thread context may exceed it (default: 50)
   -s, --since <duration>  Time range filter (e.g. 24h, 7d)
   --channel <name>        Restrict mentions to one channel
 

@@ -10,6 +10,7 @@ import type { Channel, Team } from '../../src/types'
 function makeDMChannel(name: string): Channel {
   return {
     id: 'ch1',
+    team_id: '',
     type: 'D',
     display_name: '',
     name,
@@ -81,6 +82,14 @@ describe('resolveTeamIdFromList', () => {
 
   test('throws clear error when no teams', () => {
     expect(() => resolveTeamIdFromList([])).toThrow('You are not a member of any teams.')
+  })
+
+  test.each([
+    [{ name: 'core', display_name: 'Core', type: 'O' }],
+    [{ id: 't1', name: 'core', display_name: 'Core' }],
+    [{ id: 't1', name: 'core', display_name: 7, type: 'O' }],
+  ])('fails closed for malformed canonical team data: %j', (teams) => {
+    expect(() => resolveTeamIdFromList(teams)).toThrow('Invalid teams response.')
   })
 
   test('throws clear error when team is missing', () => {

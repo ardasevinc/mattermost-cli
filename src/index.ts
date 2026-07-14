@@ -250,7 +250,7 @@ program
 
 program
   .command('channels')
-  .description('List all channels (DMs, public, private, group)')
+  .description('List account-wide channels with team identity for public/private channels')
   .option('--type <type>', 'Filter by channel type', 'all')
   .action(async (cmdOpts) => {
     const opts = program.opts()
@@ -276,7 +276,7 @@ program
   .command('dms')
   .description('Fetch direct messages')
   .option('-u, --user <username...>', 'Filter by username (repeatable)')
-  .option('-l, --limit <number>', 'Max messages to fetch', '50')
+  .option('-l, --limit <number>', 'Max total seed messages across matched DMs', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
   .option('-c, --channel <id>', 'Specific direct-message channel ID (type D only)')
   .option('--cursor <opaque>', 'Resume deterministic channel history')
@@ -309,7 +309,7 @@ program
 program
   .command('group-dms')
   .description('Fetch group direct messages')
-  .option('-l, --limit <number>', 'Max messages to fetch', '50')
+  .option('-l, --limit <number>', 'Max total seed messages across matched group DMs', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
   .option('-c, --channel <id>', 'Specific group DM channel ID (type G only)')
   .option('--cursor <opaque>', 'Resume deterministic channel history')
@@ -342,7 +342,7 @@ program
   .command('channel <name>')
   .description('Fetch messages from a channel by name')
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
-  .option('-l, --limit <number>', 'Max messages to fetch', '50')
+  .option('-l, --limit <number>', 'Max seed messages (thread context may exceed)', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
   .option('--cursor <opaque>', 'Resume deterministic channel history')
   .action(async (name, cmdOpts, command) => {
@@ -373,9 +373,9 @@ program
 
 program
   .command('search <query>')
-  .description('Search messages across channels')
+  .description('Search messages within one selected team')
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
-  .option('-l, --limit <number>', 'Max results to show', '50')
+  .option('-l, --limit <number>', 'Max seed results (thread context may exceed)', '50')
   .action(async (query, cmdOpts) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
@@ -401,9 +401,9 @@ program
 
 program
   .command('mentions')
-  .description('Find messages that mention you or configured aliases')
+  .description('Find mentions within one selected team')
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
-  .option('-l, --limit <number>', 'Max results to show', '50')
+  .option('-l, --limit <number>', 'Max seed results (thread context may exceed)', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"')
   .option('--channel <name>', 'Scope mentions to a channel name')
   .action(async (cmdOpts) => {

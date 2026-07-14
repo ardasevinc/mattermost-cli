@@ -5,6 +5,33 @@ import type { Channel, ChannelMember, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
 
+export interface CanonicalTeam {
+  id: string
+  name: string
+  displayName: string
+}
+
+export function normalizeCanonicalTeams(teams: unknown): CanonicalTeam[] {
+  if (!Array.isArray(teams)) throw new Error('Invalid teams response.')
+  return teams.map((team) => {
+    if (typeof team !== 'object' || team === null || Array.isArray(team)) {
+      throw new Error('Invalid teams response.')
+    }
+    const raw = team as Record<string, unknown>
+    if (
+      typeof raw.id !== 'string' ||
+      raw.id.length === 0 ||
+      typeof raw.name !== 'string' ||
+      raw.name.length === 0 ||
+      typeof raw.display_name !== 'string' ||
+      (raw.type !== 'O' && raw.type !== 'I')
+    ) {
+      throw new Error('Invalid teams response.')
+    }
+    return { id: raw.id, name: raw.name, displayName: raw.display_name }
+  })
+}
+
 export async function getMyChannels(userId?: string): Promise<Channel[]> {
   const resolvedUserId = userId ?? (await getMe()).id
   const client = getClient()
@@ -72,18 +99,19 @@ export async function getChannelByName(teamId: string, channelName: string): Pro
   )
 }
 
-export function resolveTeamIdFromList(teams: Team[], teamName?: string): string {
+export function resolveTeamIdFromList(teams: unknown, teamName?: string): string {
   const safeLabel = (value: string) =>
     sanitizeTerminalLabel(preprocess(value, { redact: false }).text)
-  if (teams.length === 0) {
+  const canonical = normalizeCanonicalTeams(teams)
+  if (canonical.length === 0) {
     throw new Error('You are not a member of any teams.')
   }
 
   if (teamName) {
-    const team = teams.find((t) => t.name === teamName || t.display_name === teamName)
+    const team = canonical.find((t) => t.name === teamName || t.displayName === teamName)
     if (!team) {
       throw new Error(
-        `Team "${safeLabel(teamName)}" not found. Your teams: ${teams
+        `Team "${safeLabel(teamName)}" not found. Your teams: ${canonical
           .map((team) => safeLabel(team.name))
           .join(', ')}`,
       )
@@ -91,28 +119,22 @@ export function resolveTeamIdFromList(teams: Team[], teamName?: string): string 
     return team.id
   }
 
-  if (teams.length === 1) {
-    const [team] = teams
+  if (canonical.length === 1) {
+    const [team] = canonical
     if (!team) throw new Error('You are not a member of any teams.')
     return team.id
   }
 
   throw new Error(
     `You belong to multiple teams. Use --team to specify:\n` +
-      teams.map((team) => `  ${safeLabel(team.name)} (${safeLabel(team.display_name)})`).join('\n'),
+      canonical
+        .map((team) => `  ${safeLabel(team.name)} (${safeLabel(team.displayName)})`)
+        .join('\n'),
   )
 }
 
 export async function resolveTeamId(teamName?: string): Promise<string> {
-  const teams = await getMyTeams()
-
-  try {
-    return resolveTeamIdFromList(teams, teamName)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error(`Error: ${message}`)
-    process.exit(1)
-  }
+  return resolveTeamIdFromList(await getMyTeams(), teamName)
 }
 
 export async function getTeamChannelMembers(teamId: string): Promise<ChannelMember[]> {

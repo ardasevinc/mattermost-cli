@@ -1,5 +1,6 @@
 // CLI command handlers
 
+import type { CanonicalTeam } from './api'
 import {
   buildPostPermalink,
   connectWebSocket,
@@ -23,6 +24,7 @@ import {
   getUsersByIds,
   initClient,
   MattermostAPIError,
+  normalizeCanonicalTeams,
   normalizeChannelName,
   parseDuration,
   resolveTeamId,
@@ -71,6 +73,7 @@ interface ChannelListItem {
   type: ProcessedChannel['type']
   name: string
   displayName?: string
+  team: (Pick<CanonicalTeam, 'id' | 'name'> & { displayName?: string }) | null
   lastPost: string | null
   messageCount: number
 }
@@ -112,24 +115,6 @@ export interface UserDirectoryOutput {
   username: string
   displayName?: string
   nickname?: string
-}
-
-interface CanonicalTeam {
-  id: string
-  name: string
-  displayName: string
-}
-
-function normalizeCanonicalTeams(teams: unknown): CanonicalTeam[] {
-  if (!Array.isArray(teams)) throw new Error('Invalid teams response.')
-  return teams.map((team) => {
-    if (!isRecord(team)) throw new Error('Invalid teams response.')
-    const id = requiredString(team.id, 'Invalid teams response.')
-    const name = requiredString(team.name, 'Invalid teams response.')
-    if (typeof team.display_name !== 'string') throw new Error('Invalid teams response.')
-    if (team.type !== 'O' && team.type !== 'I') throw new Error('Invalid teams response.')
-    return { id, name, displayName: team.display_name }
-  })
 }
 
 export function resolveUsersTeamId(teams: unknown, requested: string, redact = true): string {
@@ -747,13 +732,26 @@ function printRedactionWarning(enabled: boolean): void {
   }
 }
 
-function buildChannelListItem(channel: ProcessedChannel, rawChannel: Channel): ChannelListItem {
+function buildChannelListItem(
+  channel: ProcessedChannel,
+  rawChannel: Channel,
+  team: CanonicalTeam | null,
+  redact: boolean,
+): ChannelListItem {
   const lastPostAt = finiteTimestamp(rawChannel.last_post_at)
+  const presentedTeam = team
+    ? {
+        id: safeString(team.id, redact),
+        name: safeString(team.name, redact),
+        ...(team.displayName ? { displayName: safeString(team.displayName, redact) } : {}),
+      }
+    : null
   return {
     id: channel.id,
     type: channel.type,
     name: channel.name,
     displayName: channel.displayName,
+    team: presentedTeam,
     lastPost: lastPostAt > 0 ? new Date(lastPostAt).toISOString() : null,
     messageCount: nonNegativeInteger(rawChannel.total_msg_count),
   }
@@ -785,7 +783,9 @@ export async function listChannels(options: {
   }
 
   const me = await getMe()
-  let channels = await getMyChannels(me.id)
+  let channels = [
+    ...new Map((await getMyChannels(me.id)).map((channel) => [channel.id, channel])).values(),
+  ]
 
   if (options.typeFilter !== 'all') {
     const typeMap: Record<Exclude<ChannelTypeFilter, 'all'>, Channel['type']> = {
@@ -796,6 +796,23 @@ export async function listChannels(options: {
     }
     const filterType = typeMap[options.typeFilter]
     channels = channels.filter((ch) => ch.type === filterType)
+  }
+
+  let teamById = new Map<string, CanonicalTeam>()
+  if (channels.some((channel) => channel.type === 'O' || channel.type === 'P')) {
+    teamById = new Map(
+      normalizeCanonicalTeams(await getMyTeams(me.id)).map((team) => [team.id, team]),
+    )
+    for (const channel of channels) {
+      if (
+        (channel.type === 'O' || channel.type === 'P') &&
+        (typeof channel.team_id !== 'string' ||
+          channel.team_id.length === 0 ||
+          !teamById.has(channel.team_id))
+      ) {
+        throw new Error('Invalid channels response.')
+      }
+    }
   }
 
   const dmChannels = channels.filter((ch) => ch.type === 'D')
@@ -810,7 +827,9 @@ export async function listChannels(options: {
   const output = await Promise.all(
     channels.map(async (channel) => {
       const processed = await buildProcessedChannel(channel, me.id, options.redact)
-      return buildChannelListItem(processed, channel)
+      const team =
+        channel.type === 'O' || channel.type === 'P' ? teamById.get(channel.team_id) : null
+      return buildChannelListItem(processed, channel, team ?? null, options.redact)
     }),
   )
 
@@ -849,10 +868,12 @@ export async function listChannels(options: {
       }
 
       const label =
-        channel.type === 'dm' || channel.type === 'group' ? channel.name : `#${channel.name}`
+        channel.type === 'dm' || channel.type === 'group'
+          ? channel.name
+          : `${channel.team?.name}/#${channel.name}`
       const display = channel.displayName ? ` (${channel.displayName})` : ''
       console.log(
-        `  ${label.padEnd(25)}${display ? display.padEnd(25) : ''.padEnd(25)} ${channel.messageCount} msgs, last: ${lastPost}`,
+        `  ${label.padEnd(25)}${display ? display.padEnd(25) : ''.padEnd(25)} [${channel.id}] ${channel.messageCount} msgs, last: ${lastPost}`,
       )
     }
   }
@@ -1381,7 +1402,14 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
 
   const me = await getMe()
   const teamId = await resolveTeamId(options.team)
-  const channels = await getMyChannels()
+  const channels = [
+    ...new Map((await getMyChannels()).map((channel) => [channel.id, channel])).values(),
+  ].filter(
+    (channel) =>
+      channel.type === 'D' ||
+      channel.type === 'G' ||
+      ((channel.type === 'O' || channel.type === 'P') && channel.team_id === teamId),
+  )
   const teamMembers = await getTeamChannelMembers(teamId)
 
   const memberByChannelId = new Map(teamMembers.map((member) => [member.channel_id, member]))

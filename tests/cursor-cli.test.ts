@@ -10,6 +10,7 @@ const me = { id: 'me', username: 'me' }
 const team = { id: 'team', name: 'team', display_name: 'Team', type: 'O' }
 const general = {
   id: 'general',
+  team_id: 'team',
   type: 'O',
   name: 'general',
   display_name: 'General',

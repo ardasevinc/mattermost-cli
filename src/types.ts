@@ -19,6 +19,7 @@ export interface Team {
 
 export interface Channel {
   id: string
+  team_id: string
   type: 'O' | 'P' | 'D' | 'G' // Open, Private, Direct, Group
   display_name: string
   name: string

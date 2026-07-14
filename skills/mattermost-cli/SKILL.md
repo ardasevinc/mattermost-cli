@@ -70,7 +70,7 @@ User results omit email, roles, authentication, notification, and arbitrary prop
 
 ### List Channels
 ```bash
-mm channels                  # all channels, sorted by last activity
+mm channels                  # account-wide channels, with team identity for O/P
 mm channels --type dm        # DMs only
 mm channels --type public    # public channels only
 mm channels --type private   # private channels only
@@ -115,12 +115,15 @@ progress. Merged DMs/group DMs and `dms --user` do not support cursors.
 
 ### Search Messages
 ```bash
-mm search "deployment"                    # search across all channels
+mm search "deployment"                    # one team (auto only for single-team accounts)
 mm search "from:alice bug"                # Mattermost search syntax
 mm search "in:general after:2026-01-01"   # channel + date filters
 mm search "deployment" --team myteam      # scope to team
 mm search "deployment" --limit 20         # limit results
 ```
+
+Search resolves one explicit team scope. On multi-team accounts pass `--team`; do not describe its
+results as account-wide or as complete DM/group-DM coverage.
 
 ### Check Mentions
 ```bash
@@ -130,16 +133,19 @@ mm mentions --channel general      # mentions in specific channel
 mm mentions --team myteam          # scope to team
 ```
 
+Mentions has the same one-team and incomplete D/G coverage boundary as search.
+
 Mention detection uses your username plus any aliases configured in `mention_names` in the config file.
 
 ### Unread Summary
 ```bash
 mm unread                          # list channels with unread counts
 mm unread --peek 5                 # also fetch 5 messages per unread channel
-mm unread --team myteam            # scope to team
+mm unread --team myteam            # selected-team O/P plus account-global D/G
 ```
 
-Channels are sorted by mentions first, then by unread count.
+Unread always includes account-global, deduplicated DMs and group DMs. `--team` selects which
+public/private channels are included. Channels are sorted by mentions first, then by unread count.
 
 ### Watch (Real-Time)
 ```bash

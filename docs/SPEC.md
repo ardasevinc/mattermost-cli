@@ -36,7 +36,7 @@ mm whoami
 mm teams
 mm users [query] [--team <name>] [--limit 20]
 
-# List all channels
+# List all account-wide channels
 mm channels
 mm channels --type public
 
@@ -56,7 +56,7 @@ mm thread <postId>
 
 # Fetch one channel by name
 mm channel general
-mm channel #dev --team myteam
+mm channel '#dev' --team myteam
 ```
 
 ### Global Options
@@ -81,6 +81,7 @@ mm channel #dev --team myteam
 --limit, -l       Max total messages across matched DMs (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 --channel, -c     Specific direct-message channel ID (type D only)
+--cursor           Resume that explicit channel's deterministic history
 ```
 
 ### Group DMs Options
@@ -89,6 +90,7 @@ mm channel #dev --team myteam
 --limit, -l       Max total messages across matched group DMs (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
 --channel, -c     Specific group-DM channel ID (type G only)
+--cursor           Resume that explicit channel's deterministic history
 ```
 
 ### Channels Options
@@ -102,9 +104,18 @@ mm channel #dev --team myteam
 ```bash
 channel <name>    Fetch and display one channel
 --team            Team name (required if multiple teams)
---limit, -l       Max messages to fetch (default: 50)
+--limit, -l       Max seed messages; thread context may exceed it (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
+--cursor           Resume deterministic channel history
 ```
+
+`channels` is account-wide. Its narrow JSON items are
+`{ id, type, name, displayName?, team, lastPost, messageCount }`, where `team` is
+`{ id, name, displayName? }` for public/private channels and `null` for DMs/group DMs. Human
+public/private labels are `team-slug/#channel`; every human row includes its channel ID.
+
+Search and mentions resolve exactly one team. Multi-team accounts must pass `--team`; these reads
+must not be treated as account-wide or as complete coverage of DMs/group DMs.
 
 ### Thread Command
 

@@ -5,6 +5,7 @@ import { calculateUnreadMetrics, sortUnreadEntries } from '../../src/utils/unrea
 function makeChannel(totalMessages: number): Channel {
   return {
     id: 'ch1',
+    team_id: 'team',
     type: 'O',
     display_name: 'General',
     name: 'general',

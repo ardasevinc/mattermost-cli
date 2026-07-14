@@ -15,6 +15,7 @@ const channels: Channel[] = channelIdentities.map(
   (channel) =>
     ({
       ...channel,
+      team_id: channel.type === 'O' || channel.type === 'P' ? 'team' : '',
       header: '',
       purpose: '',
       last_post_at: 0,
@@ -106,6 +107,11 @@ describe.each([
       { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
       { method: 'GET', path: '/api/v4/users/me/channels', handle: () => channels },
       {
+        method: 'GET',
+        path: '/api/v4/users/me/teams',
+        handle: () => [{ id: 'team', name: 'core', display_name: 'Core', type: 'O' }],
+      },
+      {
         method: 'POST',
         path: '/api/v4/users/ids',
         handle: () => [{ id: 'other', username: 'other' }],
@@ -126,6 +132,94 @@ describe.each([
     const output = JSON.parse(String(log.mock.calls[0]?.[0])) as { id: string }[]
     expect(output.map(({ id }) => id).sort()).toEqual(expectedIds.sort())
   })
+})
+
+test('dedupes channel IDs and emits narrow team identity only for O/P channels', async () => {
+  const { requests } = installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [channels[0], channels[0], channels[3]],
+    },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/teams',
+      handle: () => [
+        { id: 'team', name: 'co\nre', display_name: 'AKIA1234567890ABCDEF', type: 'O' },
+      ],
+    },
+  ])
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+  await listChannels({
+    url: 'https://mattermost.test',
+    token: 'token',
+    json: true,
+    color: false,
+    relative: false,
+    redact: true,
+    typeFilter: 'all',
+  })
+
+  const output = JSON.parse(String(log.mock.calls[0]?.[0]))
+  expect(output).toHaveLength(2)
+  expect(output.find(({ id }: { id: string }) => id === 'public')?.team).toEqual({
+    id: 'team',
+    name: 'co\\nre',
+    displayName: 'AK...EF',
+  })
+  expect(output.find(({ id }: { id: string }) => id === 'group')?.team).toBeNull()
+  expect(requests.filter(({ url }) => url.pathname.endsWith('/teams'))).toHaveLength(1)
+})
+
+test('does not fetch teams for D/G-only discovery', async () => {
+  const { requests } = installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [channels[3]],
+    },
+  ])
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  await listChannels({
+    url: 'https://mattermost.test',
+    token: 'token',
+    json: true,
+    color: false,
+    relative: false,
+    redact: true,
+    typeFilter: 'group',
+  })
+  expect(requests.some(({ url }) => url.pathname.endsWith('/teams'))).toBe(false)
+})
+
+test.each(['', 'other'])('fails closed for O/P with invalid team membership %j', async (teamId) => {
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [{ ...channels[0], team_id: teamId }],
+    },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/teams',
+      handle: () => [{ id: 'team', name: 'core', display_name: 'Core', type: 'O' }],
+    },
+  ])
+  await expect(
+    listChannels({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: false,
+      typeFilter: 'all',
+    }),
+  ).rejects.toThrow('Invalid channels response.')
 })
 
 test('human channel listing labels group DMs without a hash', async () => {
@@ -151,7 +245,34 @@ test('human channel listing labels group DMs without a hash', async () => {
 
   const output = log.mock.calls.map(([value]) => String(value)).join('\n')
   expect(output).toContain('Group')
+  expect(output).toContain('[group]')
   expect(output).not.toContain('#Group')
+})
+
+test('human O/P labels include team slug and channel ID', async () => {
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    { method: 'GET', path: '/api/v4/users/me/channels', handle: () => [channels[0]] },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/teams',
+      handle: () => [{ id: 'team', name: 'core', display_name: 'Core', type: 'O' }],
+    },
+  ])
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+  await listChannels({
+    url: 'https://mattermost.test',
+    token: 'token',
+    json: false,
+    color: false,
+    relative: false,
+    redact: true,
+    typeFilter: 'public',
+  })
+
+  expect(log.mock.calls.map(([value]) => String(value)).join('\n')).toContain('core/#public')
+  expect(log.mock.calls.map(([value]) => String(value)).join('\n')).toContain('[public]')
 })
 
 test('normalizes malformed channel count and timestamp scalars in JSON output', async () => {
@@ -167,6 +288,11 @@ test('normalizes malformed channel count and timestamp scalars in JSON output', 
           last_post_at: 'tomorrow',
         },
       ],
+    },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/teams',
+      handle: () => [{ id: 'team', name: 'core', display_name: 'Core', type: 'O' }],
     },
   ])
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)

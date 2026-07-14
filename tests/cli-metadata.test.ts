@@ -11,6 +11,7 @@ const team = { id: 'team', name: 'team', display_name: 'Team', type: 'O' }
 function channel(id: string): Channel {
   return {
     id,
+    team_id: 'team',
     type: 'O',
     name: id,
     display_name: id.toUpperCase(),
@@ -393,5 +394,63 @@ describe('command-level JSON retrieval metadata', () => {
       since: new Date(50).toISOString(),
       truncated: false,
     })
+  })
+
+  test('unread keeps selected-team O/P and globally unique D/G only', async () => {
+    const selected = { ...channel('selected'), total_msg_count: 2 }
+    const foreign = { ...channel('foreign'), team_id: 'other-team', total_msg_count: 2 }
+    const dm = {
+      ...channel('dm'),
+      team_id: '',
+      type: 'D' as const,
+      name: 'me__other',
+      total_msg_count: 2,
+    }
+    const { requests } = installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'GET',
+        path: '/api/v4/users/me/channels',
+        handle: () => [selected, foreign, dm, dm],
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/users/me/teams/team/channels/members',
+        handle: () => [
+          { channel_id: 'selected', msg_count: 1, mention_count: 0, last_viewed_at: 1 },
+          { channel_id: 'foreign', msg_count: 1, mention_count: 0, last_viewed_at: 1 },
+        ],
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/channels/dm/members/me',
+        handle: () => ({ channel_id: 'dm', msg_count: 1, mention_count: 0, last_viewed_at: 1 }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/users/other',
+        handle: () => ({ id: 'other', username: 'other' }),
+      },
+    ])
+    const readOutput = outputLog()
+
+    await showUnread({
+      url: serverUrl,
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: true,
+    })
+
+    expect(
+      readOutput()
+        .unread.map(({ channel }: MessageOutput) => channel.id)
+        .sort(),
+    ).toEqual(['dm', 'selected'])
+    expect(
+      requests.filter(({ url }) => url.pathname === '/api/v4/channels/dm/members/me'),
+    ).toHaveLength(1)
   })
 })
