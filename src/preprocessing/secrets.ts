@@ -10,6 +10,31 @@ interface DetectedSecret {
   end: number
 }
 
+interface SecretGroup {
+  start: number
+  end: number
+  secrets: DetectedSecret[]
+}
+
+function groupOverlappingSecrets(secrets: DetectedSecret[]): SecretGroup[] {
+  const sorted = [...secrets].sort((a, b) => a.start - b.start || b.end - a.end)
+  const groups: SecretGroup[] = []
+
+  for (const secret of sorted) {
+    const current = groups.at(-1)
+
+    if (!current || secret.start >= current.end) {
+      groups.push({ start: secret.start, end: secret.end, secrets: [secret] })
+      continue
+    }
+
+    current.end = Math.max(current.end, secret.end)
+    current.secrets.push(secret)
+  }
+
+  return groups
+}
+
 // Detect all secrets in text
 export function detectSecrets(text: string): DetectedSecret[] {
   const secrets: DetectedSecret[] = []
@@ -72,22 +97,24 @@ export function redactSecrets(text: string): {
   let result = ''
   let lastEnd = 0
 
-  for (const secret of secrets) {
+  for (const group of groupOverlappingSecrets(secrets)) {
     // Add text before this secret
-    result += text.slice(lastEnd, secret.start)
+    result += text.slice(lastEnd, group.start)
 
-    // Mask the secret
-    const masked = maskSecret(secret.value, secret.type)
+    // Mask the full union once so nested/overlapping matches cannot move the cursor backwards
+    // and re-append part of a previously redacted value.
+    const groupValue = text.slice(group.start, group.end)
+    const masked = maskSecret(groupValue, group.secrets[0]?.type ?? 'secret')
     result += masked
 
-    // Log the redaction (without original value for security)
+    const types = [...new Set(group.secrets.map((secret) => secret.type))]
     redactions.push({
-      type: secret.type,
+      type: types.join('+'),
       masked,
-      position: secret.start,
+      position: group.start,
     })
 
-    lastEnd = secret.end
+    lastEnd = group.end
   }
 
   // Add remaining text

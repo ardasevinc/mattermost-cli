@@ -24,7 +24,7 @@ import {
   takeMostRecentPosts,
 } from './api'
 import { formatJSON, formatMarkdown, formatPretty } from './formatters'
-import { preprocess } from './preprocessing'
+import { preprocess, sanitizeTerminalLabel } from './preprocessing'
 import type {
   Channel,
   ChannelMember,
@@ -129,15 +129,15 @@ async function buildProcessedChannel(
     return {
       id: channel.id,
       type: 'dm',
-      name: `@${otherUser.username}`,
+      name: `@${sanitizeTerminalLabel(otherUser.username)}`,
     }
   }
 
   return {
     id: channel.id,
     type,
-    name: channel.name,
-    displayName: channel.display_name || undefined,
+    name: sanitizeTerminalLabel(channel.name),
+    displayName: channel.display_name ? sanitizeTerminalLabel(channel.display_name) : undefined,
   }
 }
 
@@ -151,15 +151,13 @@ async function processMessages(
 
   for (const post of posts) {
     const postUser = await getUser(post.user_id)
-    const { text, redactions } = redact
-      ? preprocess(post.message)
-      : { text: post.message, redactions: [] }
+    const { text, redactions } = preprocess(post.message, { redact })
 
     allRedactions.push(...redactions)
 
     messages.push({
       id: post.id,
-      user: postUser.id === myUserId ? 'you' : postUser.username,
+      user: postUser.id === myUserId ? 'you' : sanitizeTerminalLabel(postUser.username),
       userId: post.user_id,
       text,
       timestamp: new Date(post.create_at),
@@ -331,7 +329,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
         const channel = await getDMChannelByUsername(username)
         if (channel) channels.push(channel)
       } catch {
-        console.error(`Warning: Could not find DM channel with @${username}`)
+        console.error(`Warning: Could not find DM channel with @${sanitizeTerminalLabel(username)}`)
       }
     }
   } else {
@@ -719,11 +717,17 @@ export async function watchChannel(
     ? await getDMChannelByUsername(options.dm)
     : await getChannelByName(await resolveTeamId(options.team), options.channel as string)
   if (!channel) {
-    console.error(`Error: DM channel with @${options.dm} not found.`)
+    const target = options.dm
+      ? `DM channel with @${sanitizeTerminalLabel(options.dm)}`
+      : `channel #${sanitizeTerminalLabel(options.channel ?? '')}`
+    console.error(`Error: ${target} not found.`)
     process.exit(1)
   }
 
-  const watchTarget = channel.type === 'D' ? `DMs with @${options.dm}` : `#${channel.name}`
+  const watchTarget =
+    channel.type === 'D'
+      ? `DMs with @${sanitizeTerminalLabel(options.dm ?? '')}`
+      : `#${sanitizeTerminalLabel(channel.name)}`
   console.log(`Watching ${watchTarget} (Ctrl+C to stop)`)
 
   await new Promise<void>((resolve, reject) => {
@@ -757,7 +761,8 @@ export async function watchChannel(
             }
           }
 
-          const { text } = options.redact ? preprocess(post.message) : { text: post.message }
+          username = sanitizeTerminalLabel(username)
+          const { text } = preprocess(post.message, { redact: options.redact })
           const message = text.replace(/\s+/g, ' ').trim() || '[empty message]'
           const time = formatTime(new Date(post.create_at))
 

@@ -62,6 +62,55 @@ describe('detectSecrets', () => {
     expect(types.has('google_api_key')).toBe(true)
   })
 
+  test('detects native Mattermost tokens in labelled fields', () => {
+    const token = '9xuqwrwgstrb3mzrxb83nb357a'
+    const text = [
+      `MM_TOKEN=${token}`,
+      `MMAUTHTOKEN=${token}`,
+      `MM_PAT=${token}`,
+      `PAT=${token}`,
+      `Mattermost token: ${token}`,
+      `token = "${token}"`,
+    ].join('\n')
+    const secrets = detectSecrets(text)
+
+    expect(secrets).toHaveLength(6)
+    expect(secrets.every((secret) => secret.value === token)).toBe(true)
+  })
+
+  test('does not redact an unlabelled Mattermost-shaped object ID', () => {
+    const objectId = '9xuqwrwgstrb3mzrxb83nb357a'
+
+    expect(detectSecrets(`post id: ${objectId}`)).toEqual([])
+  })
+
+  test.each(['OPENSSH', 'EC', 'DSA', 'ENCRYPTED'])('detects %s private key blocks', (keyType) => {
+    const label = `${keyType} PRIVATE KEY`
+    const key = `-----BEGIN ${label}-----\nFAKEKEYMATERIAL1234567890\n-----END ${label}-----`
+    const secrets = detectSecrets(key)
+
+    expect(secrets).toHaveLength(1)
+    expect(secrets[0]?.type).toBe('private_key')
+    expect(secrets[0]?.value).toBe(key)
+  })
+
+  test('fails closed on a truncated private key block', () => {
+    const key = '-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEKEYMATERIAL1234567890'
+    const secrets = detectSecrets(key)
+
+    expect(secrets).toHaveLength(1)
+    expect(secrets[0]?.value).toBe(key)
+  })
+
+  test.each([
+    'PUBLIC KEY',
+    'CERTIFICATE',
+  ])('does not treat a %s block as a private key', (label) => {
+    const block = `-----BEGIN ${label}-----\nPUBLICMATERIAL1234567890\n-----END ${label}-----`
+
+    expect(detectSecrets(block)).toEqual([])
+  })
+
   test('uses captured-group start position for labeled tokens', () => {
     const token = 'abcdefghijklmnopqrstuvwxyz123456'
     const text = `Authorization: Bearer ${token}`
@@ -147,5 +196,16 @@ describe('redactSecrets', () => {
     expect(redacted).not.toContain(ghToken)
     expect(redacted).not.toContain('AKIAIOSFODNN7EXAMPLE')
     expect(redactions.length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('never re-appends plaintext from overlapping secret matches', () => {
+    const text = 'postgres://api_key=ABCDEFGHIJKLMNOPQRSTUVWXYZ123456:supersecret@db.internal/prod'
+    const { text: redacted, redactions } = redactSecrets(text)
+
+    expect(redactions).toHaveLength(1)
+    expect(redactions[0]?.type).toBe('connection_string+api_key')
+    expect(redacted).not.toContain('ABCDEFGHIJKLMNOPQRSTUVWXYZ123456')
+    expect(redacted).not.toContain('supersecret')
+    expect(redacted).not.toContain('db.internal')
   })
 })

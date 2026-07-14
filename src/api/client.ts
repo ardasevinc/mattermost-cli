@@ -1,13 +1,15 @@
 // Base Mattermost API client with auth and error handling
 
+import { sanitizeTerminalLabel } from '../preprocessing'
+import { normalizeServerUrl } from './url'
+
 export class MattermostClient {
   private baseUrl: string
   private token: string
   private maxRetries = 3
 
   constructor(baseUrl: string, token: string) {
-    // Remove trailing slash
-    this.baseUrl = baseUrl.replace(/\/+$/, '')
+    this.baseUrl = normalizeServerUrl(baseUrl)
     this.token = token
   }
 
@@ -35,7 +37,7 @@ export class MattermostClient {
     if (!response.ok) {
       const error = await response.text()
       throw new MattermostAPIError(
-        `API request failed: ${response.status} ${response.statusText}`,
+        `API request failed: ${response.status} ${sanitizeTerminalLabel(response.statusText)}`,
         response.status,
         error,
       )

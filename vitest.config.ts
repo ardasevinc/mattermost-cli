@@ -7,5 +7,6 @@ export default defineConfig({
     globals: false,
     include: ['tests/**/*.test.ts'],
     restoreMocks: true,
+    unstubGlobals: true,
   },
 })

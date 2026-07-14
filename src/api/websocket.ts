@@ -1,23 +1,34 @@
+import { sanitizeTerminalLabel } from '../preprocessing'
 import type { Post, WSPostEvent } from '../types'
+import { normalizeServerUrl } from './url'
 
 interface SocketMessage {
   event?: string
   status?: string
-  error?: string
+  error?: unknown
   data?: Record<string, unknown>
 }
 
+export function getSocketErrorMessage(error: unknown): string {
+  if (typeof error === 'string') {
+    return sanitizeTerminalLabel(error)
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string') {
+      return sanitizeTerminalLabel(message)
+    }
+  }
+
+  return 'WebSocket request failed.'
+}
+
 function toWebSocketBaseUrl(serverUrl: string): string {
-  const normalized = serverUrl.replace(/\/+$/, '')
+  const url = new URL(normalizeServerUrl(serverUrl))
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 
-  if (normalized.startsWith('https://')) {
-    return `wss://${normalized.slice('https://'.length)}`
-  }
-  if (normalized.startsWith('http://')) {
-    return `ws://${normalized.slice('http://'.length)}`
-  }
-
-  throw new Error(`Invalid server URL: ${serverUrl}`)
+  return url.toString().replace(/\/+$/, '')
 }
 
 function parseSocketMessage(raw: unknown): SocketMessage | null {
@@ -91,11 +102,12 @@ export function connectWebSocket(
     if (!payload) return
 
     if (payload.status === 'FAIL') {
-      const errorText = payload.error?.toLowerCase() ?? ''
+      const errorMessage = getSocketErrorMessage(payload.error)
+      const errorText = errorMessage.toLowerCase()
       if (errorText.includes('authentication') || errorText.includes('not authorized')) {
         emitError(new Error('Authentication failed. Check your token.'))
       } else {
-        emitError(new Error(payload.error || 'WebSocket request failed.'))
+        emitError(new Error(errorMessage))
       }
       socket.close()
       return
@@ -119,7 +131,7 @@ export function connectWebSocket(
   socket.onclose = (event) => {
     if (closedByClient || hasErrored) return
 
-    const reason = event.reason ? ` (${event.reason})` : ''
+    const reason = event.reason ? ` (${sanitizeTerminalLabel(event.reason)})` : ''
     emitError(new Error(`WebSocket connection closed: code ${event.code}${reason}`))
   }
 

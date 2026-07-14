@@ -95,4 +95,10 @@ describe('resolveTeamIdFromList', () => {
       'You belong to multiple teams. Use --team to specify:',
     )
   })
+
+  test('neutralizes terminal controls in team names shown in errors', () => {
+    const teams = [makeTeam('t1', 'core\u001b[2J', 'Core\rSpoofed'), makeTeam('t2', 'eng')]
+
+    expect(() => resolveTeamIdFromList(teams)).toThrow('  core\\u001b[2J (Core\\u000dSpoofed)')
+  })
 })

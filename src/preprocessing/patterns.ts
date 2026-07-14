@@ -98,8 +98,14 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   // Private keys
   {
     name: 'private_key',
+    pattern: /(-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \2-----|$))/g,
+  },
+
+  // Mattermost personal access tokens are 26-character lowercase alphanumeric values.
+  {
+    name: 'mattermost_token',
     pattern:
-      /(-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----)/g,
+      /(?:\bmm(?:auth)?[_-]?token\b|\bmm[_-]?pat\b|\bmattermost[\s_-]?(?:pat|token)\b|\bpat\b|\btoken\b)["\s:=]+["']?([a-z0-9]{26})["']?(?![a-z0-9])/gi,
   },
 
   // Stripe

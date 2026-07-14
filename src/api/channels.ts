@@ -1,5 +1,6 @@
 // Channel fetching with DM filtering
 
+import { sanitizeTerminalLabel } from '../preprocessing'
 import type { Channel, ChannelMember, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
@@ -76,7 +77,9 @@ export function resolveTeamIdFromList(teams: Team[], teamName?: string): string 
     const team = teams.find((t) => t.name === teamName || t.display_name === teamName)
     if (!team) {
       throw new Error(
-        `Team "${teamName}" not found. Your teams: ${teams.map((t) => t.name).join(', ')}`,
+        `Team "${sanitizeTerminalLabel(teamName)}" not found. Your teams: ${teams
+          .map((team) => sanitizeTerminalLabel(team.name))
+          .join(', ')}`,
       )
     }
     return team.id
@@ -90,7 +93,12 @@ export function resolveTeamIdFromList(teams: Team[], teamName?: string): string 
 
   throw new Error(
     `You belong to multiple teams. Use --team to specify:\n` +
-      teams.map((t) => `  ${t.name} (${t.display_name})`).join('\n'),
+      teams
+        .map(
+          (team) =>
+            `  ${sanitizeTerminalLabel(team.name)} (${sanitizeTerminalLabel(team.display_name)})`,
+        )
+        .join('\n'),
   )
 }
 
