@@ -7,17 +7,18 @@ Codebase guide for AI agents working on this project.
 ```
 src/
 ├── index.ts              # CLI entry point (commander setup)
-├── cli.ts                # Read command handlers and output orchestration
+├── cli.ts                # Read/send command handlers and output orchestration
 ├── config.ts             # TOML config file loading (~/.config/mattermost-cli/)
 ├── cursor.ts             # Opaque deterministic history cursors
 ├── doctor.ts             # Read-only configuration/server/auth diagnostics
+├── input.ts              # Bounded fatal-UTF-8 message stdin
 ├── types.ts              # All TypeScript interfaces
 ├── validation.ts         # Strict CLI numeric validation
 ├── api/
 │   ├── client.ts         # Bounded HTTP, auth, retry, rate-limit policy
 │   ├── users.ts          # User fetching + caching
 │   ├── channels.ts       # Channel/DM/team fetching + team resolution
-│   ├── posts.ts          # Message fetching + pagination + search
+│   ├── posts.ts          # Message writes, fetching, pagination, and search
 │   ├── url.ts            # Server URL and permalink validation
 │   └── websocket.ts      # Live post events for watch mode
 ├── preprocessing/
@@ -39,7 +40,8 @@ src/
     └── watch.ts          # Pretty/JSONL watch events
 
 scripts/
-└── check-version.mjs     # package/lockfile/CLI version invariant
+├── check-version.mjs     # package/lockfile/CLI version invariant
+└── test-e2e.mjs          # Disposable Mattermost Docker send harness
 
 .github/workflows/
 ├── ci.yml                # Vitest, checks, audit, exact tarball smoke
@@ -53,7 +55,7 @@ tests/                    # Vitest suites by API, CLI, security, formatting, and
 ### CLI → API → Output
 ```
 index.ts (parse args)
-    → cli.ts (whoami/teams/users/channels/dms/group-dms/channel/thread/search/mentions/unread/watch)
+    → cli.ts (whoami/teams/users/channels/dms/group-dms/send/channel/thread/search/mentions/unread/watch)
         → api/* (fetch data from Mattermost)
         → preprocessing/* (redact secrets)
         → formatters/* (format output)
@@ -109,6 +111,7 @@ bun run lint                # Biome lint
 bun run check               # Biome full check
 bun run typecheck           # Typecheck
 bun run test                # Run all tests with Vitest
+bun run test:e2e            # Isolated real Mattermost DM/group sends via Docker
 bun run test -- secrets     # Run tests matching "secrets"
 bunx vitest run --no-isolate # Catch shared singleton/cache leakage
 bun run build               # Build npm artifact
@@ -124,6 +127,8 @@ Test files live in `tests/` by domain.
 - Log or print `MM_TOKEN` (not even in errors or with `--no-redact`)
 - Store original secret values in output (we removed `originalText` and `redactions.original` for this reason)
 - Make write operations in read commands (we removed POST fallback in `getDMChannelWithUser`)
+- Automatically retry a message or direct-channel write after an uncertain outcome
+- Echo outbound message content in receipts or errors
 
 **Always:**
 - Redact before output
@@ -131,6 +136,8 @@ Test files live in `tests/` by domain.
 - Fully mask exact active Mattermost credentials regardless of redaction preference
 - Keep transport/API errors generic and never reflect remote response bodies
 - Fail closed when retrieval completeness or required identity/team data is unknown
+- Validate exact D/G destinations before sending and keep group creation out of send flows
+- Block the active Mattermost credential from outbound message content
 
 ## Configuration
 

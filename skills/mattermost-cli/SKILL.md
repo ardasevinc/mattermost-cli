@@ -5,16 +5,17 @@ description: >-
   "fetch DMs", "what did X say", "check messages from coworker", "read mattermost",
   "search mattermost for X", "check my mentions", "any unread messages", "watch a channel",
   "monitor chat", "what's new on mattermost", "find messages about X", "check channel history",
-  "follow up on that mattermost thread", or mentions mattermost conversations, chat history,
+  "follow up on that mattermost thread", "send a mattermost DM", "message a mattermost group",
+  or mentions mattermost conversations, chat history,
   unread messages, or finding tasks mentioned in chat. Also use when the user needs context
   from team communication, wants to find action items from conversations, or needs to monitor
   a channel for updates in real-time.
-version: 1.5.0
+version: 1.6.0
 ---
 
 # Mattermost CLI
 
-Read-only CLI for fetching Mattermost messages. Output is automatically redacted for safe LLM processing.
+CLI for safely reading Mattermost and deliberately sending to exact DM/group destinations. Retrieved output is automatically redacted for safe LLM processing.
 
 ## When to Invoke Immediately
 
@@ -25,6 +26,7 @@ Trigger this skill when the user:
 - Asks to search for something in Mattermost
 - Wants to check their mentions or unread messages
 - Needs to monitor a channel or DM in real-time
+- Explicitly asks to send a specific message to a Mattermost user or existing group DM
 - References a conversation or thread from Mattermost
 
 ## When to Suggest (Don't Auto-Invoke)
@@ -98,6 +100,25 @@ mm group-dms --channel <channel-id>  # one validated group DM
 mm group-dms --since 24h --limit 100 # shared output budget across group DMs
 mm group-dms --channel <channel-id> --cursor <opaque> # resume one group DM
 ```
+
+### Send a Direct or Group Message
+```bash
+mm --json send dm alice --dry-run
+printf '%s' 'hello alice' | mm --json send dm alice
+
+mm --json send group <group-channel-id> --dry-run
+printf '%s' 'hello group' | mm --json send group <group-channel-id>
+```
+
+Only send when the user has explicitly supplied both the destination and message intent. Prefer a
+dry-run first when destination identity is not already proven. `send dm` may create the exact DM;
+`send group` accepts an existing type-G channel ID and never creates or guesses a group. Message
+content comes from stdin so it does not enter process arguments. Do not include the active
+Mattermost credential in outbound content.
+
+Never automatically retry an uncertain send. Timeout, transport/body failure, malformed receipt,
+or server failure can mean the post exists. Inspect the destination first. If the CLI says DM setup
+was uncertain but the message was not attempted, rerun the dry-run before deciding whether to send.
 
 ### Fetch Channel Messages
 ```bash
@@ -194,6 +215,8 @@ make readiness fail after all checks print; network checks use independent bound
 | Watch channel live | `mm watch general` |
 | Watch DM live | `mm watch --dm alice` |
 | Specific thread | `mm thread <postId>` |
+| Send a DM | `printf '%s' 'message' \| mm send dm alice` |
+| Send to existing group DM | `printf '%s' 'message' \| mm send group <channel-id>` |
 | JSON for processing | `mm dms --json` |
 | Setup config | `mm config --init` |
 
@@ -263,6 +286,7 @@ Masking preserves context: `ghp_abc123xyz789secret` → `ghp_...cret`
 
 Remote strings are control-character sanitized even with `--no-redact`. Heuristic secret masking
 can be disabled when explicitly needed, but the active Mattermost credential stays fully masked.
+Outbound messages are not display-redacted; the active credential itself is blocked before sending.
 
 ## Configuration
 
@@ -288,13 +312,14 @@ mention_names = ["Arda", "arda.sevinc"]  # aliases for mm mentions
 | "Could not find DM channel" | User doesn't exist or no DM history | Check username spelling |
 | "Could not find channel" | Channel name wrong or no access | Verify name and team |
 | "Multiple teams found" | Multi-team user without `--team` | Add `--team <name>` |
-| Connection errors | Network/server issues | Verify URL is correct and accessible |
+| Unknown write outcome | Server/transport failed after dispatch | Inspect the destination before retrying |
+| Connection errors on reads | Network/server issues | Verify URL is correct and accessible |
 | WebSocket auth failure | Invalid token for watch mode | Regenerate access token |
 
 ## When NOT to Use
 
 - User is asking about Slack, Discord, or other chat platforms
-- User wants to *send* messages (this tool is read-only)
+- User wants to create channels, manage members, edit/delete posts, or send outside DMs/group DMs
 - User needs webhook or bot integrations
 
 ## Example Workflows

@@ -1,7 +1,7 @@
 {
   "name": "mattermost-cli",
-  "version": "1.5.0",
-  "description": "Read-only Mattermost CLI for messages, search, unread state, and live watch with secret redaction",
+  "version": "1.6.0",
+  "description": "Mattermost CLI for safe message retrieval, live watch, and deliberate DM/group sending",
   "author": "Arda Sevinc <arda@ardasevinc.com>",
   "license": "MIT",
   "packageManager": "bun@1.3.14",

@@ -69,7 +69,10 @@ function validateDuration(value: string | undefined): string | undefined {
 
 const program = new Command()
 
-program.name('mm').description('Mattermost CLI - Fetch and display messages').version(pkg.version)
+program
+  .name('mm')
+  .description('Mattermost CLI - Read, watch, and deliberately send messages')
+  .version(pkg.version)
 
 program
   .option('-t, --token <token>', 'Mattermost personal access token (or MM_TOKEN env)')

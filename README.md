@@ -1,10 +1,11 @@
 # mattermost-cli
 
-A CLI tool to fetch and display Mattermost messages (DMs, channels, threads) with automatic secret redaction for safe LLM processing.
+A CLI tool to fetch, display, watch, and deliberately send Mattermost messages with automatic secret redaction for safe LLM processing.
 
 ## Features
 
 - Fetch DMs from all channels or filter by specific users
+- Send stdin to an exact DM user or existing group-DM channel with dry-run receipts
 - Fetch messages from public/private channels via `mm channel <name>`
 - Search messages with Mattermost query syntax via `mm search <query>`
 - Find mentions via `mm mentions` (supports configurable aliases)
@@ -144,6 +145,36 @@ mm group-dms --channel <channel-id> --cursor <opaque>
 
 `mm group-dms --limit` is a total output cap across all matched group-DM channels.
 
+### Send direct and group messages
+
+```bash
+# Resolve the exact DM destination without writing
+mm --json send dm alice --dry-run
+
+# Send stdin exactly as received; printf avoids an unintended final newline
+printf '%s' 'hello alice' | mm send dm alice
+
+# Group sends accept an existing type-G channel ID only
+printf 'deploy is complete\n' | mm send group <group-channel-id>
+mm --json send group <group-channel-id> --dry-run
+```
+
+`send dm` reuses an existing direct channel or creates one for the exact resolved username.
+`send group` never creates or guesses a group conversation. Both commands validate the destination
+before posting, send the message exactly once, and never echo message content in their receipts.
+Input must be valid UTF-8, non-empty, and at most 65,535 bytes. The exact active Mattermost
+credential is blocked from outbound content regardless of `--no-redact`.
+
+Dry runs perform reads only. A missing DM reports `channelId: null` and `willCreate: true` without
+creating it. Successful JSON receipts contain only status, sanitized destination identity, post ID,
+creation time, a local permalink, and the client pending-post ID.
+
+Write requests are never automatically replayed. A timeout, transport failure, malformed success
+receipt, or server error after dispatch reports an unknown outcome and tells the caller to inspect
+the destination before retrying. If DM setup is uncertain, the error explicitly states that the
+message itself was not attempted. If delivery succeeded but stdout failed, the error explicitly
+states that delivery was confirmed and must not be retried.
+
 ### Fetch a specific thread
 
 ```bash
@@ -274,6 +305,11 @@ Group DMs:
   -c, --channel <id>      Specific group-DM channel ID (type G only)
   --cursor <opaque>       Resume that channel's deterministic history
 
+Send:
+  send dm <username>       Send piped stdin to an exact DM user
+  send group <channel-id>  Send piped stdin to an existing group DM
+  --dry-run                Resolve the destination without writing
+
 Channels:
   channels --type <type>  Filter the account-wide list: dm, public, private, group, all
 
@@ -391,6 +427,10 @@ Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while pre
 protected. Unsafe terminal controls and Unicode bidirectional controls are always made visible;
 ordinary Unicode, emoji, and joiners are preserved.
 
+Outbound send content is not passed through display redaction or terminal sanitization. It is sent
+byte-for-byte after UTF-8, size, and non-empty validation. The one hard outbound secret boundary is
+the active Mattermost credential itself, which is never allowed inside a message.
+
 ## AI Agent Skill
 
 This repo ships an agent skill for the [Vercel Skills CLI](https://github.com/vercel-labs/skills). Install it to give your AI coding agent access to Mattermost:
@@ -409,6 +449,7 @@ bun run lint    # Biome lint
 bun run check   # Biome full check
 bun run typecheck  # Typecheck
 bun run test    # Run tests with Vitest
+bun run test:e2e # Disposable Mattermost 11.8.3 + Postgres send test (Docker required)
 bun run build   # Build for npm
 bun run verify  # Full release verification
 bun run mm      # Run CLI from source

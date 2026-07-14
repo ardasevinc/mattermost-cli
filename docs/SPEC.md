@@ -1,7 +1,7 @@
 # Mattermost CLI - Specification
 
 ## Overview
-A TypeScript + Bun CLI tool to fetch and display Mattermost messages (DMs and channels), with built-in secret redaction for safe LLM processing later.
+A TypeScript + Bun CLI tool to fetch, display, watch, and deliberately send Mattermost messages, with built-in secret redaction for safe LLM processing later.
 
 ## Requirements Summary
 
@@ -13,6 +13,7 @@ A TypeScript + Bun CLI tool to fetch and display Mattermost messages (DMs and ch
 | Output | Pretty terminal for TTY, markdown for pipe/non-TTY, `--json` flag |
 | Time Range | `--since` (duration) and `--limit` (count) flags |
 | Style | One-shot command |
+| Writes | Explicit DM/existing-group send commands; stdin only; no automatic replay |
 | Secret Handling | Redact by default; can disable via `--no-redact` / `MM_REDACT=false` / config |
 | Future | Modular design for LLM task extraction |
 
@@ -50,6 +51,11 @@ mm dms -u bob -u alice    # Multiple users
 # Fetch group DMs (all or one validated group channel)
 mm group-dms [--limit 50] [--since 7d]
 mm group-dms --channel <channel-id>
+
+# Send stdin to an exact DM user or existing group-DM channel
+printf '%s' 'hello' | mm send dm alice
+printf '%s' 'hello group' | mm send group <channel-id>
+mm --json send dm alice --dry-run
 
 # Fetch one thread
 mm thread <postId>
@@ -99,6 +105,39 @@ mm channel '#dev' --team myteam
 --type            Filter list by type: dm, public, private, group, all
 ```
 
+### Send Commands
+
+```bash
+send dm <username> [--dry-run]
+send group <channel-id> [--dry-run]
+```
+
+Messages come only from stdin. Input is preserved exactly, including multiline content and a final
+newline. It must be valid UTF-8, non-whitespace, and no larger than 65,535 bytes. TTY reads are
+rejected rather than waiting for hidden interactive input. The active Mattermost credential is
+blocked from outbound content before any API request.
+
+DM sending resolves an exact case-insensitive username, validates the authenticated identity and
+all discovered D channels, then reuses the matching channel or calls `POST /channels/direct` once.
+Group sending accepts only an exact existing channel ID whose fetched type is `G`; it never calls
+`POST /channels/group`. Both flows call `POST /posts` at most once with a generated
+`pending_post_id` and validate channel, author, post ID, and timestamp in the response.
+
+Dry-run uses only reads. For a missing DM it emits `channelId: null` plus `willCreate: true` and does
+not create the channel. Send receipts are narrow local projections and omit message text, raw post
+objects, props, metadata, error bodies, and credentials.
+
+Write outcomes are tri-state:
+
+- a validated success response is `sent`;
+- a known 4xx response is rejected;
+- timeout, transport/body failure, malformed success data, author/channel mismatch, or 5xx is
+  unknown and must instruct the caller to inspect the destination before retrying.
+
+No write request is automatically replayed. If direct-channel setup is unknown, the message was not
+attempted and the error says so. If post delivery was validated but receipt output fails, the error
+states that delivery was confirmed and must not be retried.
+
 ### Channel Command
 
 ```bash
@@ -144,6 +183,9 @@ are still emitted and any possible ping still runs. Each request has an independ
 timeout. Every remote string passes through control-character sanitization and, when enabled, the
 normal secret-redaction pipeline. A configured token is never emitted even with redaction disabled.
 An insecure file containing a token fails regardless of which credential source wins precedence.
+
+Display redaction never mutates outbound send content. The active Mattermost credential is the hard
+exception: an exact occurrence in the outbound message is rejected before network access.
 
 The CLI automatically detects and redacts secrets including:
 
