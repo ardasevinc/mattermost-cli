@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { clearUserCache } from '../src/api'
+import { clearUserCache, MattermostMutationOutcomeUnknownError } from '../src/api'
 import { MattermostDeliveryConfirmedError, sendDirectMessage, sendGroupMessage } from '../src/cli'
 
 const base = {
   url: 'https://mattermost.test',
-  token: 'token',
+  token: 't'.repeat(26),
   json: true,
   redact: true,
   dryRun: false,
 }
+const postId = 'p'.repeat(26)
 
 function channel(overrides: Record<string, unknown> = {}) {
   return {
@@ -142,7 +143,7 @@ describe('message sending handlers', () => {
       .mockResolvedValueOnce(Response.json(direct))
       .mockResolvedValueOnce(
         Response.json({
-          id: 'post-id',
+          id: postId,
           channel_id: 'channel-id',
           user_id: 'me',
           create_at: 1_784_023_427_000,
@@ -163,7 +164,7 @@ describe('message sending handlers', () => {
     expect(JSON.parse(receiptText)).toMatchObject({
       status: 'sent',
       destination: { type: 'dm', label: '@alice', channelId: 'channel-id' },
-      post: { id: 'post-id', pendingPostId: '00000000-0000-4000-8000-000000000000' },
+      post: { id: postId, pendingPostId: '00000000-0000-4000-8000-000000000000' },
     })
   })
 
@@ -201,7 +202,7 @@ describe('message sending handlers', () => {
       .mockResolvedValueOnce(Response.json({ id: 'me', username: 'sender' }))
       .mockResolvedValueOnce(
         Response.json({
-          id: 'post-id',
+          id: postId,
           channel_id: 'channel-id',
           user_id: 'me',
           create_at: 1_784_023_427_000,
@@ -217,7 +218,7 @@ describe('message sending handlers', () => {
     expect(JSON.parse(output())).toMatchObject({
       status: 'sent',
       destination: { type: 'group', label: 'Test Group', channelId: 'channel-id' },
-      post: { id: 'post-id' },
+      post: { id: postId },
     })
   })
 
@@ -249,7 +250,7 @@ describe('message sending handlers', () => {
       .mockResolvedValueOnce(Response.json([channel()]))
       .mockResolvedValueOnce(
         Response.json({
-          id: 'post-id',
+          id: postId,
           channel_id: 'channel-id',
           user_id: 'me',
           create_at: 1_784_023_427_000,
@@ -348,5 +349,30 @@ describe('message sending handlers', () => {
     expect(receipt).not.toContain(base.token)
     expect(receipt).toContain('[REDACTED:mattermost_credential]')
     expect(JSON.parse(receipt).post.permalink).not.toContain(base.token)
+  })
+
+  test('never reflects outbound message content from a hostile post ID receipt', async () => {
+    const message = 'private launch detail'
+    const group = channel({ type: 'G', name: 'group-name', display_name: 'Test Group' })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(group))
+      .mockResolvedValueOnce(Response.json({ id: 'me', username: 'sender' }))
+      .mockResolvedValueOnce(
+        Response.json({
+          id: message,
+          channel_id: 'channel-id',
+          user_id: 'me',
+          create_at: 1_784_023_427_000,
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const output = captureStdout()
+
+    await expect(
+      sendGroupMessage({ ...base, channelId: 'channel-id', message }),
+    ).rejects.toBeInstanceOf(MattermostMutationOutcomeUnknownError)
+    expect(output()).not.toContain(message)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })

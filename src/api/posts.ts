@@ -12,6 +12,7 @@ interface GetPostsOptions {
 }
 
 const MAX_SEARCH_SCAN_PAGES = 100
+const MATTERMOST_ID_PATTERN = /^[a-z0-9]{26}$/
 
 function isUrlEncodable(value: string): boolean {
   try {
@@ -50,7 +51,7 @@ export async function createPost(
   const raw = post as Record<string, unknown>
   if (
     typeof raw.id !== 'string' ||
-    raw.id.trim().length === 0 ||
+    !MATTERMOST_ID_PATTERN.test(raw.id) ||
     !isUrlEncodable(raw.id) ||
     raw.channel_id !== channelId ||
     typeof raw.user_id !== 'string' ||

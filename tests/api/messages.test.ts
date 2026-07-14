@@ -7,6 +7,8 @@ import {
 } from '../../src/api'
 
 describe('message write API', () => {
+  const postId = 'p'.repeat(26)
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -54,7 +56,7 @@ describe('message write API', () => {
   test('creates a post with a stable pending ID and returns only a narrow receipt', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({
-        id: 'post-id',
+        id: postId,
         channel_id: 'channel-id',
         user_id: 'sender-id',
         create_at: 1_784_023_427_000,
@@ -66,7 +68,7 @@ describe('message write API', () => {
     initClient('https://mattermost.test', 'token')
 
     await expect(createPost('channel-id', 'hello', 'pending-id')).resolves.toEqual({
-      id: 'post-id',
+      id: postId,
       channelId: 'channel-id',
       userId: 'sender-id',
       createAt: 1_784_023_427_000,
@@ -89,11 +91,12 @@ describe('message write API', () => {
     [{ id: '', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
     [{ id: '   ', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
     [{ id: '\ud800', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
-    [{ id: 'post', channel_id: 'wrong', user_id: 'sender', create_at: 1 }],
-    [{ id: 'post', channel_id: 'channel-id', user_id: '', create_at: 1 }],
-    [{ id: 'post', channel_id: 'channel-id', user_id: '   ', create_at: 1 }],
-    [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: Number.NaN }],
-    [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: 1e100 }],
+    [{ id: 'private launch detail', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
+    [{ id: postId, channel_id: 'wrong', user_id: 'sender', create_at: 1 }],
+    [{ id: postId, channel_id: 'channel-id', user_id: '', create_at: 1 }],
+    [{ id: postId, channel_id: 'channel-id', user_id: '   ', create_at: 1 }],
+    [{ id: postId, channel_id: 'channel-id', user_id: 'sender', create_at: Number.NaN }],
+    [{ id: postId, channel_id: 'channel-id', user_id: 'sender', create_at: 1e100 }],
     [null],
   ])('rejects a malformed or mismatched create-post response', async (response) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(response)))
