@@ -273,7 +273,8 @@ program
   .option('-l, --limit <number>', 'Max messages to fetch', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
   .option('-c, --channel <id>', 'Specific direct-message channel ID (type D only)')
-  .action(async (cmdOpts) => {
+  .option('--cursor <opaque>', 'Resume deterministic channel history')
+  .action(async (cmdOpts, command) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
 
@@ -290,6 +291,8 @@ program
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,
+        cursor: cmdOpts.cursor,
+        sinceExplicit: command.getOptionValueSource('since') === 'cli',
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -303,7 +306,8 @@ program
   .option('-l, --limit <number>', 'Max messages to fetch', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
   .option('-c, --channel <id>', 'Specific group DM channel ID (type G only)')
-  .action(async (cmdOpts) => {
+  .option('--cursor <opaque>', 'Resume deterministic channel history')
+  .action(async (cmdOpts, command) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
 
@@ -319,6 +323,8 @@ program
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,
+        cursor: cmdOpts.cursor,
+        sinceExplicit: command.getOptionValueSource('since') === 'cli',
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
@@ -332,7 +338,8 @@ program
   .option('--team <name>', 'Team name (auto-detected if you belong to one team)')
   .option('-l, --limit <number>', 'Max messages to fetch', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
-  .action(async (name, cmdOpts) => {
+  .option('--cursor <opaque>', 'Resume deterministic channel history')
+  .action(async (name, cmdOpts, command) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
 
@@ -349,6 +356,8 @@ program
         team: cmdOpts.team,
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
+        cursor: cmdOpts.cursor,
+        sinceExplicit: command.getOptionValueSource('since') === 'cli',
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)

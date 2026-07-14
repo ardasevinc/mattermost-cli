@@ -28,6 +28,7 @@ import {
   searchPosts,
   takeMostRecentPosts,
 } from './api'
+import { decodeChannelHistoryCursor, encodeChannelHistoryCursor } from './cursor'
 import {
   formatJSON,
   formatMarkdown,
@@ -524,7 +525,8 @@ async function buildOutputsFromPosts(
   retrieval: Pick<
     RetrievalMetadata['selection'],
     'source' | 'requestedLimit' | 'since' | 'queryTruncated'
-  >,
+  > &
+    Partial<Pick<RetrievalMetadata['selection'], 'inputCursor' | 'nextCursor'>>,
   knownChannels: Map<string, Channel> = new Map(),
 ): Promise<MessageOutput[]> {
   const grouped = groupPostsByChannel(posts)
@@ -678,7 +680,8 @@ function retrievalMetadata(
   selection: Pick<
     RetrievalMetadata['selection'],
     'source' | 'requestedLimit' | 'since' | 'queryTruncated'
-  >,
+  > &
+    Partial<Pick<RetrievalMetadata['selection'], 'inputCursor' | 'nextCursor'>>,
   selectedCount: number,
   visibleThreads: RetrievalMetadata['visibleThreads'] = {
     status: 'not_requested',
@@ -688,7 +691,12 @@ function retrievalMetadata(
   visiblePostCount = selectedCount,
 ): RetrievalMetadata {
   return {
-    selection: { ...selection, selectedCount },
+    selection: {
+      ...selection,
+      selectedCount,
+      inputCursor: selection.inputCursor ?? null,
+      nextCursor: selection.nextCursor ?? null,
+    },
     visibleThreads,
     visiblePostCount,
     deletedPostsIncluded: false,
@@ -831,6 +839,16 @@ export async function listChannels(options: {
 }
 
 export async function fetchDMs(options: DMsOptions): Promise<void> {
+  if (options.cursor !== undefined) decodeChannelHistoryCursor(options.cursor)
+  if (options.cursor !== undefined && !options.channel) {
+    throw new Error('A cursor requires --channel for direct-message history.')
+  }
+  if (options.cursor !== undefined && options.user.length > 0) {
+    throw new Error('A cursor cannot be combined with --user.')
+  }
+  if (options.cursor !== undefined && options.sinceExplicit) {
+    throw new Error('A cursor cannot be combined with --since.')
+  }
   initClient(options.url, options.token)
 
   let myUserId: string
@@ -872,6 +890,13 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
 }
 
 export async function fetchGroupDMs(options: GroupDMsOptions): Promise<void> {
+  if (options.cursor !== undefined) decodeChannelHistoryCursor(options.cursor)
+  if (options.cursor !== undefined && !options.channel) {
+    throw new Error('A cursor requires --channel for group-DM history.')
+  }
+  if (options.cursor !== undefined && options.sinceExplicit) {
+    throw new Error('A cursor cannot be combined with --since.')
+  }
   initClient(options.url, options.token)
 
   if (options.channel) {
@@ -905,25 +930,38 @@ async function fetchConversationChannels(
 
   printRedactionWarning(options.redact)
 
-  const since = options.since ? parseDuration(options.since) : undefined
+  const cursor =
+    options.cursor !== undefined ? decodeChannelHistoryCursor(options.cursor) : undefined
+  if (cursor && (channels.length !== 1 || cursor.channelId !== channels[0]?.id)) {
+    throw new Error('Cursor does not match the selected channel.')
+  }
+  const since = cursor
+    ? (cursor.since ?? undefined)
+    : options.since
+      ? parseDuration(options.since)
+      : undefined
   const channelPosts = new Map<string, Post[]>()
   const truncationStates: Array<boolean | null> = []
   const allPosts: Post[] = []
+  let inputSafeBeforeValid = true
 
   for (const channel of channels) {
     const result = await getAllChannelPosts(channel.id, {
       limit: options.limit,
       since,
+      boundary: cursor?.boundary,
+      safeBeforePostId: cursor?.safeBeforePostId,
     })
     const posts = result.posts
     truncationStates.push(result.truncated)
+    if (cursor && result.safeBeforeValid === false) inputSafeBeforeValid = false
     if (posts.length === 0) continue
 
     channelPosts.set(channel.id, posts)
     allPosts.push(...posts)
   }
 
-  if (allPosts.length === 0) {
+  if (allPosts.length === 0 && !(cursor && truncationStates.some((state) => state === null))) {
     formatOutput([], options)
     return
   }
@@ -934,6 +972,63 @@ async function fetchConversationChannels(
   )
   const queryTruncated = mergeTruncation(truncationStates, allPosts.length, options.limit)
   const selectedPosts = allPosts.filter((post) => selectedPostIds.has(post.id))
+  const lastSelected = takeMostRecentPosts(selectedPosts, options.limit).at(-1)
+  const safeBeforePostId = lastSelected
+    ? ([...selectedPosts].reverse().find((post) => post.create_at > lastSelected.create_at)?.id ??
+      (inputSafeBeforeValid ? cursor?.safeBeforePostId : undefined))
+    : undefined
+  const nextCursor =
+    options.channel && lastSelected && queryTruncated !== false
+      ? encodeChannelHistoryCursor({
+          v: 1,
+          scope: 'channel',
+          channelId: channels[0]?.id ?? '',
+          boundary: { createAt: lastSelected.create_at, id: lastSelected.id },
+          since: since ?? null,
+          ...(safeBeforePostId === undefined ? {} : { safeBeforePostId }),
+        })
+      : cursor && selectedPosts.length === 0 && queryTruncated === null
+        ? (options.cursor ?? null)
+        : null
+  if (selectedPosts.length === 0 && cursor && queryTruncated === null) {
+    const channel = channels[0]
+    if (!channel) throw new Error('Cursor channel is unavailable.')
+    const channelRedactions: Redaction[] = []
+    const processedChannel = await buildProcessedChannel(
+      channel,
+      myUserId,
+      options.redact,
+      channelRedactions,
+    )
+    formatOutput(
+      [
+        {
+          channel: processedChannel,
+          messages: [],
+          redactions: channelRedactions,
+          retrieval: retrievalMetadata(
+            {
+              source: 'recent',
+              requestedLimit: options.limit,
+              since: since === undefined ? null : new Date(since).toISOString(),
+              queryTruncated,
+              inputCursor: options.cursor ?? null,
+              nextCursor,
+            },
+            0,
+            {
+              status: options.threads ? 'complete' : 'not_requested',
+              hydratedRootCount: 0,
+              failedRootIds: [],
+            },
+            0,
+          ),
+        },
+      ],
+      options,
+    )
+    return
+  }
   const outputs = await buildOutputsFromPosts(
     selectedPosts,
     myUserId,
@@ -943,6 +1038,8 @@ async function fetchConversationChannels(
       requestedLimit: options.limit,
       since: since === undefined ? null : new Date(since).toISOString(),
       queryTruncated,
+      inputCursor: options.cursor ?? null,
+      nextCursor,
     },
     new Map(channels.map((channel) => [channel.id, channel])),
   )
@@ -951,25 +1048,83 @@ async function fetchConversationChannels(
 }
 
 export async function fetchChannel(options: ChannelOptions): Promise<void> {
+  const cursor =
+    options.cursor !== undefined ? decodeChannelHistoryCursor(options.cursor) : undefined
+  if (options.cursor !== undefined && options.sinceExplicit) {
+    throw new Error('A cursor cannot be combined with --since.')
+  }
   initClient(options.url, options.token)
 
   const me = await getMe()
   const teamId = await resolveTeamId(options.team)
   const channel = await getChannelByName(teamId, options.channel)
+  if (cursor && cursor.channelId !== channel.id) {
+    throw new Error('Cursor does not match the selected channel.')
+  }
 
   printRedactionWarning(options.redact)
 
-  const since = options.since ? parseDuration(options.since) : undefined
+  const since = cursor
+    ? (cursor.since ?? undefined)
+    : options.since
+      ? parseDuration(options.since)
+      : undefined
   const result = await getAllChannelPosts(channel.id, {
     limit: options.limit,
     since,
+    boundary: cursor?.boundary,
+    safeBeforePostId: cursor?.safeBeforePostId,
   })
   const posts = result.posts
 
-  if (posts.length === 0) {
+  if (posts.length === 0 && !(cursor && result.truncated === null)) {
     formatOutput([], options)
     return
   }
+
+  if (posts.length === 0 && cursor && result.truncated === null) {
+    const channelRedactions: Redaction[] = []
+    const processedChannel = await buildProcessedChannel(
+      channel,
+      me.id,
+      options.redact,
+      channelRedactions,
+    )
+    formatOutput(
+      [
+        {
+          channel: processedChannel,
+          messages: [],
+          redactions: channelRedactions,
+          retrieval: retrievalMetadata(
+            {
+              source: 'recent',
+              requestedLimit: options.limit,
+              since: since === undefined ? null : new Date(since).toISOString(),
+              queryTruncated: null,
+              inputCursor: options.cursor ?? null,
+              nextCursor: options.cursor ?? null,
+            },
+            0,
+            {
+              status: options.threads ? 'complete' : 'not_requested',
+              hydratedRootCount: 0,
+              failedRootIds: [],
+            },
+            0,
+          ),
+        },
+      ],
+      options,
+    )
+    return
+  }
+
+  const boundaryPost = posts.at(-1)
+  const safeBeforePostId = boundaryPost
+    ? ([...posts].reverse().find((post) => post.create_at > boundaryPost.create_at)?.id ??
+      (result.safeBeforeValid === false ? undefined : cursor?.safeBeforePostId))
+    : undefined
 
   const outputs = await buildOutputsFromPosts(
     posts,
@@ -980,6 +1135,18 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
       requestedLimit: options.limit,
       since: since === undefined ? null : new Date(since).toISOString(),
       queryTruncated: result.truncated,
+      inputCursor: options.cursor ?? null,
+      nextCursor:
+        posts.length > 0 && result.truncated !== false
+          ? encodeChannelHistoryCursor({
+              v: 1,
+              scope: 'channel',
+              channelId: channel.id,
+              boundary: { createAt: posts.at(-1)?.create_at ?? 0, id: posts.at(-1)?.id ?? '' },
+              since: since ?? null,
+              ...(safeBeforePostId === undefined ? {} : { safeBeforePostId }),
+            })
+          : null,
     },
     new Map([[channel.id, channel]]),
   )

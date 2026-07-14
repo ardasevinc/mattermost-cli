@@ -33,6 +33,8 @@ function makeOutput(channel: ProcessedChannel): MessageOutput {
         requestedLimit: 1,
         since: null,
         queryTruncated: true,
+        inputCursor: null,
+        nextCursor: null,
       },
       visibleThreads: { status: 'not_requested', hydratedRootCount: 0, failedRootIds: [] },
       visiblePostCount: 1,
@@ -47,6 +49,16 @@ function withTruncation(output: MessageOutput, queryTruncated: boolean | null): 
     retrieval: {
       ...output.retrieval,
       selection: { ...output.retrieval.selection, queryTruncated },
+    },
+  }
+}
+
+function withNextCursor(output: MessageOutput, nextCursor: string | null): MessageOutput {
+  return {
+    ...output,
+    retrieval: {
+      ...output.retrieval,
+      selection: { ...output.retrieval.selection, nextCursor },
     },
   }
 }
@@ -99,6 +111,16 @@ describe('formatter channel headers', () => {
       expect(output).toContain('Coverage: 1 selected, 1 visible; query truncated')
     })
 
+    test('prints only a present next cursor on the final line', () => {
+      expect(formatPretty([makeOutput(publicChannel)], { color: false })).not.toContain(
+        'Next cursor:',
+      )
+      const output = formatPretty([withNextCursor(makeOutput(publicChannel), 'opaque_123')], {
+        color: false,
+      })
+      expect(output.trimEnd().endsWith('Next cursor: opaque_123')).toBe(true)
+    })
+
     test.each([
       [false, 'query complete'],
       [null, 'query completeness unknown'],
@@ -133,6 +155,11 @@ describe('formatter channel headers', () => {
   })
 
   describe('markdown formatter', () => {
+    test('prints only a present next cursor on the final line', () => {
+      expect(formatMarkdown([makeOutput(publicChannel)])).not.toContain('Next cursor:')
+      const output = formatMarkdown([withNextCursor(makeOutput(publicChannel), 'opaque_123')])
+      expect(output.trimEnd().endsWith('Next cursor: `opaque_123`')).toBe(true)
+    })
     test('DM header uses ## DMs with @user', () => {
       const output = formatMarkdown([makeOutput(dmChannel)])
       expect(output).toContain('## DMs with @bob')

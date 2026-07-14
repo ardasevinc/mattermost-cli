@@ -184,6 +184,9 @@ if one is returned in hydrated context, only a stable `[deleted post]` placehold
 Empty successful message reads (`dms`, `group-dms`, `channel`, `search`, and `mentions`) return `[]` and exit
 zero. Pretty and Markdown modes print `No messages found.` instead. A missing requested thread or
 post is still an error. Empty unread JSON retains its command-specific shape: `{ "unread": [] }`.
+The exception is an empty resumed channel-history read whose completeness is unknown. It returns
+one empty channel envelope with `queryTruncated: null`, echoes `inputCursor`, and repeats the same
+value as `nextCursor`. Consumers must treat an unchanged cursor as a retry token, not progress.
 Empty `teams` JSON is `[]`; human output is `No teams found.`. `whoami` and `teams` use narrow
 command-specific schemas and never emit raw Mattermost user or team objects. Malformed identity or
 team responses fail closed without including remote values in errors.
@@ -192,6 +195,16 @@ narrow user whitelist inside `{ users, retrieval }`, sorts by username then ID, 
 `limit + 1`. Single-page probes are capped at 200 users for listing and 1000 for search, with
 `truncated: null` when the relevant endpoint ceiling prevents a conclusive result. Empty human
 output is `No users found.`.
+
+### Deterministic channel-history cursors
+
+Only `channel <name>`, `dms --channel <D-id>`, and `group-dms --channel <G-id>` accept
+`--cursor`. Merged conversation reads, `dms --user`, and explicit `--since` plus `--cursor` are
+rejected. The opaque, versioned base64url cursor binds the raw channel ID, absolute original since
+boundary, and the last selected `(create_at, id)` boundary. Selection order is `create_at DESC`,
+then ASCII post ID ascending. Resume accepts older timestamps plus same-timestamp IDs greater than
+the boundary ID. A safe optional Mattermost `before` anchor may reduce scanning; the local boundary
+filter remains authoritative. Cursors are unsigned pagination state, not authorization tokens.
 
 ### JSON Lines (`--json watch ...`)
 - One redacted `posted` event per stdout line

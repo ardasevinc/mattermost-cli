@@ -273,6 +273,9 @@ function appendCoverage(lines: string[], output: MessageOutput): void {
   lines.push(
     `  Coverage: ${output.retrieval.selection.selectedCount} selected, ${output.retrieval.visiblePostCount} visible; query ${state === true ? 'truncated' : state === false ? 'complete' : 'completeness unknown'}`,
   )
+  if (output.retrieval.selection.nextCursor) {
+    lines.push(`  Next cursor: ${output.retrieval.selection.nextCursor}`)
+  }
 }
 
 function groupByDate(messages: ProcessedMessage[]): Map<string, ProcessedMessage[]> {

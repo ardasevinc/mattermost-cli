@@ -111,6 +111,7 @@ mm dms -u alice -u bob
 # With time filter
 mm dms --since 24h
 mm dms --since 30d --limit 100
+mm dms --channel <channel-id> --cursor <opaque>
 
 # JSON output (for piping to other tools)
 mm dms --json
@@ -132,6 +133,7 @@ mm group-dms --channel <channel-id>
 
 # Adjust the shared output budget and time range
 mm group-dms --since 24h --limit 100
+mm group-dms --channel <channel-id> --cursor <opaque>
 ```
 
 `mm group-dms --limit` is a total output cap across all matched group-DM channels.
@@ -146,6 +148,7 @@ mm thread <post-id>
 
 ```bash
 mm channel general
+mm channel general --cursor <opaque>
 mm channel #dev --team myteam
 ```
 
@@ -247,11 +250,13 @@ DMs:
   -l, --limit <number>    Max total messages across matched DMs (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   -c, --channel <id>      Specific direct-message channel ID (type D only)
+  --cursor <opaque>       Resume that channel's deterministic history
 
 Group DMs:
   -l, --limit <number>    Max total messages across matched group DMs (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
   -c, --channel <id>      Specific group-DM channel ID (type G only)
+  --cursor <opaque>       Resume that channel's deterministic history
 
 Channels:
   channels --type <type>  Filter list by type: dm, public, private, group, all
@@ -266,6 +271,7 @@ Channel:
   --team <name>           Team name (required if multiple teams)
   -l, --limit <number>    Max messages to fetch (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
+  --cursor <opaque>       Resume deterministic channel history
 
 Search:
   search <query>          Search messages (supports Mattermost search modifiers)
@@ -294,6 +300,16 @@ Thread:
 ```
 
 ### Retrieval coverage
+
+`mm channel`, `mm dms --channel`, and `mm group-dms --channel` return an opaque
+`nextCursor` when more history is available or completeness is unknown. Pass it back with
+`--cursor`; do not combine it with an explicit `--since`. Cursors are bound to the resolved raw
+channel ID and preserve the original absolute time boundary, so newly arriving posts do not shift
+later pages. Merged DM/group-DM reads and `dms --user` do not support cursors. Pretty and Markdown
+output print the cursor on a final `Next cursor:` line.
+An empty resumed read with unknown completeness returns one empty channel envelope and repeats the
+input cursor as `nextCursor`. Consumers must detect this unchanged cursor and retry later; it does
+not represent pagination progress. A proven-complete empty read remains `[]`.
 
 `--limit`, `--since`, and search terms select seed posts first. With threads enabled (the default),
 the CLI then fetches the complete visible thread for every selected root or reply. The resulting

@@ -59,6 +59,9 @@ function formatChannelMarkdown(output: MessageOutput, relative: boolean): string
   lines.push(
     `_Coverage: ${output.retrieval.selection.selectedCount} selected, ${output.retrieval.visiblePostCount} visible; query ${state === true ? 'truncated' : state === false ? 'complete' : 'completeness unknown'}_`,
   )
+  if (output.retrieval.selection.nextCursor) {
+    lines.push(`Next cursor: \`${output.retrieval.selection.nextCursor}\``)
+  }
 
   return lines.join('\n')
 }

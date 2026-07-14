@@ -85,6 +85,7 @@ mm dms -u alice -u bob             # multiple users
 mm dms --since 24h                 # last 24 hours
 mm dms --since 30d --limit 100     # more history
 mm dms -c <channel-id>             # specific DM channel by ID
+mm dms -c <channel-id> --cursor <opaque> # resume this DM's history
 ```
 
 `mm dms --limit` is a total output cap across all matched DM channels.
@@ -95,6 +96,7 @@ The limit selects seed messages; complete thread context may make the visible ou
 mm group-dms                         # all group DMs, last 7 days
 mm group-dms --channel <channel-id>  # one validated group DM
 mm group-dms --since 24h --limit 100 # shared output budget across group DMs
+mm group-dms --channel <channel-id> --cursor <opaque> # resume one group DM
 ```
 
 ### Fetch Channel Messages
@@ -103,7 +105,13 @@ mm channel general                 # last 7 days from #general
 mm channel dev-ops --team myteam   # specify team if multi-team
 mm channel general --since 24h     # last 24 hours
 mm channel general --limit 200     # more messages
+mm channel general --cursor <opaque> # resume deterministic history
 ```
+
+For these three single-channel forms, copy `retrieval.selection.nextCursor` into the next
+`--cursor` call. Do not combine it with an explicit `--since`. If an empty result has
+`queryTruncated: null` and repeats the same cursor, retry later; an unchanged cursor does not mean
+progress. Merged DMs/group DMs and `dms --user` do not support cursors.
 
 ### Search Messages
 ```bash

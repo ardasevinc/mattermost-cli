@@ -81,6 +81,8 @@ function expectMetadata(
     requestedLimit: expected.limit,
     since: expected.since,
     queryTruncated: expected.truncated,
+    inputCursor: null,
+    nextCursor: null,
   })
   expect(output.retrieval.visiblePostCount).toBe(expected.count)
   expect(output.retrieval.visibleThreads).toEqual({

@@ -43,6 +43,112 @@ describe('route-aware retrieval integration', () => {
     expect(requests[0]?.url.searchParams.get('per_page')).toBe('3')
   })
 
+  test('resumes locally across equal-millisecond peers without admitting newer posts', async () => {
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: ({ url }) =>
+          url.searchParams.get('page') === '0'
+            ? page([
+                post('arrived-later', 300),
+                post('anchor', 200),
+                post('peer-after-anchor', 200),
+              ])
+            : page([post('older', 100)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', {
+      limit: 2,
+      boundary: { createAt: 200, id: 'anchor' },
+    })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['peer-after-anchor', 'older'])
+    expect(result.truncated).toBe(false)
+  })
+
+  test('uses a safe before anchor while retaining the local boundary filter', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => page([post('peer', 200), post('older', 100)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', {
+      limit: 2,
+      boundary: { createAt: 200, id: 'anchor' },
+      safeBeforePostId: 'safe-newer',
+    })
+
+    expect(requests[0]?.url.searchParams.get('before')).toBe('safe-newer')
+    expect(result.posts.map(({ id }) => id)).toEqual(['peer', 'older'])
+  })
+
+  test('carries the safe anchor across bounded deep mixed-timestamp pages', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: ({ url }) => {
+          const pageNumber = Number(url.searchParams.get('page'))
+          if (pageNumber === 0) {
+            return page([
+              post('newest-than-boundary', 400),
+              post('newer-than-boundary', 300),
+              post('anchor', 200),
+            ])
+          }
+          if (pageNumber === 1) return page([post('peer', 200), post('older', 100)])
+          return page([])
+        },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', {
+      limit: 2,
+      boundary: { createAt: 200, id: 'anchor' },
+      safeBeforePostId: 'safe-newer',
+    })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['peer', 'older'])
+    expect(requests).toHaveLength(2)
+    expect(requests.every(({ url }) => url.searchParams.get('before') === 'safe-newer')).toBe(true)
+  })
+
+  test('retries page zero once without a deleted safe anchor and recovers remaining history', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: ({ url }) =>
+          url.searchParams.has('before') ? page([]) : page([post('peer', 200), post('older', 100)]),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', {
+      limit: 2,
+      boundary: { createAt: 200, id: 'anchor' },
+      safeBeforePostId: 'deleted-safe-anchor',
+    })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['peer', 'older'])
+    expect(result.truncated).toBe(false)
+    expect(result.safeBeforeValid).toBe(false)
+    expect(requests).toHaveLength(2)
+    expect(requests.map(({ url }) => url.searchParams.get('before'))).toEqual([
+      'deleted-safe-anchor',
+      null,
+    ])
+    expect(requests.every(({ url }) => url.searchParams.get('page') === '0')).toBe(true)
+  })
+
   test('reports unknown after two full stagnant channel pages', async () => {
     const { requests } = installRouteFetch([
       {

@@ -121,6 +121,7 @@ export interface SearchResponse {
 export interface PostRetrievalResult {
   posts: Post[]
   truncated: boolean | null
+  safeBeforeValid?: boolean
 }
 
 export interface ChannelMember {
@@ -150,12 +151,16 @@ export interface DMsOptions extends CLIOptions {
   limit: number
   since: string
   channel?: string
+  cursor?: string
+  sinceExplicit?: boolean
 }
 
 export interface GroupDMsOptions extends CLIOptions {
   limit: number
   since: string
   channel?: string
+  cursor?: string
+  sinceExplicit?: boolean
 }
 
 export interface ChannelOptions extends CLIOptions {
@@ -163,6 +168,8 @@ export interface ChannelOptions extends CLIOptions {
   team?: string // team name (required if multi-team)
   limit: number
   since: string
+  cursor?: string
+  sinceExplicit?: boolean
 }
 
 export interface SearchOptions extends CLIOptions {
@@ -286,6 +293,8 @@ export interface RetrievalMetadata {
     requestedLimit: number | null
     since: string | null
     queryTruncated: boolean | null
+    inputCursor: string | null
+    nextCursor: string | null
   }
   visibleThreads: {
     status: 'not_requested' | 'complete' | 'partial'

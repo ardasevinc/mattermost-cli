@@ -1,5 +1,6 @@
 // Post/message fetching with pagination
 
+import { comparePostIds } from '../cursor'
 import type { Post, PostRetrievalResult, PostsResponse, SearchResponse } from '../types'
 import { getClient } from './client'
 
@@ -7,6 +8,7 @@ interface GetPostsOptions {
   limit?: number
   page?: number
   skipFetchThreads?: boolean
+  before?: string
 }
 
 export async function getChannelPosts(
@@ -18,13 +20,14 @@ export async function getChannelPosts(
   firstInaccessiblePostTime: number | null
   hasNext: boolean | null
 }> {
-  const { limit = 50, page = 0, skipFetchThreads = true } = options
+  const { limit = 50, page = 0, skipFetchThreads = true, before } = options
   const client = getClient()
 
   const params = new URLSearchParams()
   params.set('per_page', String(Math.min(limit, 200))) // API max is 200
   params.set('page', String(page))
   params.set('skipFetchThreads', String(skipFetchThreads))
+  if (before !== undefined) params.set('before', before)
 
   const response = await client.get<PostsResponse>(`/channels/${channelId}/posts?${params}`)
 
@@ -44,15 +47,20 @@ export async function getChannelPosts(
 function byMostRecentPost<T extends Pick<Post, 'create_at' | 'id'>>(a: T, b: T): number {
   const diff = b.create_at - a.create_at
   if (diff !== 0) return diff
-  return a.id.localeCompare(b.id)
+  return comparePostIds(a.id, b.id)
 }
 
 // Fetch all posts with pagination, respecting limit and since
 export async function getAllChannelPosts(
   channelId: string,
-  options: { limit?: number; since?: number } = {},
+  options: {
+    limit?: number
+    since?: number
+    boundary?: { createAt: number; id: string }
+    safeBeforePostId?: string
+  } = {},
 ): Promise<PostRetrievalResult> {
-  const { limit = 50, since } = options
+  const { limit = 50, since, boundary, safeBeforePostId } = options
   const postsById = new Map<string, Post>()
   const seenIds = new Set<string>()
   const target = limit + 1
@@ -61,16 +69,25 @@ export async function getAllChannelPosts(
   let stagnantPages = 0
   let exhausted = false
   let uncertain = false
+  let activeBeforePostId = safeBeforePostId
+  let retriedWithoutMissingAnchor = false
 
   while (true) {
     const pageResult = await getChannelPosts(channelId, {
       limit: pageSize,
       page,
+      before: activeBeforePostId,
     })
     const posts = pageResult.posts
     if (pageResult.firstInaccessiblePostTime !== null) uncertain = true
 
     if (pageResult.rawCount === 0) {
+      if (page === 0 && activeBeforePostId !== undefined && !retriedWithoutMissingAnchor) {
+        activeBeforePostId = undefined
+        retriedWithoutMissingAnchor = true
+        stagnantPages = 0
+        continue
+      }
       exhausted = !uncertain
       break
     }
@@ -80,7 +97,13 @@ export async function getAllChannelPosts(
       if (seenIds.has(post.id)) continue
       seenIds.add(post.id)
       madeProgress = true
-      if (since === undefined || post.create_at >= since) postsById.set(post.id, post)
+      const afterBoundary =
+        boundary === undefined ||
+        post.create_at < boundary.createAt ||
+        (post.create_at === boundary.createAt && comparePostIds(post.id, boundary.id) > 0)
+      if ((since === undefined || post.create_at >= since) && afterBoundary) {
+        postsById.set(post.id, post)
+      }
     }
 
     page += 1
@@ -111,6 +134,7 @@ export async function getAllChannelPosts(
   return {
     posts: selected,
     truncated: postsById.size > limit ? true : uncertain ? null : exhausted ? false : null,
+    safeBeforeValid: safeBeforePostId === undefined || !retriedWithoutMissingAnchor,
   }
 }
 
