@@ -7,19 +7,26 @@ Codebase guide for AI agents working on this project.
 ```
 src/
 ├── index.ts              # CLI entry point (commander setup)
-├── cli.ts                # Command handlers (channels, dms, channel, thread, search, mentions, unread, watch)
+├── cli.ts                # Read command handlers and output orchestration
 ├── config.ts             # TOML config file loading (~/.config/mattermost-cli/)
+├── cursor.ts             # Opaque deterministic history cursors
+├── doctor.ts             # Read-only configuration/server/auth diagnostics
 ├── types.ts              # All TypeScript interfaces
+├── validation.ts         # Strict CLI numeric validation
 ├── api/
-│   ├── client.ts         # MattermostClient class (HTTP, auth, rate limits)
+│   ├── client.ts         # Bounded HTTP, auth, retry, rate-limit policy
 │   ├── users.ts          # User fetching + caching
 │   ├── channels.ts       # Channel/DM/team fetching + team resolution
 │   ├── posts.ts          # Message fetching + pagination + search
+│   ├── url.ts            # Server URL and permalink validation
 │   └── websocket.ts      # Live post events for watch mode
 ├── preprocessing/
 │   ├── patterns.ts       # Secret detection regex patterns
+│   ├── credential.ts     # Active credential ownership and exact masking
 │   ├── secrets.ts        # Detection + masking logic
-│   └── index.ts          # Pipeline entry (currently just secrets)
+│   ├── sanitize.ts       # Terminal/control/bidi sanitization
+│   ├── post.ts           # Post and attachment normalization
+│   └── pipeline.ts       # Presentation preprocessing entry
 ├── utils/
 │   ├── colors.ts         # ANSI colors + username color hashing
 │   ├── date.ts           # Date formatting (DD/MM, relative time)
@@ -28,13 +35,17 @@ src/
 └── formatters/
     ├── json.ts           # JSON output
     ├── markdown.ts       # Markdown output (for pipes/LLMs)
-    └── pretty.ts         # Terminal output (colors, grouping)
+    ├── pretty.ts         # Terminal output (colors, grouping)
+    └── watch.ts          # Pretty/JSONL watch events
 
-tests/
-├── api/                  # API-related tests
-├── formatters/           # Formatter/output tests
-├── preprocessing/        # Secret detection/masking tests
-└── utils/                # Date + threading + unread tests
+scripts/
+└── check-version.mjs     # package/lockfile/CLI version invariant
+
+.github/workflows/
+├── ci.yml                # Vitest, checks, audit, exact tarball smoke
+└── publish.yml           # OIDC npm publishing of verified tarball
+
+tests/                    # Vitest suites by API, CLI, security, formatting, and utilities
 ```
 
 ## Key Flows
@@ -42,7 +53,7 @@ tests/
 ### CLI → API → Output
 ```
 index.ts (parse args)
-    → cli.ts (channels/dms/channel/thread/search/mentions/unread/watch)
+    → cli.ts (whoami/teams/users/channels/dms/group-dms/channel/thread/search/mentions/unread/watch)
         → api/* (fetch data from Mattermost)
         → preprocessing/* (redact secrets)
         → formatters/* (format output)
@@ -50,11 +61,13 @@ index.ts (parse args)
 
 ### Secret Redaction Pipeline
 ```
-cli.ts:153 calls preprocess(post.message)
-    → preprocessing/index.ts
+cli.ts calls normalizePosts()/preprocess()
+    → preprocessing/post.ts or preprocessing/pipeline.ts
+        → sanitize.ts makes terminal/control/bidi characters visible
         → secrets.ts:detectSecrets() finds matches
         → secrets.ts:maskSecret() partial-masks each
-        → returns { text, redactions }
+        → credential.ts fully masks exact active Mattermost credentials
+        → returns sanitized presentation data and redaction provenance
 ```
 
 ## Common Tasks
@@ -62,12 +75,12 @@ cli.ts:153 calls preprocess(post.message)
 ### Add a new secret pattern
 1. Edit `src/preprocessing/patterns.ts`
 2. Add to `SECRET_PATTERNS` array with `name` and `pattern` (regex with capture group)
-3. Add test in `tests/preprocessing/secrets.test.ts`
+3. Add tests in `tests/preprocessing/secrets.test.ts` and boundary coverage where emitted
 
 ### Add a new output format
 1. Create `src/formatters/newformat.ts`
 2. Export from `src/formatters/index.ts`
-3. Wire up in `cli.ts` output logic (~line 180)
+3. Wire it through the output selection in `src/cli.ts`
 
 ### Add a new API endpoint
 1. Add function in appropriate `src/api/*.ts` file
@@ -94,10 +107,13 @@ cli.ts:153 calls preprocess(post.message)
 ```bash
 bun run lint                # Biome lint
 bun run check               # Biome full check
-bun x tsc --noEmit          # Typecheck
+bun run typecheck           # Typecheck
 bun run test                # Run all tests with Vitest
 bun run test -- secrets     # Run tests matching "secrets"
+bunx vitest run --no-isolate # Catch shared singleton/cache leakage
 bun run build               # Build npm artifact
+bun run verify              # Full local release gate
+bun audit                   # Dependency vulnerability check
 ```
 
 Test files live in `tests/` by domain.
@@ -105,13 +121,16 @@ Test files live in `tests/` by domain.
 ## Security Rules
 
 **Never:**
-- Log or print `MM_TOKEN` (not even in errors)
+- Log or print `MM_TOKEN` (not even in errors or with `--no-redact`)
 - Store original secret values in output (we removed `originalText` and `redactions.original` for this reason)
 - Make write operations in read commands (we removed POST fallback in `getDMChannelWithUser`)
 
 **Always:**
 - Redact before output
 - Use partial masking (show prefix/suffix for context)
+- Fully mask exact active Mattermost credentials regardless of redaction preference
+- Keep transport/API errors generic and never reflect remote response bodies
+- Fail closed when retrieval completeness or required identity/team data is unknown
 
 ## Configuration
 
@@ -143,8 +162,13 @@ mention_names = ["Arda", "arda.sevinc"] # optional aliases used by `mm mentions`
 |------|------|----------|
 | CLI parsing | `src/index.ts` | `program.parseAsync()` |
 | Config loading | `src/config.ts` | `loadConfigFile()` |
+| Health diagnostics | `src/doctor.ts` | `runDoctor()` |
+| Identity | `src/cli.ts` | `showWhoAmI()` |
+| Team discovery | `src/cli.ts` | `listTeams()` |
+| User discovery | `src/cli.ts` | `listUsers()` |
 | List channels | `src/cli.ts` | `listChannels()` |
 | Fetch DMs | `src/cli.ts` | `fetchDMs()` |
+| Fetch group DMs | `src/cli.ts` | `fetchGroupDMs()` |
 | Fetch one channel | `src/cli.ts` | `fetchChannel()` |
 | Fetch one thread | `src/cli.ts` | `fetchThread()` |
 | Search messages | `src/cli.ts` | `searchMessages()` |
@@ -155,3 +179,4 @@ mention_names = ["Arda", "arda.sevinc"] # optional aliases used by `mm mentions`
 | Thread grouping | `src/utils/threading.ts` | `groupIntoThreads()` |
 | Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
 | API requests | `src/api/client.ts` | `MattermostClient.request()` |
+| History cursors | `src/cursor.ts` | `encodeChannelHistoryCursor()`, `decodeChannelHistoryCursor()` |
