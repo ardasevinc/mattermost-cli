@@ -172,8 +172,8 @@ creation time, a local permalink, and the client pending-post ID.
 Write requests are never automatically replayed. A timeout, transport failure, malformed success
 receipt, or server error after dispatch reports an unknown outcome and tells the caller to inspect
 the destination before retrying. If DM setup is uncertain, the error explicitly states that the
-message itself was not attempted. If delivery succeeded but stdout failed, the error explicitly
-states that delivery was confirmed and must not be retried.
+message itself was not attempted. If delivery succeeded but the stdout stream reports a write
+failure, the error explicitly states that delivery was confirmed and must not be retried.
 
 ### Fetch a specific thread
 

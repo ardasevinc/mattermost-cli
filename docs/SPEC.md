@@ -135,8 +135,8 @@ Write outcomes are tri-state:
   unknown and must instruct the caller to inspect the destination before retrying.
 
 No write request is automatically replayed. If direct-channel setup is unknown, the message was not
-attempted and the error says so. If post delivery was validated but receipt output fails, the error
-states that delivery was confirmed and must not be retried.
+attempted and the error says so. If post delivery was validated but the stdout stream reports a
+receipt write failure, the error states that delivery was confirmed and must not be retried.
 
 ### Channel Command
 
