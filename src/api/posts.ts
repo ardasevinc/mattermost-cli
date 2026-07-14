@@ -5,24 +5,19 @@ import { getClient } from './client'
 
 interface GetPostsOptions {
   limit?: number
-  since?: number // epoch milliseconds
-  before?: string // post ID for pagination
-  after?: string // post ID for pagination
+  page?: number
 }
 
 export async function getChannelPosts(
   channelId: string,
   options: GetPostsOptions = {},
 ): Promise<Post[]> {
-  const { limit = 50, since, before, after } = options
+  const { limit = 50, page = 0 } = options
   const client = getClient()
 
   const params = new URLSearchParams()
   params.set('per_page', String(Math.min(limit, 200))) // API max is 200
-
-  if (since) params.set('since', String(since))
-  if (before) params.set('before', before)
-  if (after) params.set('after', after)
+  params.set('page', String(page))
 
   const response = await client.get<PostsResponse>(`/channels/${channelId}/posts?${params}`)
 
@@ -46,43 +41,53 @@ export async function getAllChannelPosts(
   options: { limit?: number; since?: number } = {},
 ): Promise<Post[]> {
   const { limit = 50, since } = options
-  const allPosts: Post[] = []
-  let before: string | undefined
+  const postsById = new Map<string, Post>()
+  const seenIds = new Set<string>()
+  const pageSize = Math.min(limit, 200)
+  let page = 0
+  let stagnantPages = 0
 
-  while (allPosts.length < limit) {
-    const remaining = limit - allPosts.length
+  while (true) {
     const posts = await getChannelPosts(channelId, {
-      limit: Math.min(remaining, 200),
-      since,
-      before,
+      limit: pageSize,
+      page,
     })
 
     if (posts.length === 0) break
 
-    allPosts.push(...posts)
+    let madeProgress = false
+    for (const post of posts) {
+      if (seenIds.has(post.id)) continue
+      seenIds.add(post.id)
+      madeProgress = true
+      if (since === undefined || post.create_at >= since) postsById.set(post.id, post)
+    }
 
-    // Get the oldest post ID for next page
-    const oldestPost = posts[posts.length - 1]
-    if (!oldestPost) break
-    before = oldestPost.id
+    page += 1
 
-    // If we got fewer than requested, we've hit the end
-    if (posts.length < Math.min(remaining, 200)) break
+    if (madeProgress) stagnantPages = 0
+    else stagnantPages += 1
+
+    if (since !== undefined && posts.every((post) => post.create_at < since)) break
+    if (postsById.size >= limit) {
+      const selected = takeMostRecentPosts([...postsById.values()], limit)
+      const cutoff = selected[selected.length - 1]?.create_at
+      if (cutoff !== undefined && posts.every((post) => post.create_at < cutoff)) break
+    }
+    if (posts.length < pageSize) break
+    if (stagnantPages >= 2) break
   }
 
-  // Filter by since timestamp if provided
-  if (since) {
-    return allPosts.filter((post) => post.create_at >= since)
-  }
-
-  return allPosts.slice(0, limit)
+  return takeMostRecentPosts([...postsById.values()], limit)
 }
 
 export function takeMostRecentPosts<T extends Pick<Post, 'create_at' | 'id'>>(
   posts: T[],
   limit: number,
 ): T[] {
-  return [...posts].sort(byMostRecentPost).slice(0, limit)
+  return [...new Map(posts.map((post) => [post.id, post])).values()]
+    .sort(byMostRecentPost)
+    .slice(0, limit)
 }
 
 // Fetch a full thread (root + all replies)
@@ -95,12 +100,60 @@ export async function getPostThread(postId: string): Promise<Post[]> {
     .filter((post): post is Post => !!post && post.delete_at === 0)
 }
 
-export async function searchPosts(teamId: string, terms: string): Promise<SearchResponse> {
+export async function searchPosts(
+  teamId: string,
+  terms: string,
+  limit = 50,
+  accept: (post: Post) => boolean = () => true,
+  options: { completeCutoffTies?: boolean } = {},
+): Promise<SearchResponse> {
   const client = getClient()
-  return client.post<SearchResponse>(`/teams/${teamId}/posts/search`, {
-    terms,
-    is_or_search: false,
-  })
+  const posts = new Map<string, Post>()
+  const seenIds = new Set<string>()
+  const order: string[] = []
+  const matches: Record<string, string[]> = {}
+  const perPage = Math.min(limit, 100)
+  let page = 0
+  let stagnantPages = 0
+
+  while (true) {
+    const response = await client.post<SearchResponse>(`/teams/${teamId}/posts/search`, {
+      terms,
+      is_or_search: false,
+      page,
+      per_page: perPage,
+    })
+    let madeProgress = false
+    const acceptedThisPage: Post[] = []
+    for (const id of response.order) {
+      if (seenIds.has(id)) continue
+      seenIds.add(id)
+      madeProgress = true
+      const post = response.posts[id]
+      if (!post || post.delete_at !== 0 || !accept(post)) continue
+      posts.set(id, post)
+      acceptedThisPage.push(post)
+      order.push(id)
+      if (response.matches[id]) matches[id] = response.matches[id]
+      if (!options.completeCutoffTies && posts.size === limit) break
+    }
+    page += 1
+    if (madeProgress) stagnantPages = 0
+    else stagnantPages += 1
+
+    // Search paging is only fully honored by Elasticsearch-backed servers. A short page is not
+    // proof of exhaustion, so rely on an empty response or bounded stagnation instead.
+    if (response.order.length === 0) break
+    if (stagnantPages >= 2) break
+    if (posts.size < limit) continue
+    if (!options.completeCutoffTies) break
+
+    const selected = takeMostRecentPosts([...posts.values()], limit)
+    const cutoff = selected[selected.length - 1]?.create_at
+    if (cutoff !== undefined && acceptedThisPage.some((post) => post.create_at < cutoff)) break
+  }
+
+  return { order, posts: Object.fromEntries(posts), matches }
 }
 
 // Parse duration string to milliseconds

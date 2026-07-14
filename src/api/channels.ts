@@ -19,7 +19,7 @@ export async function getMyChannels(): Promise<Channel[]> {
 export async function getMyDMChannels(): Promise<Channel[]> {
   const channels = await getMyChannels()
   // Filter for direct messages only (type 'D')
-  return channels.filter((ch) => ch.type === 'D')
+  return [...new Map(channels.filter((ch) => ch.type === 'D').map((ch) => [ch.id, ch])).values()]
 }
 
 export async function getMyGroupDMChannels(): Promise<Channel[]> {

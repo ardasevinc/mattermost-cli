@@ -89,9 +89,37 @@ function channelLabel(channel: ProcessedChannel): string {
   return `#${channel.name}${display}`
 }
 
-function formatSinceDate(duration: string): string {
-  const sinceMs = parseDuration(duration)
-  return new Date(sinceMs).toISOString().slice(0, 10)
+export function hasLiteralMention(message: string, terms: string[]): boolean {
+  const lowerMessage = message.toLowerCase()
+  return terms.some((term) => {
+    const literal = term.toLowerCase()
+    if (literal.length === 0) return false
+    const isAlias = !literal.startsWith('@')
+
+    let index = lowerMessage.indexOf(literal)
+    while (index !== -1) {
+      const previous = lowerMessage[index - 1]
+      const next = lowerMessage[index + literal.length]
+      const isBoundaryCharacter = (character: string | undefined) =>
+        character !== undefined &&
+        (isAlias ? /[\p{L}\p{M}\p{N}]/u.test(character) : /[a-z0-9._-]/i.test(character))
+      if (!isBoundaryCharacter(previous) && !isBoundaryCharacter(next)) return true
+      index = lowerMessage.indexOf(literal, index + 1)
+    }
+    return false
+  })
+}
+
+export function isExactMentionPost(post: Post, term: string, since?: number): boolean {
+  return (
+    post.delete_at === 0 &&
+    (since === undefined || post.create_at >= since) &&
+    hasLiteralMention(post.message, [term.startsWith('@') ? term : term.slice(1, -1)])
+  )
+}
+
+export function mentionSearchAfterDate(since: number): string {
+  return new Date(since - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
 function groupPostsByChannel(posts: Post[]): Map<string, Post[]> {
@@ -336,6 +364,8 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     channels = await getMyDMChannels()
   }
 
+  channels = [...new Map(channels.map((channel) => [channel.id, channel])).values()]
+
   if (channels.length === 0) {
     console.error('No DM channels found')
     process.exit(1)
@@ -488,7 +518,7 @@ export async function searchMessages(options: SearchOptions): Promise<void> {
 
   const me = await getMe()
   const teamId = await resolveTeamId(options.team)
-  const response = await searchPosts(teamId, query)
+  const response = await searchPosts(teamId, query, options.limit)
 
   const posts = response.order
     .map((id) => response.posts[id])
@@ -520,8 +550,9 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
   }
 
   const modifiers: string[] = []
-  if (options.since) {
-    modifiers.push(`after:${formatSinceDate(options.since)}`)
+  const since = options.since ? parseDuration(options.since) : undefined
+  if (since !== undefined) {
+    modifiers.push(`after:${mentionSearchAfterDate(since)}`)
   }
   if (options.channel) {
     modifiers.push(`in:${normalizeChannelName(options.channel)}`)
@@ -533,19 +564,23 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
 
   for (const term of searchTerms) {
     const searchTerm = [term, ...modifiers].join(' ')
-    const response = await searchPosts(teamId, searchTerm)
+    const response = await searchPosts(
+      teamId,
+      searchTerm,
+      options.limit,
+      (post) => isExactMentionPost(post, term, since),
+      { completeCutoffTies: true },
+    )
 
     for (const id of response.order) {
       const post = response.posts[id]
-      if (post && post.delete_at === 0) {
+      if (post) {
         dedupedPosts.set(post.id, post)
       }
     }
   }
 
-  const posts = [...dedupedPosts.values()]
-    .sort((a, b) => b.create_at - a.create_at)
-    .slice(0, options.limit)
+  const posts = takeMostRecentPosts([...dedupedPosts.values()], options.limit)
 
   if (posts.length === 0) {
     if (options.mentionNames.length === 0) {

@@ -66,4 +66,14 @@ describe('takeMostRecentPosts', () => {
 
     expect(result.map((post) => post.id)).toEqual(['post-a', 'post-b'])
   })
+
+  test('does not let duplicate post ids consume the global limit', () => {
+    const posts = [
+      { id: 'new', create_at: 3000 },
+      { id: 'new', create_at: 3000 },
+      { id: 'older', create_at: 2000 },
+    ]
+
+    expect(takeMostRecentPosts(posts, 2).map((post) => post.id)).toEqual(['new', 'older'])
+  })
 })
