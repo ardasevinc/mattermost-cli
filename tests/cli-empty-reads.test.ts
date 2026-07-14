@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { clearUserCache } from '../src/api/users'
-import { fetchChannel, fetchDMs, fetchMentions, searchMessages, showUnread } from '../src/cli'
+import {
+  fetchChannel,
+  fetchDMs,
+  fetchGroupDMs,
+  fetchMentions,
+  searchMessages,
+  showUnread,
+} from '../src/cli'
 import type {
   Channel,
   ChannelOptions,
   CLIOptions,
   DMsOptions,
+  GroupDMsOptions,
   MentionOptions,
   SearchOptions,
+  UnreadOptions,
 } from '../src/types'
 import { installRouteFetch } from './helpers/fake-fetch'
 
@@ -46,6 +55,10 @@ function commonRoutes() {
 
 function emptyPage() {
   return { order: [], posts: {}, has_next: false }
+}
+
+function uncertainEmptyPage() {
+  return { ...emptyPage(), first_inaccessible_post_time: 1 }
 }
 
 function captureOutput() {
@@ -136,6 +149,98 @@ describe.each(emptyCommands)('$name empty reads', ({ install, run }) => {
 
     expect(capture.output()).toBe('No messages found.')
     expect(capture.exit).not.toHaveBeenCalled()
+  })
+})
+
+describe('unknown empty reads', () => {
+  test.each([
+    ['channel', () => fetchChannel({ ...baseOptions, channel: 'general', limit: 50, since: '' })],
+    ['search', () => searchMessages({ ...baseOptions, query: 'needle', limit: 50 })],
+    ['mentions', () => fetchMentions({ ...baseOptions, limit: 50, mentionNames: [] })],
+  ] as const)('%s rejects instead of claiming an empty success', async (name, run) => {
+    installRouteFetch([
+      ...commonRoutes(),
+      ...(name === 'channel'
+        ? [
+            {
+              method: 'GET',
+              path: '/api/v4/teams/team/channels/name/general',
+              handle: () => general,
+            },
+            { method: 'GET', path: '/api/v4/channels/general/posts', handle: uncertainEmptyPage },
+          ]
+        : [
+            {
+              method: 'POST',
+              path: '/api/v4/teams/team/posts/search',
+              handle: uncertainEmptyPage,
+            },
+          ]),
+    ])
+
+    await expect(run()).rejects.toThrow(
+      'Message retrieval was incomplete, so an empty result cannot be confirmed.',
+    )
+  })
+
+  test('merged DM history rejects when its only empty channel has unknown completeness', async () => {
+    installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => me },
+      { method: 'GET', path: '/api/v4/users/me/channels', handle: () => [direct] },
+      { method: 'GET', path: '/api/v4/channels/dm/posts', handle: uncertainEmptyPage },
+    ])
+
+    await expect(fetchDMs({ ...baseOptions, user: [], limit: 50, since: '' })).rejects.toThrow(
+      'Message retrieval was incomplete',
+    )
+  })
+
+  test.each([
+    ['direct', { ...direct }, fetchDMs],
+    ['group', { ...direct, id: 'group', type: 'G' as const }, fetchGroupDMs],
+  ] as const)('explicit %s history rejects an unknown empty result', async (_name, channel, run) => {
+    installRouteFetch([
+      { method: 'GET', path: `/api/v4/channels/${channel.id}`, handle: () => channel },
+      { method: 'GET', path: '/api/v4/users/me', handle: () => me },
+      {
+        method: 'GET',
+        path: `/api/v4/channels/${channel.id}/posts`,
+        handle: uncertainEmptyPage,
+      },
+    ])
+
+    await expect(
+      run({
+        ...baseOptions,
+        channel: channel.id,
+        limit: 50,
+        since: '',
+        ...(run === fetchDMs ? { user: [] } : {}),
+      } as DMsOptions & GroupDMsOptions),
+    ).rejects.toThrow('Message retrieval was incomplete')
+  })
+
+  test('unread peek rejects when unread posts cannot be confirmed empty', async () => {
+    installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'GET',
+        path: '/api/v4/users/me/channels',
+        handle: () => [{ ...general, total_msg_count: 1 }],
+      },
+      {
+        method: 'GET',
+        path: '/api/v4/users/me/teams/team/channels/members',
+        handle: () => [
+          { channel_id: 'general', msg_count: 0, mention_count: 0, last_viewed_at: 1 },
+        ],
+      },
+      { method: 'GET', path: '/api/v4/channels/general/posts', handle: uncertainEmptyPage },
+    ])
+
+    await expect(showUnread({ ...baseOptions, peek: 5 } satisfies UnreadOptions)).rejects.toThrow(
+      'Message retrieval was incomplete',
+    )
   })
 })
 

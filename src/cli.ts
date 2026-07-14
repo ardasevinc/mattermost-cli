@@ -22,6 +22,7 @@ import {
   getUserByUsername,
   getUsersByIds,
   initClient,
+  MattermostAPIError,
   normalizeChannelName,
   parseDuration,
   resolveTeamId,
@@ -72,6 +73,15 @@ interface ChannelListItem {
   displayName?: string
   lastPost: string | null
   messageCount: number
+}
+
+const INCOMPLETE_EMPTY_RETRIEVAL_ERROR =
+  'Message retrieval was incomplete, so an empty result cannot be confirmed.'
+
+function requireConfirmedEmpty(selectedCount: number, queryTruncated: boolean | null): void {
+  if (selectedCount === 0 && queryTruncated === null) {
+    throw new Error(INCOMPLETE_EMPTY_RETRIEVAL_ERROR)
+  }
 }
 
 interface UnreadSummaryItem {
@@ -870,12 +880,22 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     for (const username of options.user) {
       try {
         const user = await getUserByUsername(username)
+        if (typeof user?.id !== 'string' || user.id.length === 0) {
+          throw new Error('Mattermost returned an invalid user response.')
+        }
         const channel = dmChannels.find(
           (candidate) => getOtherUserIdFromDMChannel(candidate, me.id) === user.id,
         )
-        if (channel) channels.push(channel)
-      } catch {
-        console.error(`Warning: Could not find DM channel with @${sanitizeTerminalLabel(username)}`)
+        if (channel) {
+          channels.push(channel)
+        } else {
+          console.error(
+            `Warning: No direct-message channel exists with @${sanitizeTerminalLabel(username)}.`,
+          )
+        }
+      } catch (error) {
+        if (!(error instanceof MattermostAPIError) || error.status !== 404) throw error
+        console.error(`Warning: User @${sanitizeTerminalLabel(username)} was not found.`)
       }
     }
   } else {
@@ -962,6 +982,7 @@ async function fetchConversationChannels(
   }
 
   if (allPosts.length === 0 && !(cursor && truncationStates.some((state) => state === null))) {
+    requireConfirmedEmpty(0, mergeTruncation(truncationStates, 0, options.limit))
     formatOutput([], options)
     return
   }
@@ -1078,6 +1099,7 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
   const posts = result.posts
 
   if (posts.length === 0 && !(cursor && result.truncated === null)) {
+    requireConfirmedEmpty(0, result.truncated)
     formatOutput([], options)
     return
   }
@@ -1266,6 +1288,7 @@ export async function searchMessages(options: SearchOptions): Promise<void> {
     .slice(0, options.limit)
 
   if (posts.length === 0) {
+    requireConfirmedEmpty(0, response.truncated)
     formatOutput([], options)
     return
   }
@@ -1324,13 +1347,14 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
   }
 
   const posts = takeMostRecentPosts([...dedupedPosts.values()], options.limit)
+  const queryTruncated = mergeTruncation(truncationStates, dedupedPosts.size, options.limit)
 
   if (posts.length === 0) {
+    requireConfirmedEmpty(0, queryTruncated)
     formatOutput([], options)
     return
   }
 
-  const queryTruncated = mergeTruncation(truncationStates, dedupedPosts.size, options.limit)
   const outputs = await buildOutputsFromPosts(posts, me.id, options, {
     source: 'mentions',
     requestedLimit: options.limit,
@@ -1355,11 +1379,7 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
     let member: ChannelMember | undefined = memberByChannelId.get(channel.id)
 
     if (!member && (channel.type === 'D' || channel.type === 'G')) {
-      try {
-        member = await getChannelMember(channel.id)
-      } catch {
-        continue
-      }
+      member = await getChannelMember(channel.id)
     }
 
     if (!member) continue
@@ -1390,7 +1410,10 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
       limit: options.peek,
       since: entry.lastViewedAt || undefined,
     })
-    if (result.posts.length === 0) return undefined
+    if (result.posts.length === 0) {
+      requireConfirmedEmpty(0, result.truncated)
+      return undefined
+    }
     const outputs = await buildOutputsFromPosts(
       result.posts,
       me.id,
