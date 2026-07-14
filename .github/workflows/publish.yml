@@ -24,9 +24,17 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
+      - run: bun audit
       - run: bun run verify
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Require an unpublished npm version
+        shell: bash
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          versions=$(npm view "$name" versions --json)
+          node -e 'const versions = JSON.parse(process.argv[1]); if (versions.includes(process.argv[2])) { throw new Error("npm version " + process.argv[2] + " is already published") }' "$versions" "$version"
       - name: Pack and smoke exact tarball
         id: pack
         shell: bash

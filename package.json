@@ -1,6 +1,6 @@
 {
   "name": "mattermost-cli",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Read-only Mattermost CLI for messages, search, unread state, and live watch with secret redaction",
   "author": "Arda Sevinc <arda@ardasevinc.com>",
   "license": "MIT",
