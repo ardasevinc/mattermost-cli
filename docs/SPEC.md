@@ -140,11 +140,13 @@ if one is returned in hydrated context, only a stable `[deleted post]` placehold
 - Colored usernames
 - Grouped by date
 - Timestamps formatted nicely
+- `--no-color` keeps pretty layout and disables ANSI colors
 
 ### Markdown (default for pipe/non-TTY)
 - Standard markdown format
 - Good for LLM processing
 - Quoted messages
+- Selected for non-TTY stdout regardless of `--no-color`
 
 ### JSON (`--json`)
 - Full structured data

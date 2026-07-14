@@ -171,8 +171,8 @@ These apply to all commands:
 
 | Context | Format | Use Case |
 |---------|--------|----------|
-| Terminal (TTY) | Pretty | Reading directly — colors, grouping, thread indentation |
-| Piped / non-TTY | Markdown | Passing to other tools or LLMs |
+| Terminal (TTY) | Pretty | Reading directly; ANSI colors unless `--no-color`, grouping, thread indentation |
+| Piped / non-TTY | Markdown | Passing to other tools or LLMs, regardless of `--no-color` |
 | `--json` flag | JSON | Parsing, analysis, programmatic access |
 | `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 

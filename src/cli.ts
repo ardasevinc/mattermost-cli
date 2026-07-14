@@ -452,13 +452,20 @@ function retrievalMetadata(
   }
 }
 
+export type OutputMode = 'json' | 'pretty' | 'markdown'
+
+export function selectOutputMode(json: boolean, isTTY: boolean): OutputMode {
+  if (json) return 'json'
+  return isTTY ? 'pretty' : 'markdown'
+}
+
 function formatOutput(outputs: MessageOutput[], options: CLIOptions): void {
-  if (options.json) {
+  const mode = selectOutputMode(options.json, Boolean(process.stdout.isTTY))
+
+  if (mode === 'json') {
     console.log(formatJSON(outputs))
-  } else if (process.stdout.isTTY && options.color) {
-    console.log(formatPretty(outputs, { color: true, relative: options.relative }))
-  } else if (!options.color) {
-    console.log(formatPretty(outputs, { color: false, relative: options.relative }))
+  } else if (mode === 'pretty') {
+    console.log(formatPretty(outputs, { color: options.color, relative: options.relative }))
   } else {
     console.log(formatMarkdown(outputs, { relative: options.relative }))
   }
