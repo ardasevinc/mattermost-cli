@@ -11,8 +11,10 @@ import {
   fetchMentions,
   fetchThread,
   listChannels,
+  listTeams,
   searchMessages,
   showUnread,
+  showWhoAmI,
   watchChannel,
 } from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
@@ -148,6 +150,44 @@ program
       } else {
         console.log('\nRun `mm config --init` to create a config file.')
       }
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('whoami')
+  .description('Show the authenticated user')
+  .action(async () => {
+    const opts = program.opts()
+    const config = await resolveConfig(opts)
+    try {
+      await showWhoAmI({
+        url: config.url,
+        token: config.token,
+        json: opts.json,
+        redact: resolveRedact(opts, config.fileConfig),
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('teams')
+  .description('List teams for the authenticated user')
+  .action(async () => {
+    const opts = program.opts()
+    const config = await resolveConfig(opts)
+    try {
+      await listTeams({
+        url: config.url,
+        token: config.token,
+        json: opts.json,
+        redact: resolveRedact(opts, config.fileConfig),
+      })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
       process.exit(1)

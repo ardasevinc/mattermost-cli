@@ -7,6 +7,7 @@ export interface User {
   first_name: string
   last_name: string
   email: string
+  roles?: string
 }
 
 export interface Team {
@@ -181,6 +182,13 @@ export interface MentionOptions extends CLIOptions {
 export interface UnreadOptions extends CLIOptions {
   team?: string
   peek?: number
+}
+
+export interface IdentityOptions {
+  url: string
+  token: string
+  json: boolean
+  redact: boolean
 }
 
 // Processed message for output

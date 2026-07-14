@@ -197,6 +197,19 @@ mm config --path    # Print config file path
 mm config --init    # Create config file with template
 ```
 
+### Inspect identity and teams
+
+```bash
+mm whoami           # Authenticated user, id, and roles
+mm teams            # Team names, ids, and access types
+mm --json whoami    # Whitelisted identity JSON
+mm --json teams     # Deterministically sorted team JSON
+```
+
+These commands are read-only. Identity output omits email, authentication, notification, and
+arbitrary property fields. Team output likewise exposes only names, IDs, and access type. A valid
+account with no team memberships prints `No teams found.` (`[]` with `--json`).
+
 ### Options
 
 ```

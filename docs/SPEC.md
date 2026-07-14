@@ -31,6 +31,10 @@ MM_REDACT=false
 ### Commands
 
 ```bash
+# Inspect the authenticated identity and team memberships
+mm whoami
+mm teams
+
 # List all channels
 mm channels
 mm channels --type public
@@ -168,6 +172,9 @@ if one is returned in hydrated context, only a stable `[deleted post]` placehold
 Empty successful message reads (`dms`, `group-dms`, `channel`, `search`, and `mentions`) return `[]` and exit
 zero. Pretty and Markdown modes print `No messages found.` instead. A missing requested thread or
 post is still an error. Empty unread JSON retains its command-specific shape: `{ "unread": [] }`.
+Empty `teams` JSON is `[]`; human output is `No teams found.`. `whoami` and `teams` use narrow
+command-specific schemas and never emit raw Mattermost user or team objects. Malformed identity or
+team responses fail closed without including remote values in errors.
 
 ### JSON Lines (`--json watch ...`)
 - One redacted `posted` event per stdout line

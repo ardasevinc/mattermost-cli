@@ -52,6 +52,17 @@ If it fails, configure credentials using one of:
 
 ## Commands
 
+### Inspect Identity and Teams
+```bash
+mm whoami                 # authenticated username, id, and roles
+mm teams                  # team names, ids, and access types
+mm --json whoami          # narrow identity schema for automation
+mm --json teams           # stable sorted team list for automation
+```
+
+Both commands are read-only and intentionally omit private profile and server metadata. An account
+with no team memberships prints `No teams found.` (`[]` in JSON mode).
+
 ### List Channels
 ```bash
 mm channels                  # all channels, sorted by last activity
@@ -145,6 +156,8 @@ mm config --path         # print config file path
 
 | Task | Command |
 |------|---------|
+| Current identity | `mm whoami` |
+| Team memberships | `mm teams` |
 | Recent DMs | `mm dms --since 24h` |
 | DMs from specific person | `mm dms -u alice` |
 | All channels list | `mm channels` |

@@ -56,10 +56,10 @@ export function normalizeChannelName(channelName: string): string {
   return channelName.replace(/^#/, '')
 }
 
-export async function getMyTeams(): Promise<Team[]> {
-  const me = await getMe()
+export async function getMyTeams(userId?: string): Promise<Team[]> {
+  const resolvedUserId = userId ?? (await getMe()).id
   const client = getClient()
-  return client.get<Team[]>(`/users/${me.id}/teams`)
+  return client.get<Team[]>(`/users/${resolvedUserId}/teams`)
 }
 
 export async function getChannelByName(teamId: string, channelName: string): Promise<Channel> {

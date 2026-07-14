@@ -13,6 +13,7 @@ import {
   getMyChannels,
   getMyDMChannels,
   getMyGroupDMChannels,
+  getMyTeams,
   getOtherUserIdFromDMChannel,
   getPostThread,
   getTeamChannelMembers,
@@ -42,6 +43,7 @@ import type {
   CLIOptions,
   DMsOptions,
   GroupDMsOptions,
+  IdentityOptions,
   MentionOptions,
   MessageOutput,
   Post,
@@ -75,6 +77,127 @@ interface UnreadSummaryItem {
   unreadCount: number
   mentionCount: number
   lastViewedAt: number
+}
+
+export interface WhoAmIOutput {
+  id: string
+  username: string
+  displayName?: string
+  nickname?: string
+  roles: string[]
+}
+
+export interface TeamOutput {
+  id: string
+  name: string
+  displayName?: string
+  type: 'open' | 'invite_only'
+}
+
+function safeString(value: unknown, redact: boolean): string {
+  if (typeof value !== 'string') return ''
+  return sanitizeTerminalLabel(preprocess(value, { redact }).text)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requiredString(value: unknown, errorMessage: string): string {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(errorMessage)
+  return value
+}
+
+export function normalizeWhoAmI(user: unknown, redact = true): WhoAmIOutput {
+  if (!isRecord(user)) throw new Error('Invalid identity response.')
+  const raw = user
+  const id = requiredString(raw.id, 'Invalid identity response.')
+  const username = requiredString(raw.username, 'Invalid identity response.')
+  const firstName = safeString(raw.first_name, redact)
+  const lastName = safeString(raw.last_name, redact)
+  const displayName = [firstName, lastName].filter(Boolean).join(' ')
+  const nickname = safeString(raw.nickname, redact)
+  const roles =
+    typeof raw.roles === 'string'
+      ? raw.roles
+          .split(/\s+/)
+          .map((role) => safeString(role, redact))
+          .filter(Boolean)
+      : []
+
+  return {
+    id: safeString(id, redact),
+    username: safeString(username, redact),
+    ...(displayName ? { displayName } : {}),
+    ...(nickname ? { nickname } : {}),
+    roles,
+  }
+}
+
+export function normalizeTeams(teams: unknown, redact = true): TeamOutput[] {
+  if (!Array.isArray(teams)) throw new Error('Invalid teams response.')
+
+  return teams
+    .map((team) => {
+      if (!isRecord(team)) throw new Error('Invalid teams response.')
+      const id = requiredString(team.id, 'Invalid teams response.')
+      const name = requiredString(team.name, 'Invalid teams response.')
+      if (team.type !== 'O' && team.type !== 'I') throw new Error('Invalid teams response.')
+
+      const raw = team
+      const displayName = safeString(raw.display_name, redact)
+      return {
+        id: safeString(id, redact),
+        name: safeString(name, redact),
+        ...(displayName ? { displayName } : {}),
+        type: raw.type === 'O' ? ('open' as const) : ('invite_only' as const),
+      }
+    })
+    .sort((a, b) => {
+      if (a.name !== b.name) return a.name < b.name ? -1 : 1
+      if (a.id === b.id) return 0
+      return a.id < b.id ? -1 : 1
+    })
+}
+
+export async function showWhoAmI(options: IdentityOptions): Promise<void> {
+  initClient(options.url, options.token)
+  const output = normalizeWhoAmI(await getMe(), options.redact)
+
+  if (options.json) {
+    console.log(JSON.stringify(output, null, 2))
+    return
+  }
+
+  const labels = [output.displayName, output.nickname ? `aka ${output.nickname}` : undefined]
+    .filter(Boolean)
+    .join(', ')
+  console.log(`@${output.username}${labels ? ` (${labels})` : ''} [${output.id}]`)
+  console.log(`Roles: ${output.roles.length > 0 ? output.roles.join(', ') : 'none'}`)
+}
+
+export async function listTeams(options: IdentityOptions): Promise<void> {
+  initClient(options.url, options.token)
+  const me = await getMe()
+  normalizeWhoAmI(me, options.redact)
+  if (!isRecord(me)) throw new Error('Invalid identity response.')
+  const userId = requiredString(me.id, 'Invalid identity response.')
+  const output = normalizeTeams(await getMyTeams(userId), options.redact)
+
+  if (options.json) {
+    console.log(JSON.stringify(output, null, 2))
+    return
+  }
+
+  if (output.length === 0) {
+    console.log('No teams found.')
+    return
+  }
+  for (const team of output) {
+    const display =
+      team.displayName && team.displayName !== team.name ? ` (${team.displayName})` : ''
+    console.log(`${team.name}${display} [${team.id}] ${team.type}`)
+  }
 }
 
 export class BoundedPostIdSet {

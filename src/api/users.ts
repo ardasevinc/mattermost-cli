@@ -55,6 +55,7 @@ export async function getUsersByIds(userIds: string[]): Promise<User[]> {
 }
 
 function cacheUser(user: User): void {
+  if (typeof user?.id !== 'string' || typeof user?.username !== 'string') return
   userCache.set(user.id, user)
   usernameToId.set(user.username.toLowerCase(), user.id)
 }
