@@ -176,6 +176,10 @@ These apply to all commands:
 | `--json` flag | JSON | Parsing, analysis, programmatic access |
 | `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 
+Empty `dms`, `channel`, `search`, and `mentions` reads are successful: JSON output is `[]`, while
+terminal and piped text output is `No messages found.`. Treat a missing requested thread or post as
+an error. Empty `unread --json` output is `{ "unread": [] }`.
+
 Under AI agents, relative time is auto-enabled ("2 days ago" instead of "29 Jan 2026"). Override with `--no-relative`.
 
 With threads enabled, limits, time windows, and search terms select seed posts first. The CLI then

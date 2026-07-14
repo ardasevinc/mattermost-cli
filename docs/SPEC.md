@@ -153,6 +153,10 @@ if one is returned in hydrated context, only a stable `[deleted post]` placehold
 - Includes redaction log
 - Good for programmatic use
 
+Empty successful message reads (`dms`, `channel`, `search`, and `mentions`) return `[]` and exit
+zero. Pretty and Markdown modes print `No messages found.` instead. A missing requested thread or
+post is still an error. Empty unread JSON retains its command-specific shape: `{ "unread": [] }`.
+
 ### JSON Lines (`--json watch ...`)
 - One redacted `posted` event per stdout line
 - Connection, retry, malformed-event, and gap diagnostics on stderr

@@ -251,6 +251,10 @@ boundary, whether the query was proven truncated, visible post/thread coverage, 
 proved. `visibleThreads.status: "partial"` and `failedRootIds` report threads the server did not let
 the CLI prove complete. Each message also includes its stable post `id` and Mattermost `permalink`.
 
+Empty successful reads from `dms`, `channel`, `search`, and `mentions` exit successfully. They emit
+`[]` with `--json` and `No messages found.` in terminal or piped text output. A missing requested
+thread or post remains an error.
+
 ### Current post state
 
 Message output represents the latest visible state returned by Mattermost, not edit history. It

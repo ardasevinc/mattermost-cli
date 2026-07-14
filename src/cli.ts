@@ -460,6 +460,11 @@ export function selectOutputMode(json: boolean, isTTY: boolean): OutputMode {
 }
 
 function formatOutput(outputs: MessageOutput[], options: CLIOptions): void {
+  if (outputs.length === 0 && !options.json) {
+    console.log('No messages found.')
+    return
+  }
+
   const mode = selectOutputMode(options.json, Boolean(process.stdout.isTTY))
 
   if (mode === 'json') {
@@ -600,8 +605,8 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   channels = [...new Map(channels.map((channel) => [channel.id, channel])).values()]
 
   if (channels.length === 0) {
-    console.error('No DM channels found')
-    process.exit(1)
+    formatOutput([], options)
+    return
   }
 
   printRedactionWarning(options.redact)
@@ -625,8 +630,8 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   }
 
   if (allPosts.length === 0) {
-    console.error('No messages found')
-    process.exit(1)
+    formatOutput([], options)
+    return
   }
 
   // `--limit` for DMs is a total output budget across all matched DM channels.
@@ -668,8 +673,8 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
   const posts = result.posts
 
   if (posts.length === 0) {
-    console.error('No messages found in this channel')
-    process.exit(1)
+    formatOutput([], options)
+    return
   }
 
   const outputs = await buildOutputsFromPosts(
@@ -800,8 +805,8 @@ export async function searchMessages(options: SearchOptions): Promise<void> {
     .slice(0, options.limit)
 
   if (posts.length === 0) {
-    console.error('No results found')
-    process.exit(1)
+    formatOutput([], options)
+    return
   }
 
   const outputs = await buildOutputsFromPosts(posts, me.id, options, {
@@ -860,14 +865,8 @@ export async function fetchMentions(options: MentionOptions): Promise<void> {
   const posts = takeMostRecentPosts([...dedupedPosts.values()], options.limit)
 
   if (posts.length === 0) {
-    if (options.mentionNames.length === 0) {
-      console.error(
-        'No mentions found. Hint: configure mention_names in your config to include aliases.',
-      )
-    } else {
-      console.error('No mentions found')
-    }
-    process.exit(1)
+    formatOutput([], options)
+    return
   }
 
   const queryTruncated = mergeTruncation(truncationStates, dedupedPosts.size, options.limit)
@@ -921,7 +920,7 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
   const sortedEntries = sortUnreadEntries(unreadEntries)
 
   if (sortedEntries.length === 0) {
-    console.log('All caught up!')
+    console.log(options.json ? JSON.stringify({ unread: [] }, null, 2) : 'All caught up!')
     return
   }
 
