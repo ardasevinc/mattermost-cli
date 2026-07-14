@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mattermost
+      POSTGRES_PASSWORD: mattermost-e2e
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U mattermost -d mattermost]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  mattermost:
+    image: mattermost/mattermost-team-edition@sha256:367ebf9621d8c2f4aa41da63143a9260cfa0670558cb840be583d7fc6d0da35b
+    platform: linux/amd64
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mattermost:mattermost-e2e@postgres:5432/mattermost?sslmode=disable&connect_timeout=10
+      MM_SERVICESETTINGS_SITEURL: http://127.0.0.1:${MM_E2E_PORT:-18065}
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
+      MM_TEAMSETTINGS_ENABLEOPENSERVER: "true"
+      MM_LOGSETTINGS_CONSOLELEVEL: ERROR
+    ports:
+      - 127.0.0.1:${MM_E2E_PORT:-18065}:8065
+    healthcheck:
+      test: [CMD, mmctl, --local, system, status]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - mattermost-config:/mattermost/config
+      - mattermost-data:/mattermost/data
+      - mattermost-logs:/mattermost/logs
+      - mattermost-plugins:/mattermost/plugins
+      - mattermost-client-plugins:/mattermost/client/plugins
+
+volumes:
+  postgres-data:
+  mattermost-config:
+  mattermost-data:
+  mattermost-logs:
+  mattermost-plugins:
+  mattermost-client-plugins:

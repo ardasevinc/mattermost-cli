@@ -34,6 +34,7 @@
     "typecheck": "tsc --noEmit",
     "check:version": "node scripts/check-version.mjs",
     "test": "vitest run",
+    "test:e2e": "bun run build && node scripts/test-e2e.mjs",
     "test:watch": "vitest",
     "build": "bun build src/index.ts --target node --outfile dist/index.js --minify && node -e \"const fs=require('fs');const f='dist/index.js';const c=fs.readFileSync(f,'utf8').replace(/^#!.*\\n/,'');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\" && (chmod +x dist/index.js || true)",
     "verify": "bun run check && bun run typecheck && bun run test && bun run check:version && bun run build",
