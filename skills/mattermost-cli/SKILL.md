@@ -232,6 +232,13 @@ hydrates each visible thread, including its root and sibling replies as context.
 `retrieval.visibleThreads` before treating that context as complete; `partial` lists unproven roots
 in `failedRootIds` while preserving all selected and successfully hydrated posts.
 
+Inspect `channel.metadataStatus` before relying on channel labels or types. If a follow-up channel
+lookup fails after posts were retrieved, the CLI preserves the posts and reports the sanitized ID,
+`type: "unknown"`, `name: "unknown"`, and `metadataStatus: "unavailable"`, plus one generic
+channel-metadata warning. Bounded request retry/transport diagnostics may also be present. It never
+includes remote error bodies. HTTP 401 remains fatal; other lookup failures, including potentially
+channel-specific 403 responses, use the unavailable state.
+
 Outputs describe each post's latest visible state, including edited/system/pinned markers, payload
 file metadata, safe attachment fields, and reactions when Mattermost includes them. The CLI does
 not fetch edit history or issue extra per-post file/reaction requests. Deleted posts are normally

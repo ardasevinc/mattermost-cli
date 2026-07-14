@@ -13,7 +13,14 @@ const base = {
   threads: false,
 }
 const me = { id: 'me', username: 'me' }
-const dm = { id: 'dm', type: 'D', name: 'carol__me', total_msg_count: 0 } as Channel
+const dm = {
+  id: 'dm',
+  team_id: '',
+  type: 'D',
+  name: 'carol__me',
+  display_name: '',
+  total_msg_count: 0,
+} as Channel
 
 function response(body: unknown, status = 200): Response {
   return Response.json(body, { status, statusText: status === 404 ? 'Not Found' : 'Server Error' })

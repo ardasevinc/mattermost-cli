@@ -97,8 +97,8 @@ describe('literal mention filtering', () => {
       bob: { id: 'bob', username: 'bob' } as User,
     }
     const channels = [
-      { id: 'dm-alice', type: 'D', name: 'alice__me' } as Channel,
-      { id: 'dm-bob', type: 'D', name: 'bob__me' } as Channel,
+      { id: 'dm-alice', team_id: '', type: 'D', name: 'alice__me', display_name: '' } as Channel,
+      { id: 'dm-bob', team_id: '', type: 'D', name: 'bob__me', display_name: '' } as Channel,
     ]
     const makePost = (id: string, channelId: string, userId: string, createAt: number) =>
       ({
@@ -170,11 +170,115 @@ describe('literal mention filtering', () => {
     expect(requests.filter(({ url }) => url.pathname.endsWith('/dm-bob/posts'))).toHaveLength(1)
   })
 
+  test.each([
+    ['blank name', { id: 'dm', team_id: '', type: 'D', name: '', display_name: '' }],
+    [
+      'malformed direct name',
+      { id: 'dm', team_id: '', type: 'D', name: 'only-one-user', display_name: '' },
+    ],
+    [
+      'nonempty direct team',
+      { id: 'dm', team_id: 'team', type: 'D', name: 'me__other', display_name: '' },
+    ],
+  ] as const)('fails closed for a discovered direct channel with %s', async (_label, malformed) => {
+    const { requests } = installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      { method: 'GET', path: '/api/v4/users/me/channels', handle: () => [malformed] },
+    ])
+
+    await expect(
+      fetchDMs({
+        url: 'https://mattermost.test',
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: false,
+        user: [],
+        limit: 1,
+        since: '',
+      }),
+    ).rejects.toThrow('Mattermost returned an invalid channel response.')
+    expect(requests.some(({ url }) => url.pathname.endsWith('/posts'))).toBe(false)
+  })
+
+  test('validates every discovered direct channel before filtered-user matching', async () => {
+    const malformed = {
+      id: 'dm-alice',
+      team_id: '',
+      type: 'D',
+      name: 'only-one-user',
+      display_name: '',
+    }
+    const validDuplicate = {
+      ...malformed,
+      name: 'alice__me',
+    }
+    const { requests } = installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      {
+        method: 'GET',
+        path: '/api/v4/users/me/channels',
+        handle: () => [malformed, validDuplicate],
+      },
+    ])
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(
+      fetchDMs({
+        url: 'https://mattermost.test',
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: false,
+        user: ['alice'],
+        limit: 1,
+        since: '',
+      }),
+    ).rejects.toThrow('Mattermost returned an invalid channel response.')
+    expect(requests.some(({ url }) => url.pathname.includes('/users/username/'))).toBe(false)
+    expect(requests.some(({ url }) => url.pathname.endsWith('/posts'))).toBe(false)
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  test('fails closed when a discovered direct channel excludes the current user', async () => {
+    const wrongParticipants = {
+      id: 'dm-unrelated',
+      team_id: '',
+      type: 'D',
+      name: 'alice__bob',
+      display_name: '',
+    }
+    const { requests } = installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      { method: 'GET', path: '/api/v4/users/me/channels', handle: () => [wrongParticipants] },
+    ])
+
+    await expect(
+      fetchDMs({
+        url: 'https://mattermost.test',
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: false,
+        user: [],
+        limit: 1,
+        since: '',
+      }),
+    ).rejects.toThrow('Mattermost returned an invalid channel response.')
+    expect(requests.some(({ url }) => url.pathname.endsWith('/posts'))).toBe(false)
+  })
+
   test('hydrates only threads surviving the final global DM selection', async () => {
     const now = Date.now()
     const channels = [
-      { id: 'dm-alice', type: 'D', name: 'alice__me' } as Channel,
-      { id: 'dm-bob', type: 'D', name: 'bob__me' } as Channel,
+      { id: 'dm-alice', team_id: '', type: 'D', name: 'alice__me', display_name: '' } as Channel,
+      { id: 'dm-bob', team_id: '', type: 'D', name: 'bob__me', display_name: '' } as Channel,
     ]
     const aliceSeed = { ...makeThreadPost('alice-seed', 'alice-root', now), channel_id: 'dm-alice' }
     const bobSeed = {
@@ -562,7 +666,13 @@ describe('thread retrieval metadata', () => {
       {
         method: 'GET',
         path: '/api/v4/channels/channel',
-        handle: () => ({ id: 'channel', type: 'O', name: 'general', display_name: 'General' }),
+        handle: () => ({
+          id: 'channel',
+          team_id: 'team',
+          type: 'O',
+          name: 'general',
+          display_name: 'General',
+        }),
       },
     ])
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -594,7 +704,7 @@ describe('thread retrieval metadata', () => {
     })
   })
 
-  test('sanitizes partial-thread warnings, failed roots, and fallback channel ids', async () => {
+  test('classifies malformed channel metadata as unavailable and sanitizes its ID', async () => {
     const token = `ghp_${'a'.repeat(36)}`
     const unsafeRoot = `root\u001b${token}`
     const unsafeChannel = `channel\u001b${token}`
@@ -631,9 +741,240 @@ describe('thread retrieval metadata', () => {
     })
 
     const serialized = String(log.mock.calls.at(-1)?.[0])
+    const [output] = JSON.parse(serialized)
+    expect(output.channel).toEqual({
+      id: expect.not.stringContaining(token),
+      type: 'unknown',
+      name: 'unknown',
+      metadataStatus: 'unavailable',
+    })
+    expect(
+      error.mock.calls
+        .flat()
+        .map(String)
+        .filter((message) => message.startsWith('Warning: Channel metadata is unavailable')),
+    ).toHaveLength(1)
     expect(serialized).not.toContain(token)
     expect(String(error.mock.calls.at(-1)?.[0])).not.toContain(token)
     expect(serialized).not.toContain('\u001b')
+  })
+
+  test.each([
+    ['null body', null],
+    ['non-object body', 'channel'],
+    ['blank id', { id: '', team_id: 'team', type: 'O', name: 'general', display_name: 'General' }],
+    [
+      'mismatched id',
+      { id: 'other', team_id: 'team', type: 'O', name: 'general', display_name: 'General' },
+    ],
+    [
+      'unknown type',
+      { id: 'channel', team_id: 'team', type: 'X', name: 'general', display_name: 'General' },
+    ],
+    [
+      'blank public name',
+      { id: 'channel', team_id: 'team', type: 'O', name: ' ', display_name: 'General' },
+    ],
+    [
+      'non-string display name',
+      { id: 'channel', team_id: 'team', type: 'O', name: 'general', display_name: null },
+    ],
+    ['missing team id', { id: 'channel', type: 'O', name: 'general', display_name: 'General' }],
+    [
+      'blank public team id',
+      { id: 'channel', team_id: '', type: 'O', name: 'general', display_name: 'General' },
+    ],
+    [
+      'malformed direct name',
+      { id: 'channel', team_id: '', type: 'D', name: 'one-user', display_name: '' },
+    ],
+    [
+      'direct channel excluding the current user',
+      { id: 'channel', team_id: '', type: 'D', name: 'alice__bob', display_name: '' },
+    ],
+    [
+      'nonempty direct team id',
+      { id: 'channel', team_id: 'team', type: 'D', name: 'me__me', display_name: '' },
+    ],
+    [
+      'blank group name',
+      { id: 'channel', team_id: '', type: 'G', name: '', display_name: 'Group' },
+    ],
+    [
+      'nonempty group team id',
+      { id: 'channel', team_id: 'team', type: 'G', name: 'group', display_name: 'Group' },
+    ],
+  ] as const)('classifies malformed 200 channel metadata with %s as unavailable', async (_label, payload) => {
+    const root = makeThreadPost('root', '', 1)
+    installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({ ...responsePage([root]), has_next: false }),
+      },
+      { method: 'GET', path: '/api/v4/channels/channel', handle: () => payload },
+    ])
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await fetchThread({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: true,
+      postId: 'root',
+    })
+
+    const [output] = JSON.parse(String(log.mock.calls.at(-1)?.[0]))
+    expect(output.channel).toEqual({
+      id: 'channel',
+      type: 'unknown',
+      name: 'unknown',
+      metadataStatus: 'unavailable',
+    })
+    expect(output.messages.map(({ id }: { id: string }) => id)).toEqual(['root'])
+    expect(
+      error.mock.calls
+        .flat()
+        .map(String)
+        .filter((message) => message.startsWith('Warning: Channel metadata is unavailable')),
+    ).toEqual(['Warning: Channel metadata is unavailable for channel.'])
+  })
+
+  test.each([
+    ['direct', { id: 'channel', team_id: '', type: 'D', name: 'me__me', display_name: '' }],
+    ['group', { id: 'channel', team_id: '', type: 'G', name: 'group', display_name: 'Group' }],
+  ] as const)('accepts a valid %s channel metadata shape', async (_label, payload) => {
+    const root = makeThreadPost('root', '', 1)
+    installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({ ...responsePage([root]), has_next: false }),
+      },
+      { method: 'GET', path: '/api/v4/channels/channel', handle: () => payload },
+    ])
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await fetchThread({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: true,
+      postId: 'root',
+    })
+
+    const [output] = JSON.parse(String(log.mock.calls.at(-1)?.[0]))
+    expect(output.channel.metadataStatus).toBe('resolved')
+    expect(output.channel.type).toBe(_label === 'direct' ? 'dm' : 'group')
+  })
+
+  test.each([
+    ['403', 403],
+    ['404', 404],
+    ['500', 500],
+    ['network', null],
+  ] as const)(
+    'preserves a fetched thread when channel metadata fails with %s',
+    async (_name, status) => {
+      const remoteSecret = `sk-${'z'.repeat(40)}`
+      const root = makeThreadPost('root', '', 1)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request) => {
+          const path = new URL(
+            typeof input === 'string' || input instanceof URL ? input : input.url,
+          ).pathname
+          if (path.endsWith('/users/me')) {
+            return Response.json({ id: 'me', username: 'me' })
+          }
+          if (path.endsWith('/posts/root/thread')) {
+            return Response.json({ ...responsePage([root]), has_next: false })
+          }
+          if (path.endsWith('/channels/channel')) {
+            if (status === null) throw new Error(`transport ${remoteSecret}`)
+            return Response.json({ message: remoteSecret }, { status })
+          }
+          throw new Error(`unexpected route ${path}`)
+        }),
+      )
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      await fetchThread({
+        url: 'https://mattermost.test',
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        postId: 'root',
+      })
+
+      const serialized = String(log.mock.calls.at(-1)?.[0])
+      const [output] = JSON.parse(serialized)
+      expect(output.messages.map(({ id }: { id: string }) => id)).toEqual(['root'])
+      expect(output.channel).toEqual({
+        id: 'channel',
+        type: 'unknown',
+        name: 'unknown',
+        metadataStatus: 'unavailable',
+      })
+      expect(
+        error.mock.calls
+          .flat()
+          .map(String)
+          .filter((message) => message.startsWith('Warning: Channel metadata is unavailable')),
+      ).toEqual(['Warning: Channel metadata is unavailable for channel.'])
+      expect(`${serialized}\n${error.mock.calls.flat().join('\n')}`).not.toContain(remoteSecret)
+    },
+    10_000,
+  )
+
+  test('keeps a channel authentication failure fail-closed', async () => {
+    const root = makeThreadPost('root', '', 1)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+          .pathname
+        if (path.endsWith('/users/me')) return Response.json({ id: 'me', username: 'me' })
+        if (path.endsWith('/posts/root/thread')) {
+          return Response.json({ ...responsePage([root]), has_next: false })
+        }
+        if (path.endsWith('/channels/channel')) {
+          return Response.json({ message: 'REMOTE_SECRET_BODY' }, { status: 401 })
+        }
+        throw new Error(`unexpected route ${path}`)
+      }),
+    )
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(
+      fetchThread({
+        url: 'https://mattermost.test',
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        postId: 'root',
+      }),
+    ).rejects.toThrow('API request failed: 401')
+    expect(log).not.toHaveBeenCalled()
+    expect(error.mock.calls.flat().join('\n')).not.toContain('REMOTE_SECRET_BODY')
+    expect(error.mock.calls.flat().join('\n')).not.toContain('Channel metadata is unavailable')
   })
 
   test('does not count an unproven root as hydrated in mm thread metadata', async () => {
@@ -648,7 +989,13 @@ describe('thread retrieval metadata', () => {
       {
         method: 'GET',
         path: '/api/v4/channels/channel',
-        handle: () => ({ id: 'channel', type: 'O', name: 'general', display_name: 'General' }),
+        handle: () => ({
+          id: 'channel',
+          team_id: 'team',
+          type: 'O',
+          name: 'general',
+          display_name: 'General',
+        }),
       },
     ])
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)

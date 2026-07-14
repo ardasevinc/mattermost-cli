@@ -378,7 +378,7 @@ function nonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
-function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
+function channelTypeLabel(type: Channel['type']): Exclude<ProcessedChannel['type'], 'unknown'> {
   switch (type) {
     case 'O':
       return 'public'
@@ -394,6 +394,7 @@ function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
 }
 
 function channelLabel(channel: ProcessedChannel): string {
+  if (channel.type === 'unknown') return `Unknown channel (${channel.id})`
   if (channel.type === 'dm' || channel.type === 'group') return channel.name
   const display = channel.displayName ? ` (${channel.displayName})` : ''
   return `#${channel.name}${display}`
@@ -474,6 +475,7 @@ async function buildProcessedChannel(
   redact = true,
   redactions: Redaction[] = [],
 ): Promise<ProcessedChannel> {
+  requireRawChannelShape(channel, channel.id)
   const type = channelTypeLabel(channel.type)
   const clean = (value: string, field: string): string => {
     const result = preprocess(value, { redact })
@@ -484,11 +486,7 @@ async function buildProcessedChannel(
   if (type === 'dm') {
     const otherUserId = getOtherUserIdFromDMChannel(channel, myUserId)
     if (!otherUserId) {
-      return {
-        id: clean(channel.id, 'channel.id'),
-        type: 'dm',
-        name: '@unknown',
-      }
+      throw new Error('Mattermost returned an invalid channel response.')
     }
 
     const otherUser = await getUser(otherUserId)
@@ -496,6 +494,7 @@ async function buildProcessedChannel(
       id: clean(channel.id, 'channel.id'),
       type: 'dm',
       name: `@${clean(otherUser.username, 'channel.dmUsername')}`,
+      metadataStatus: 'resolved',
     }
   }
 
@@ -504,6 +503,7 @@ async function buildProcessedChannel(
       id: clean(channel.id, 'channel.id'),
       type,
       name: clean(channel.display_name || channel.name, 'channel.displayName'),
+      metadataStatus: 'resolved',
     }
   }
 
@@ -514,6 +514,121 @@ async function buildProcessedChannel(
     displayName: channel.display_name
       ? clean(channel.display_name, 'channel.displayName')
       : undefined,
+    metadataStatus: 'resolved',
+  }
+}
+
+function isRequiredRawChannelShape(value: unknown, expectedId?: string): value is Channel {
+  if (typeof value !== 'object' || value === null) return false
+  const channel = value as Record<string, unknown>
+  if (
+    typeof channel.id !== 'string' ||
+    channel.id.trim().length === 0 ||
+    (expectedId !== undefined && channel.id !== expectedId) ||
+    (channel.type !== 'O' &&
+      channel.type !== 'P' &&
+      channel.type !== 'D' &&
+      channel.type !== 'G') ||
+    typeof channel.name !== 'string' ||
+    typeof channel.display_name !== 'string' ||
+    typeof channel.team_id !== 'string'
+  ) {
+    return false
+  }
+
+  if (channel.type === 'O' || channel.type === 'P') {
+    return channel.name.trim().length > 0 && channel.team_id.trim().length > 0
+  }
+  if (channel.team_id !== '') return false
+  if (channel.type === 'G') return channel.name.trim().length > 0
+
+  const userIds = channel.name.split('__')
+  return userIds.length === 2 && userIds.every((id) => id.trim().length > 0)
+}
+
+function requireRawChannelShape(value: unknown, expectedId?: string): Channel {
+  if (!isRequiredRawChannelShape(value, expectedId)) {
+    throw new Error('Mattermost returned an invalid channel response.')
+  }
+  return value
+}
+
+function requireConversationChannelContext(channel: Channel, myUserId: string): Channel {
+  requireRawChannelShape(channel, channel.id)
+  if (channel.type === 'D' && !getOtherUserIdFromDMChannel(channel, myUserId)) {
+    throw new Error('Mattermost returned an invalid channel response.')
+  }
+  return channel
+}
+
+function validateAndDedupeConversationChannels(channels: Channel[], myUserId: string): Channel[] {
+  const validated = channels.map((channel) => requireConversationChannelContext(channel, myUserId))
+  return [...new Map(validated.map((channel) => [channel.id, channel])).values()]
+}
+
+function unavailableProcessedChannel(
+  channelId: string,
+  redact: boolean,
+  redactions: Redaction[],
+): ProcessedChannel {
+  const result = preprocess(channelId, { redact })
+  redactions.push(...result.redactions.map((item) => ({ ...item, field: 'channel.id' })))
+  const safeId = sanitizeTerminalLabel(result.text)
+  console.error(`Warning: Channel metadata is unavailable for ${safeId || 'an unknown channel'}.`)
+  return {
+    id: safeId,
+    type: 'unknown',
+    name: 'unknown',
+    metadataStatus: 'unavailable',
+  }
+}
+
+async function resolveProcessedChannel(
+  channelId: string,
+  myUserId: string,
+  redact: boolean,
+  knownChannel?: Channel,
+): Promise<{ channel: ProcessedChannel; redactions: Redaction[] }> {
+  const redactions: Redaction[] = []
+  let channel: Channel
+
+  if (knownChannel) {
+    channel = requireRawChannelShape(knownChannel, channelId)
+  } else {
+    if (!channelId) {
+      return {
+        channel: unavailableProcessedChannel(channelId, redact, redactions),
+        redactions,
+      }
+    }
+    try {
+      const candidate: unknown = await getChannel(channelId)
+      if (!isRequiredRawChannelShape(candidate, channelId)) {
+        return {
+          channel: unavailableProcessedChannel(channelId, redact, redactions),
+          redactions,
+        }
+      }
+      channel = candidate
+    } catch (error) {
+      if (error instanceof MattermostAPIError && error.status === 401) throw error
+      return {
+        channel: unavailableProcessedChannel(channelId, redact, redactions),
+        redactions,
+      }
+    }
+  }
+
+  if (!knownChannel && channel.type === 'D' && !getOtherUserIdFromDMChannel(channel, myUserId)) {
+    return {
+      channel: unavailableProcessedChannel(channelId, redact, redactions),
+      redactions,
+    }
+  }
+
+  return {
+    channel: await buildProcessedChannel(channel, myUserId, redact, redactions),
+    redactions,
   }
 }
 
@@ -558,14 +673,13 @@ async function buildOutputsFromPosts(
   )
 
   for (const { channelId, seedPosts, channelPosts, visibleThreads } of hydratedGroups) {
-    const channel = knownChannels.get(channelId) ?? (await getChannel(channelId))
-    const channelRedactions: Redaction[] = []
-    const processedChannel = await buildProcessedChannel(
-      channel,
-      myUserId,
-      options.redact,
-      channelRedactions,
-    )
+    const { channel: processedChannel, redactions: channelRedactions } =
+      await resolveProcessedChannel(
+        channelId,
+        myUserId,
+        options.redact,
+        knownChannels.get(channelId),
+      )
     const { messages, redactions } = normalizePosts(
       channelPosts,
       usersById,
@@ -898,7 +1012,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   let channels: Channel[] = []
 
   if (options.channel) {
-    const channel = await getChannel(options.channel)
+    const channel = requireRawChannelShape(await getChannel(options.channel), options.channel)
     if (channel.type !== 'D') {
       throw new Error(
         `Channel "${presentOneLine(channel.id, options.redact)}" is not a direct-message channel.`,
@@ -909,7 +1023,10 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   } else if (options.user.length > 0) {
     const me = await getMe()
     myUserId = me.id
-    const dmChannels = await getMyDMChannels(me.id)
+    const discoveredDMChannels = (await getMyChannels(me.id)).filter(
+      (channel) => channel.type === 'D',
+    )
+    const dmChannels = validateAndDedupeConversationChannels(discoveredDMChannels, me.id)
     for (const username of options.user) {
       try {
         const user = await getUserByUsername(username)
@@ -953,7 +1070,7 @@ export async function fetchGroupDMs(options: GroupDMsOptions): Promise<void> {
   initClient(options.url, options.token)
 
   if (options.channel) {
-    const channel = await getChannel(options.channel)
+    const channel = requireRawChannelShape(await getChannel(options.channel), options.channel)
     if (channel.type !== 'G') {
       throw new Error(`Channel "${presentOneLine(channel.id, options.redact)}" is not a group DM.`)
     }
@@ -976,6 +1093,7 @@ async function fetchConversationChannels(
   myUserId: string,
   options: GroupDMsOptions | DMsOptions,
 ): Promise<void> {
+  channels = validateAndDedupeConversationChannels(channels, myUserId)
   if (channels.length === 0) {
     formatOutput([], options)
     return
@@ -1111,7 +1229,14 @@ export async function fetchChannel(options: ChannelOptions): Promise<void> {
 
   const me = await getMe()
   const teamId = await resolveTeamId(options.team)
-  const channel = await getChannelByName(teamId, options.channel)
+  const channel = requireRawChannelShape(await getChannelByName(teamId, options.channel))
+  if (
+    (channel.type !== 'O' && channel.type !== 'P') ||
+    channel.team_id !== teamId ||
+    channel.name !== normalizeChannelName(options.channel)
+  ) {
+    throw new Error('Mattermost returned an invalid channel response.')
+  }
   if (cursor && cursor.channelId !== channel.id) {
     throw new Error('Cursor does not match the selected channel.')
   }
@@ -1224,7 +1349,6 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
 
   const rootPost = posts.find((post) => !post.root_id)
   const channelPost = rootPost ?? posts[0]
-  const channel = channelPost ? await getChannel(channelPost.channel_id) : null
   const missingRootId = rootPost ? undefined : posts.find((post) => post.root_id)?.root_id
   const requestedRootId = rootPost?.id ?? missingRootId ?? options.postId
   const threadComplete = result.truncated === false && rootPost !== undefined
@@ -1261,22 +1385,8 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   }
   const presentedThreadState = presentVisibleThreads(threadState, options.redact, redactions)
 
-  const channelRedactions: Redaction[] = []
-  const fallbackChannelId = preprocess(channelPost?.channel_id || '', {
-    redact: options.redact,
-  })
-  if (!channel) {
-    redactions.push(
-      ...fallbackChannelId.redactions.map((item) => ({ ...item, field: 'channel.id' })),
-    )
-  }
-  const processedChannel = channel
-    ? await buildProcessedChannel(channel, me.id, options.redact, channelRedactions)
-    : {
-        id: fallbackChannelId.text.replace(/\n/g, '\\n').replace(/\t/g, '\\t'),
-        type: 'public' as const,
-        name: 'unknown',
-      }
+  const { channel: processedChannel, redactions: channelRedactions } =
+    await resolveProcessedChannel(channelPost?.channel_id ?? '', me.id, options.redact)
 
   formatOutput(
     [

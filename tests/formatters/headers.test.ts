@@ -64,22 +64,36 @@ function withNextCursor(output: MessageOutput, nextCursor: string | null): Messa
 }
 
 describe('formatter channel headers', () => {
-  const dmChannel: ProcessedChannel = { id: 'ch1', type: 'dm', name: '@bob' }
+  const dmChannel: ProcessedChannel = {
+    id: 'ch1',
+    type: 'dm',
+    name: '@bob',
+    metadataStatus: 'resolved',
+  }
   const publicChannel: ProcessedChannel = {
     id: 'ch2',
     type: 'public',
     name: 'general',
     displayName: 'General',
+    metadataStatus: 'resolved',
   }
   const privateChannel: ProcessedChannel = {
     id: 'ch3',
     type: 'private',
     name: 'secret-stuff',
+    metadataStatus: 'resolved',
   }
   const groupChannel: ProcessedChannel = {
     id: 'ch4',
     type: 'group',
     name: 'Design Crew',
+    metadataStatus: 'resolved',
+  }
+  const unknownChannel: ProcessedChannel = {
+    id: 'channelid',
+    type: 'unknown',
+    name: 'unknown',
+    metadataStatus: 'unavailable',
   }
 
   describe('pretty formatter (no color)', () => {
@@ -103,6 +117,12 @@ describe('formatter channel headers', () => {
       const output = formatPretty([makeOutput(groupChannel)], { color: false })
       expect(output).toContain('Group DM: Design Crew')
       expect(output).not.toContain('#Design Crew')
+    })
+
+    test('unresolved channel header exposes the stable ID without inventing a type', () => {
+      const output = formatPretty([makeOutput(unknownChannel)], { color: false })
+      expect(output).toContain('Unknown channel (channelid)')
+      expect(output).not.toContain('#unknown')
     })
 
     test('shows a compact post id, permalink, and coverage warning', () => {
@@ -174,6 +194,12 @@ describe('formatter channel headers', () => {
       const output = formatMarkdown([makeOutput(privateChannel)])
       expect(output).toContain('## #secret\\-stuff')
       expect(output).not.toContain('undefined')
+    })
+
+    test('unresolved channel header exposes the stable ID without inventing a type', () => {
+      const output = formatMarkdown([makeOutput(unknownChannel)])
+      expect(output).toContain('## Unknown channel (channelid)')
+      expect(output).not.toContain('## #unknown')
     })
 
     test('links the stable post id and reports coverage', () => {

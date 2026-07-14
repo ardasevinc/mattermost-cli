@@ -52,6 +52,16 @@ describe('getOtherUserIdFromDMChannel', () => {
     const channel = makeDMChannel('__def456')
     expect(getOtherUserIdFromDMChannel(channel, 'abc123')).toBeNull()
   })
+
+  test('returns null when the current user is not a channel participant', () => {
+    const channel = makeDMChannel('abc123__def456')
+    expect(getOtherUserIdFromDMChannel(channel, 'someone-else')).toBeNull()
+  })
+
+  test('preserves self-DM semantics', () => {
+    const channel = makeDMChannel('abc123__abc123')
+    expect(getOtherUserIdFromDMChannel(channel, 'abc123')).toBe('abc123')
+  })
 })
 
 describe('normalizeChannelName', () => {

@@ -173,6 +173,36 @@ test('dedupes channel IDs and emits narrow team identity only for O/P channels',
   expect(requests.filter(({ url }) => url.pathname.endsWith('/teams'))).toHaveLength(1)
 })
 
+test('fails closed when a discovered direct channel excludes the current user', async () => {
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => [
+        {
+          ...channels[2],
+          name: 'alice__bob',
+        },
+      ],
+    },
+  ])
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+  await expect(
+    listChannels({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      typeFilter: 'all',
+    }),
+  ).rejects.toThrow('Mattermost returned an invalid channel response.')
+  expect(log).not.toHaveBeenCalled()
+})
+
 test('does not fetch teams for D/G-only discovery', async () => {
   const { requests } = installRouteFetch([
     { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
@@ -331,5 +361,5 @@ test('fails generically for a hostile unknown remote channel type', async () => 
       redact: false,
       typeFilter: 'all',
     }),
-  ).rejects.toThrow('Mattermost returned an unknown channel type.')
+  ).rejects.toThrow('Mattermost returned an invalid channel response.')
 })

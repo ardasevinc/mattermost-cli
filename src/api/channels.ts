@@ -163,5 +163,8 @@ export function getOtherUserIdFromDMChannel(channel: Channel, myUserId: string):
   const [left, right] = parts
   if (!left || !right) return null
 
-  return left === myUserId ? right : left
+  if (left === myUserId && right === myUserId) return myUserId
+  if (left === myUserId) return right
+  if (right === myUserId) return left
+  return null
 }

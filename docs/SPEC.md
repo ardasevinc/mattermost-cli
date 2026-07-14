@@ -170,6 +170,15 @@ available file metadata, safe attachment display fields, and reaction summaries 
 actor identities. Pretty and Markdown output render the same state. Webhook override usernames are
 used for display while preserving the underlying `userId`; empty-author system posts use `system`.
 
+Message envelopes expose channel metadata coverage explicitly. Resolved channels use
+`channel.metadataStatus: "resolved"`. When posts have already been retrieved but the follow-up
+`GET /channels/:id` fails or returns a malformed successful payload, output preserves those posts
+and uses the sanitized channel ID with `type: "unknown"`, `name: "unknown"`, and
+`metadataStatus: "unavailable"`; one generic channel-metadata warning is written to stderr without
+the remote error or body. This metadata warning is additional to bounded request retry/transport
+diagnostics. HTTP 401 remains fatal. Other lookup errors, including ambiguous 403 responses that
+may represent a per-channel access boundary, are classified as unavailable metadata.
+
 Only metadata already present in list, search, and thread payloads is used. There are no per-post
 file or reaction requests, no edit-history reconstruction, and arbitrary attachment actions or
 props are never emitted. Normal retrieval excludes deleted posts (`deletedPostsIncluded: false`);

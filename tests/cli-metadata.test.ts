@@ -86,6 +86,7 @@ function expectMetadata(
     nextCursor: null,
   })
   expect(output.retrieval.visiblePostCount).toBe(expected.count)
+  expect(output.channel.metadataStatus).toBe('resolved')
   expect(output.retrieval.visibleThreads).toEqual({
     status: 'complete',
     hydratedRootCount: 0,
@@ -104,6 +105,75 @@ afterEach(() => {
 })
 
 describe('command-level JSON retrieval metadata', () => {
+  test.each([
+    ['blank id', { ...channel('general'), id: '' }],
+    ['blank name', { ...channel('general'), name: ' ' }],
+    ['non-string display name', { ...channel('general'), display_name: null }],
+    ['blank team id', { ...channel('general'), team_id: '' }],
+    [
+      'wrong channel kind',
+      {
+        ...channel('general'),
+        team_id: '',
+        type: 'D',
+        name: 'me__other',
+        display_name: '',
+      },
+    ],
+  ] as const)('fails closed for a primary channel with %s', async (_label, malformed) => {
+    const { requests } = installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'GET',
+        path: '/api/v4/teams/team/channels/name/general',
+        handle: () => malformed,
+      },
+    ])
+
+    await expect(
+      fetchChannel({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: false,
+        channel: 'general',
+        limit: 1,
+        since: '',
+      }),
+    ).rejects.toThrow('Mattermost returned an invalid channel response.')
+    expect(requests.some(({ url }) => url.pathname.endsWith('/posts'))).toBe(false)
+  })
+
+  test('fails closed when a channel-name lookup returns a different canonical channel', async () => {
+    const { requests } = installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'GET',
+        path: '/api/v4/teams/team/channels/name/general',
+        handle: () => ({ ...channel('other'), id: 'other' }),
+      },
+    ])
+
+    await expect(
+      fetchChannel({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: false,
+        channel: '#general',
+        limit: 1,
+        since: '',
+      }),
+    ).rejects.toThrow('Mattermost returned an invalid channel response.')
+    expect(requests.some(({ url }) => url.pathname.endsWith('/posts'))).toBe(false)
+  })
+
   test('channel reports the exact local since boundary', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-14T12:00:00.000Z'))
@@ -258,6 +328,81 @@ describe('command-level JSON retrieval metadata', () => {
       'beta-user',
     ])
     expect(requests.some(({ url }) => /\/(files|reactions)(\/|$)/.test(url.pathname))).toBe(false)
+  })
+
+  test.each([
+    ['search', 'needle'],
+    ['mentions', '@me'],
+  ] as const)('%s preserves every selected post when one channel metadata lookup fails', async (source, text) => {
+    const remoteBody = `REMOTE_${'sk-abcdefghijklmnopqrstuvwxyz123456'}`
+    installRouteFetch([
+      ...commonRoutes(),
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => ({
+          ...searchPage([post('alpha-post', 'alpha', 2, text), post('beta-post', 'beta', 1, text)]),
+          has_next: false,
+        }),
+      },
+      { method: 'GET', path: '/api/v4/channels/alpha', handle: () => channel('alpha') },
+      {
+        method: 'GET',
+        path: '/api/v4/channels/beta',
+        handle: () => Response.json({ message: remoteBody }, { status: 500 }),
+      },
+    ])
+    const readOutput = outputLog()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    if (source === 'search') {
+      await searchMessages({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        query: text,
+        limit: 2,
+      })
+    } else {
+      await fetchMentions({
+        url: serverUrl,
+        token: 'token',
+        json: true,
+        color: false,
+        relative: false,
+        redact: true,
+        threads: true,
+        limit: 2,
+        mentionNames: [],
+      })
+    }
+
+    const outputs = readOutput() as MessageOutput[]
+    expect(outputs.flatMap(({ messages }) => messages.map(({ id }) => id))).toEqual([
+      'alpha-post',
+      'beta-post',
+    ])
+    expect(outputs.map(({ channel: outputChannel }) => outputChannel)).toEqual([
+      expect.objectContaining({ id: 'alpha', type: 'public', metadataStatus: 'resolved' }),
+      {
+        id: 'beta',
+        type: 'unknown',
+        name: 'unknown',
+        metadataStatus: 'unavailable',
+      },
+    ])
+    const warnings = error.mock.calls
+      .flat()
+      .map(String)
+      .filter((message) => message.startsWith('Warning: Channel metadata is unavailable'))
+    expect(warnings).toEqual(['Warning: Channel metadata is unavailable for beta.'])
+    expect(`${JSON.stringify(outputs)}\n${error.mock.calls.flat().join('\n')}`).not.toContain(
+      remoteBody,
+    )
   })
 
   test.each([

@@ -5,6 +5,9 @@ import { bold, cyan, dim, userColor } from '../utils/colors'
 import { formatRelativeTime, formatTime, getDateGroupLabel } from '../utils/date'
 
 function channelHeader(channel: ProcessedChannel): string {
+  if (channel.type === 'unknown') {
+    return `⚠ Unknown channel (${cyan(channel.id)})`
+  }
   if (channel.type === 'dm') {
     return `💬 DMs with ${cyan(channel.name)}`
   }
@@ -17,6 +20,9 @@ function channelHeader(channel: ProcessedChannel): string {
 }
 
 function channelHeaderPlain(channel: ProcessedChannel): string {
+  if (channel.type === 'unknown') {
+    return `Unknown channel (${channel.id})`
+  }
   if (channel.type === 'dm') {
     return `DMs with ${channel.name}`
   }

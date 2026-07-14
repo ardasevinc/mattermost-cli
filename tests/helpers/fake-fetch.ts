@@ -24,7 +24,8 @@ export function installRouteFetch(routes: Route[]) {
       (candidate) => candidate.method === method && candidate.path === url.pathname,
     )
     expect(route, `unhandled fake route: ${method} ${url.pathname}`).toBeDefined()
-    return Response.json(route?.handle(request))
+    const value = await route?.handle(request)
+    return value instanceof Response ? value : Response.json(value)
   })
   vi.stubGlobal('fetch', fake)
   return { requests, fake }

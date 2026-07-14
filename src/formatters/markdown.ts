@@ -18,6 +18,9 @@ export function formatMarkdown(outputs: MessageOutput[], options: MarkdownOption
 }
 
 function channelHeaderMarkdown(channel: ProcessedChannel): string {
+  if (channel.type === 'unknown') {
+    return `## Unknown channel (${escapeMarkdown(channel.id)})`
+  }
   if (channel.type === 'dm') {
     return `## DMs with ${escapeMarkdown(channel.name)}`
   }

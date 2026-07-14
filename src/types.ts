@@ -165,7 +165,7 @@ export interface GroupDMsOptions extends CLIOptions {
 }
 
 export interface ChannelOptions extends CLIOptions {
-  channel: string // channel name or ID
+  channel: string // channel name
   team?: string // team name (required if multi-team)
   limit: number
   since: string
@@ -275,9 +275,10 @@ export interface ReactionSummary {
 
 export interface ProcessedChannel {
   id: string
-  type: 'dm' | 'public' | 'private' | 'group'
+  type: 'dm' | 'public' | 'private' | 'group' | 'unknown'
   name: string // "@username" for DMs, "channel-name" for channels
   displayName?: string // Channel display name (channels only)
+  metadataStatus: 'resolved' | 'unavailable'
 }
 
 export interface MessageOutput {

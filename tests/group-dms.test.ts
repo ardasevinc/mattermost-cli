@@ -8,7 +8,13 @@ const me = { id: 'me', username: 'me' } as User
 const alice = { id: 'alice', username: 'alice' } as User
 
 function group(id: string, displayName = ''): Channel {
-  return { id, type: 'G', name: `${id}-internal`, display_name: displayName } as Channel
+  return {
+    id,
+    team_id: '',
+    type: 'G',
+    name: `${id}-internal`,
+    display_name: displayName,
+  } as Channel
 }
 
 function post(id: string, channelId: string, createAt: number): Post {
@@ -160,7 +166,7 @@ describe('group DM retrieval', () => {
   })
 
   test('rejects an explicit non-group channel before reading posts', async () => {
-    const channel = { ...group('public'), type: 'O' as const }
+    const channel = { ...group('public'), team_id: 'team', type: 'O' as const }
     const { requests } = installRouteFetch([
       { method: 'GET', path: `/api/v4/channels/${channel.id}`, handle: () => channel },
     ])
@@ -175,7 +181,11 @@ describe('group DM retrieval', () => {
     [true, 'Channel "AK...EF" is not a group DM.'],
     [false, 'Channel "AKIA1234567890ABCDEF" is not a group DM.'],
   ])('presents wrong-type IDs according to redact=%s', async (redact, message) => {
-    const channel = { ...group('AKIA1234567890ABCDEF'), type: 'P' as const }
+    const channel = {
+      ...group('AKIA1234567890ABCDEF'),
+      team_id: 'team',
+      type: 'P' as const,
+    }
     installRouteFetch([
       { method: 'GET', path: `/api/v4/channels/${channel.id}`, handle: () => channel },
     ])
@@ -188,7 +198,11 @@ describe('group DM retrieval', () => {
     'O',
     'P',
   ] as const)('rejects an explicit %s channel through dms before reading posts', async (type) => {
-    const channel = { ...group(`wrong-${type}`), type }
+    const channel = {
+      ...group(`wrong-${type}`),
+      team_id: type === 'G' ? '' : 'team',
+      type,
+    }
     const { requests } = installRouteFetch([
       { method: 'GET', path: `/api/v4/channels/${channel.id}`, handle: () => channel },
     ])

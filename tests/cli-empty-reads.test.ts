@@ -35,7 +35,14 @@ const general = {
   total_msg_count: 0,
   creator_id: 'me',
 } satisfies Channel
-const direct = { ...general, id: 'dm', type: 'D', name: 'me__other' } satisfies Channel
+const direct = {
+  ...general,
+  id: 'dm',
+  team_id: '',
+  type: 'D',
+  name: 'me__other',
+  display_name: '',
+} satisfies Channel
 
 const baseOptions: CLIOptions = {
   url: serverUrl,
