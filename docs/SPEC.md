@@ -179,6 +179,13 @@ the remote error or body. This metadata warning is additional to bounded request
 diagnostics. HTTP 401 remains fatal. Other lookup errors, including ambiguous 403 responses that
 may represent a per-channel access boundary, are classified as unavailable metadata.
 
+Search response pages are normalized defensively. Ordered hits without a usable post payload are
+treated as stale/inaccessible evidence: scanning continues, but completeness becomes unknown.
+Search scanning is bounded at 100 pages, and reaching that boundary also leaves completeness
+unknown rather than claiming exhaustion.
+Channel history and thread pagination likewise preserve valid page content while treating missing
+ordered post payloads as unknown completeness.
+
 Only metadata already present in list, search, and thread payloads is used. There are no per-post
 file or reaction requests, no edit-history reconstruction, and arbitrary attachment actions or
 props are never emitted. Normal retrieval excludes deleted posts (`deletedPostsIncluded: false`);

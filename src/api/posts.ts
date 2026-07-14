@@ -1,7 +1,7 @@
 // Post/message fetching with pagination
 
 import { comparePostIds } from '../cursor'
-import type { Post, PostRetrievalResult, PostsResponse, SearchResponse } from '../types'
+import type { Post, PostRetrievalResult, SearchResponse } from '../types'
 import { getClient } from './client'
 
 interface GetPostsOptions {
@@ -11,6 +11,8 @@ interface GetPostsOptions {
   before?: string
 }
 
+const MAX_SEARCH_SCAN_PAGES = 100
+
 export async function getChannelPosts(
   channelId: string,
   options: GetPostsOptions = {},
@@ -19,6 +21,7 @@ export async function getChannelPosts(
   rawCount: number
   firstInaccessiblePostTime: number | null
   hasNext: boolean | null
+  incompletePayload: boolean
 }> {
   const { limit = 50, page = 0, skipFetchThreads = true, before } = options
   const client = getClient()
@@ -29,9 +32,11 @@ export async function getChannelPosts(
   params.set('skipFetchThreads', String(skipFetchThreads))
   if (before !== undefined) params.set('before', before)
 
-  const response = await client.get<PostsResponse>(
+  const rawResponse = await client.get<unknown>(
     `/channels/${encodeURIComponent(channelId)}/posts?${params}`,
   )
+
+  const response = normalizeOrderedPostsPage(rawResponse)
 
   // Convert posts object to array, sorted by order
   const posts = response.order
@@ -41,8 +46,9 @@ export async function getChannelPosts(
   return {
     posts,
     rawCount: response.order.length,
-    firstInaccessiblePostTime: response.first_inaccessible_post_time || null,
-    hasNext: response.has_next ?? null,
+    firstInaccessiblePostTime: response.firstInaccessiblePostTime,
+    hasNext: response.hasNext,
+    incompletePayload: response.incompletePayload,
   }
 }
 
@@ -50,6 +56,50 @@ function byMostRecentPost<T extends Pick<Post, 'create_at' | 'id'>>(a: T, b: T):
   const diff = b.create_at - a.create_at
   if (diff !== 0) return diff
   return comparePostIds(a.id, b.id)
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function normalizeOrderedPostsPage(value: unknown): {
+  order: string[]
+  posts: Record<string, Post>
+  hasNext: boolean | null
+  firstInaccessiblePostTime: number | null
+  incompletePayload: boolean
+} {
+  const response = objectRecord(value)
+  if (!response || !Array.isArray(response.order)) {
+    throw new Error('Mattermost returned an invalid posts response.')
+  }
+
+  const order = response.order.filter((id): id is string => typeof id === 'string')
+  const rawPosts = objectRecord(response.posts)
+  const posts: Record<string, Post> = {}
+  let incompletePayload = order.length !== response.order.length || (!rawPosts && order.length > 0)
+  for (const id of order) {
+    const candidate = rawPosts?.[id]
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      incompletePayload = true
+      continue
+    }
+    posts[id] = candidate as Post
+  }
+
+  const hasNext = typeof response.has_next === 'boolean' ? response.has_next : null
+  if (Object.hasOwn(response, 'has_next') && response.has_next !== undefined && hasNext === null) {
+    incompletePayload = true
+  }
+  const firstInaccessiblePostTime =
+    typeof response.first_inaccessible_post_time === 'number' &&
+    response.first_inaccessible_post_time > 0
+      ? response.first_inaccessible_post_time
+      : null
+
+  return { order, posts, hasNext, firstInaccessiblePostTime, incompletePayload }
 }
 
 // Fetch all posts with pagination, respecting limit and since
@@ -82,6 +132,7 @@ export async function getAllChannelPosts(
     })
     const posts = pageResult.posts
     if (pageResult.firstInaccessiblePostTime !== null) uncertain = true
+    if (pageResult.incompletePayload) uncertain = true
 
     if (pageResult.rawCount === 0) {
       if (page === 0 && activeBeforePostId !== undefined && !retriedWithoutMissingAnchor) {
@@ -164,10 +215,10 @@ export async function getPostThread(postId: string): Promise<PostRetrievalResult
     const params = new URLSearchParams({ perPage: '200', direction: 'down' })
     if (fromPost !== undefined) params.set('fromPost', fromPost)
     if (fromCreateAt !== undefined) params.set('fromCreateAt', String(fromCreateAt))
-    let response: PostsResponse
+    let response: ReturnType<typeof normalizeOrderedPostsPage>
     try {
-      response = await client.get<PostsResponse>(
-        `/posts/${encodeURIComponent(postId)}/thread?${params}`,
+      response = normalizeOrderedPostsPage(
+        await client.get<unknown>(`/posts/${encodeURIComponent(postId)}/thread?${params}`),
       )
     } catch (error) {
       if (successfulPages === 0) throw error
@@ -175,7 +226,7 @@ export async function getPostThread(postId: string): Promise<PostRetrievalResult
     }
     successfulPages += 1
 
-    if (response.first_inaccessible_post_time) uncertain = true
+    if (response.firstInaccessiblePostTime !== null || response.incompletePayload) uncertain = true
     let added = 0
     for (const id of response.order) {
       const post = response.posts[id]
@@ -184,17 +235,18 @@ export async function getPostThread(postId: string): Promise<PostRetrievalResult
       added += 1
     }
 
-    if (response.has_next !== true) {
+    if (response.hasNext !== true) {
       const visible = [...posts.values()]
       const root = visible.find((post) => !post.root_id)
       const visibleReplyCount = root ? visible.filter((post) => post.root_id === root.id).length : 0
       const legacyComplete =
-        response.has_next === undefined &&
+        response.hasNext === null &&
+        !response.incompletePayload &&
         root !== undefined &&
         visibleReplyCount >= root.reply_count
       return {
         posts: visible,
-        truncated: uncertain ? null : response.has_next === false || legacyComplete ? false : null,
+        truncated: uncertain ? null : response.hasNext === false || legacyComplete ? false : null,
       }
     }
 
@@ -237,7 +289,7 @@ export async function searchPosts(
   let uncertain = false
 
   while (true) {
-    const response = await client.post<SearchResponse>(
+    const rawResponse = await client.post<unknown>(
       `/teams/${encodeURIComponent(teamId)}/posts/search`,
       {
         terms,
@@ -247,20 +299,43 @@ export async function searchPosts(
       },
       true,
     )
-    if (response.first_inaccessible_post_time) uncertain = true
-    if (response.has_next === true && response.order.length === 0) uncertain = true
+    const response = objectRecord(rawResponse)
+    if (!response || !Array.isArray(response.order)) {
+      throw new Error('Mattermost returned an invalid search response.')
+    }
+    const responseOrder = response.order.filter((id): id is string => typeof id === 'string')
+    if (responseOrder.length !== response.order.length) uncertain = true
+    const responsePosts = objectRecord(response.posts)
+    if (!responsePosts && responseOrder.length > 0) uncertain = true
+    const responseMatches = objectRecord(response.matches)
+    const hasNext = typeof response.has_next === 'boolean' ? response.has_next : undefined
+    if (
+      typeof response.first_inaccessible_post_time === 'number' &&
+      response.first_inaccessible_post_time > 0
+    ) {
+      uncertain = true
+    }
+    if (hasNext === true && responseOrder.length === 0) uncertain = true
     let madeProgress = false
     const acceptedThisPage: Post[] = []
-    for (const id of response.order) {
+    for (const id of responseOrder) {
       if (seenIds.has(id)) continue
       seenIds.add(id)
       madeProgress = true
-      const post = response.posts[id]
-      if (!post || post.delete_at !== 0 || !accept(post)) continue
+      const candidate = responsePosts?.[id]
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        uncertain = true
+        continue
+      }
+      const post = candidate as Post
+      if (post.delete_at !== 0 || !accept(post)) continue
       posts.set(id, post)
       acceptedThisPage.push(post)
       order.push(id)
-      if (response.matches[id]) matches[id] = response.matches[id]
+      const rawMatches = responseMatches?.[id]
+      if (Array.isArray(rawMatches)) {
+        matches[id] = rawMatches.filter((match): match is string => typeof match === 'string')
+      }
     }
     page += 1
     if (madeProgress) stagnantPages = 0
@@ -268,12 +343,16 @@ export async function searchPosts(
 
     // Search paging is only fully honored by Elasticsearch-backed servers. A short page is not
     // proof of exhaustion, so rely on an empty response or bounded stagnation instead.
-    if (response.order.length === 0) {
+    if (responseOrder.length === 0) {
       exhausted = !uncertain
       break
     }
-    if (response.has_next === false) {
+    if (hasNext === false) {
       exhausted = !uncertain
+      break
+    }
+    if (page >= MAX_SEARCH_SCAN_PAGES) {
+      uncertain = true
       break
     }
     if (stagnantPages >= 2) {

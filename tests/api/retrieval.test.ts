@@ -240,8 +240,24 @@ describe('route-aware retrieval integration', () => {
     const result = await getAllChannelPosts('channel', { limit: 2 })
 
     expect(result.posts.map(({ id }) => id)).toEqual(['live'])
-    expect(result.truncated).toBe(false)
+    expect(result.truncated).toBeNull()
     expect(requests).toHaveLength(2)
+  })
+
+  test('channel history treats a null post map as unknown instead of empty', async () => {
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => ({ order: ['stale-hit'], posts: null, has_next: false }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect(await getAllChannelPosts('channel', { limit: 1 })).toMatchObject({
+      posts: [],
+      truncated: null,
+    })
   })
 
   test('does not claim channel exhaustion past an inaccessible post boundary', async () => {
@@ -304,6 +320,42 @@ describe('route-aware retrieval integration', () => {
 
     expect((await getPostThread('complete-root')).truncated).toBe(false)
     expect((await getPostThread('partial-root')).truncated).toBeNull()
+  })
+
+  test('thread retrieval preserves valid posts but reports missing ordered payloads as unknown', async () => {
+    const root = { ...post('root', 1), root_id: '', reply_count: 1 }
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => ({
+          order: ['root', 'missing-reply'],
+          posts: { root },
+          has_next: false,
+        }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getPostThread('root')
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['root'])
+    expect(result.truncated).toBeNull()
+  })
+
+  test('thread retrieval rejects a malformed first page generically', async () => {
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/posts/root/thread',
+        handle: () => null,
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    await expect(getPostThread('root')).rejects.toThrow(
+      'Mattermost returned an invalid posts response.',
+    )
   })
 
   test('paginates threads with Mattermost cursor casing and dedupes posts', async () => {
@@ -605,8 +657,63 @@ describe('route-aware retrieval integration', () => {
     const result = await searchPosts('team', 'needle', 2)
 
     expect(result.order).toEqual(['live-a', 'live-b'])
-    expect(result.truncated).toBe(false)
+    expect(result.truncated).toBeNull()
     expect(requests.map(({ body }) => (body as { page: number }).page)).toEqual([0, 1, 2, 3])
+  })
+
+  test('search fails safely when an ordered page has a null post map', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: ({ body }) => {
+          const pageNumber = (body as { page: number }).page
+          return pageNumber === 0
+            ? { order: ['stale-hit'], posts: null, matches: null, has_next: false }
+            : { order: [], posts: {}, matches: {}, has_next: false }
+        },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await searchPosts('team', 'needle', 1)
+
+    expect(result).toMatchObject({ order: [], posts: {}, matches: {}, truncated: null })
+    expect(requests).toHaveLength(1)
+  })
+
+  test('search rejects a malformed top-level page without reflecting it', async () => {
+    installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: () => null,
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    await expect(searchPosts('team', 'needle', 1)).rejects.toThrow(
+      'Mattermost returned an invalid search response.',
+    )
+  })
+
+  test('search bounds unique stale-hit pages and reports unknown completeness', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'POST',
+        path: '/api/v4/teams/team/posts/search',
+        handle: ({ body }) => {
+          const pageNumber = (body as { page: number }).page
+          return { order: [`stale-${pageNumber}`], posts: null, matches: null }
+        },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await searchPosts('team', 'needle', 1)
+
+    expect(result).toMatchObject({ order: [], posts: {}, matches: {}, truncated: null })
+    expect(requests).toHaveLength(100)
   })
 
   test('search continues to page two when exact local filtering rejects page one', async () => {

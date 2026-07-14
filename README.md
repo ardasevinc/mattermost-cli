@@ -347,6 +347,12 @@ diagnostics. Remote error bodies are never emitted. HTTP 401 remains a fatal aut
 other lookup errors, including 403 responses that may be channel-specific, use the explicit
 unavailable state.
 
+Search tolerates stale ordered hits whose post payload is missing, continues scanning for usable
+results, and marks completeness unknown instead of crashing or claiming exhaustion. Search scans
+are capped at 100 pages; reaching that cap also produces unknown completeness.
+Channel history and thread reads apply the same missing-payload rule while preserving every valid
+post returned on the page.
+
 Proven-complete empty reads from `dms`, `group-dms`, `channel`, `search`, and `mentions` exit
 successfully. They emit `[]` with `--json` and `No messages found.` in terminal or piped text
 output. An empty result with unknown completeness fails instead of claiming there were no matches;
