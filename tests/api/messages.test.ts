@@ -87,8 +87,11 @@ describe('message write API', () => {
 
   test.each([
     [{ id: '', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
+    [{ id: '   ', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
+    [{ id: '\ud800', channel_id: 'channel-id', user_id: 'sender', create_at: 1 }],
     [{ id: 'post', channel_id: 'wrong', user_id: 'sender', create_at: 1 }],
     [{ id: 'post', channel_id: 'channel-id', user_id: '', create_at: 1 }],
+    [{ id: 'post', channel_id: 'channel-id', user_id: '   ', create_at: 1 }],
     [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: Number.NaN }],
     [{ id: 'post', channel_id: 'channel-id', user_id: 'sender', create_at: 1e100 }],
     [null],

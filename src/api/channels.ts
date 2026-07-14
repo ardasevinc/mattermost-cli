@@ -77,7 +77,9 @@ export async function getDMChannelByUsername(username: string): Promise<Channel 
 }
 
 export async function createDirectChannel(myUserId: string, otherUserId: string): Promise<Channel> {
-  if (!myUserId || !otherUserId) throw new Error('Invalid direct-message participants.')
+  if (!myUserId.trim() || !otherUserId.trim()) {
+    throw new Error('Invalid direct-message participants.')
+  }
   const client = getClient()
   const channel = await client.post<unknown>('/channels/direct', [myUserId, otherUserId])
   if (

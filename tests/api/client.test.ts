@@ -1,3 +1,4 @@
+import { createServer } from 'node:http'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   getClient,
@@ -181,6 +182,33 @@ describe('MattermostClient', () => {
       request(new MattermostClient('https://mattermost.example.com', 'fake-token')),
     ).rejects.toMatchObject({ status: 429 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not follow a redirect that would replay a mutation', async () => {
+    const hits: string[] = []
+    const server = createServer((request, response) => {
+      hits.push(`${request.method} ${request.url}`)
+      response.writeHead(307, { Location: '/redirected' })
+      response.end()
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    try {
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Test server did not bind')
+      const client = new MattermostClient(`http://127.0.0.1:${address.port}`, 'fake-token')
+
+      await expect(client.post('/posts', { message: 'one attempt' })).rejects.toBeInstanceOf(
+        MattermostMutationOutcomeUnknownError,
+      )
+      expect(hits).toEqual(['POST /api/v4/posts'])
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      )
+    }
   })
 
   test.each([

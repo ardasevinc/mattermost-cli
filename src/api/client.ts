@@ -61,6 +61,7 @@ export class MattermostClient {
     method: string,
     url: string,
     body?: unknown,
+    followRedirects = true,
   ): Promise<RequestAttempt<T>> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -76,6 +77,7 @@ export class MattermostClient {
           },
           body: body ? JSON.stringify(body) : undefined,
           signal: controller.signal,
+          redirect: followRedirects ? 'follow' : 'manual',
         })
       } catch {
         if (controller.signal.aborted) throw new RequestTimeoutError()
@@ -106,7 +108,7 @@ export class MattermostClient {
     const url = `${this.baseUrl}/api/v4${path}`
     let attempt: RequestAttempt<T>
     try {
-      attempt = await this.attempt<T>(method, url, body)
+      attempt = await this.attempt<T>(method, url, body, retrySafe || method === 'GET')
     } catch (error) {
       if (error instanceof InvalidJSONResponseError) {
         if (!retrySafe && method !== 'GET') throw new MattermostMutationOutcomeUnknownError()
@@ -134,7 +136,11 @@ export class MattermostClient {
     }
     const { response } = attempt
 
-    if (!retrySafe && method !== 'GET' && response.status >= 500) {
+    if (
+      !retrySafe &&
+      method !== 'GET' &&
+      ((response.status >= 300 && response.status < 400) || response.status >= 500)
+    ) {
       throw new MattermostMutationOutcomeUnknownError()
     }
 

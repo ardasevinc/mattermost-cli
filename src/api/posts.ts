@@ -13,6 +13,15 @@ interface GetPostsOptions {
 
 const MAX_SEARCH_SCAN_PAGES = 100
 
+function isUrlEncodable(value: string): boolean {
+  try {
+    encodeURIComponent(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export interface CreatedPostReceipt {
   id: string
   channelId: string
@@ -26,9 +35,9 @@ export async function createPost(
   message: string,
   pendingPostId: string = crypto.randomUUID(),
 ): Promise<CreatedPostReceipt> {
-  if (!channelId) throw new Error('A destination channel is required.')
+  if (!channelId.trim()) throw new Error('A destination channel is required.')
   if (!message.trim()) throw new Error('Message cannot be empty.')
-  if (!pendingPostId) throw new Error('A pending post ID is required.')
+  if (!pendingPostId.trim()) throw new Error('A pending post ID is required.')
 
   const post = await getClient().post<unknown>('/posts', {
     channel_id: channelId,
@@ -41,10 +50,11 @@ export async function createPost(
   const raw = post as Record<string, unknown>
   if (
     typeof raw.id !== 'string' ||
-    raw.id.length === 0 ||
+    raw.id.trim().length === 0 ||
+    !isUrlEncodable(raw.id) ||
     raw.channel_id !== channelId ||
     typeof raw.user_id !== 'string' ||
-    raw.user_id.length === 0 ||
+    raw.user_id.trim().length === 0 ||
     typeof raw.create_at !== 'number' ||
     !Number.isFinite(raw.create_at) ||
     raw.create_at <= 0 ||

@@ -1078,18 +1078,18 @@ export async function sendDirectMessage(options: SendDirectMessageOptions): Prom
   if (options.message?.includes(options.token)) {
     throw new Error('Refusing to send the active Mattermost credential.')
   }
-  const username = options.username.replace(/^@/, '')
+  const username = options.username.replace(/^@/, '').trim()
   if (!username) throw new Error('A direct-message username is required.')
   initClient(options.url, options.token)
 
   const me = await getMe()
-  if (typeof me?.id !== 'string' || me.id.length === 0) {
+  if (typeof me?.id !== 'string' || me.id.trim().length === 0) {
     throw new Error('Mattermost returned an invalid identity response.')
   }
   const recipient = await getUserByUsername(username)
   if (
     typeof recipient?.id !== 'string' ||
-    recipient.id.length === 0 ||
+    recipient.id.trim().length === 0 ||
     typeof recipient.username !== 'string' ||
     recipient.username.length === 0 ||
     recipient.username.toLowerCase() !== username.toLowerCase()
@@ -1162,7 +1162,7 @@ export async function sendGroupMessage(options: SendGroupMessageOptions): Promis
   if (options.message?.includes(options.token)) {
     throw new Error('Refusing to send the active Mattermost credential.')
   }
-  if (!options.channelId) throw new Error('A group-DM channel ID is required.')
+  if (!options.channelId.trim()) throw new Error('A group-DM channel ID is required.')
   initClient(options.url, options.token)
   const channel = requireRawChannelShape(await getChannel(options.channelId), options.channelId)
   if (channel.type !== 'G') {
@@ -1184,7 +1184,7 @@ export async function sendGroupMessage(options: SendGroupMessageOptions): Promis
 
   if (options.message === undefined) throw new Error('Message content is required.')
   const me = await getMe()
-  if (typeof me?.id !== 'string' || me.id.length === 0) {
+  if (typeof me?.id !== 'string' || me.id.trim().length === 0) {
     throw new Error('Mattermost returned an invalid identity response.')
   }
   const post = await createPost(channel.id, options.message)

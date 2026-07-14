@@ -102,6 +102,18 @@ describe('message sending handlers', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  test('rejects a blank sender identity before resolving a DM recipient or posting', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ id: '   ', username: 'sender' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      sendDirectMessage({ ...base, username: 'alice', message: 'do not send' }),
+    ).rejects.toThrow('invalid identity response')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   test.each([
     true,
     false,
@@ -209,12 +221,15 @@ describe('message sending handlers', () => {
     })
   })
 
-  test('rejects a malformed sender identity before posting to a group', async () => {
+  test.each([
+    {},
+    { id: '   ', username: 'sender' },
+  ])('rejects a malformed sender identity before posting to a group', async (identity) => {
     const group = channel({ type: 'G', name: 'group-name', display_name: 'Test Group' })
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(Response.json(group))
-      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(Response.json(identity))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(

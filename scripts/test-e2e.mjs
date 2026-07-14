@@ -17,7 +17,7 @@ function run(command, args, options = {}) {
     env: { ...process.env, MM_E2E_PORT: requestedPort, ...options.env },
   })
   if (result.status !== 0) {
-    if (options.capture) {
+    if (options.capture && !options.sensitive) {
       if (result.stdout) process.stderr.write(result.stdout)
       if (result.stderr) process.stderr.write(result.stderr)
     }
@@ -26,11 +26,11 @@ function run(command, args, options = {}) {
   return result.stdout || ''
 }
 
-function mmctl(args, capture = false) {
+function mmctl(args, capture = false, sensitive = false) {
   return run(
     'docker',
     [...compose, 'exec', '-T', 'mattermost', 'mmctl', '--local', ...args],
-    { capture },
+    { capture, sensitive },
   )
 }
 
@@ -88,7 +88,7 @@ try {
   mmctl(['--quiet', 'team', 'create', '--name', 'e2e', '--display-name', 'E2E'])
   mmctl(['--quiet', 'team', 'users', 'add', 'e2e', 'sender', 'alice', 'bob'])
   const generated = JSON.parse(
-    mmctl(['--json', 'token', 'generate', 'sender', 'mattermost-cli-e2e'], true),
+    mmctl(['--json', 'token', 'generate', 'sender', 'mattermost-cli-e2e'], true, true),
   )
   const token = generated?.[0]?.token
   if (typeof token !== 'string' || token.length === 0) {
