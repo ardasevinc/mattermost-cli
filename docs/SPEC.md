@@ -125,6 +125,17 @@ Redaction uses partial masking to show first/last characters:
 
 ## Output Formats
 
+Retrieved posts are normalized as their latest visible state. Structured JSON includes
+`updatedAt`, optional `editedAt`/`deletedAt`, deletion/system/pinned markers, post type, file IDs and
+available file metadata, safe attachment display fields, and reaction summaries with available
+actor identities. Pretty and Markdown output render the same state. Webhook override usernames are
+used for display while preserving the underlying `userId`; empty-author system posts use `system`.
+
+Only metadata already present in list, search, and thread payloads is used. There are no per-post
+file or reaction requests, no edit-history reconstruction, and arbitrary attachment actions or
+props are never emitted. Normal retrieval excludes deleted posts (`deletedPostsIncluded: false`);
+if one is returned in hydrated context, only a stable `[deleted post]` placeholder is exposed.
+
 ### Pretty Terminal (default for TTY)
 - Colored usernames
 - Grouped by date

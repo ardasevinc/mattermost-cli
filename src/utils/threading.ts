@@ -1,5 +1,19 @@
 import type { ProcessedMessage } from '../types'
 
+const canonicalIdentities = new WeakMap<ProcessedMessage, { id: string; rootId?: string }>()
+
+export function setCanonicalPostIdentity(
+  message: ProcessedMessage,
+  id: string,
+  rootId?: string,
+): void {
+  canonicalIdentities.set(message, { id, rootId })
+}
+
+function canonicalIdentity(message: ProcessedMessage): { id: string; rootId?: string } {
+  return canonicalIdentities.get(message) ?? { id: message.id, rootId: message.rootId }
+}
+
 function byTimestamp(a: ProcessedMessage, b: ProcessedMessage): number {
   const diff = a.timestamp.getTime() - b.timestamp.getTime()
   if (diff !== 0) return diff
@@ -15,17 +29,20 @@ export function groupIntoThreads(messages: ProcessedMessage[]): ProcessedMessage
   const standaloneReplies: ProcessedMessage[] = []
 
   for (const msg of sorted) {
-    if (!msg.rootId) {
+    const identity = canonicalIdentity(msg)
+    if (!identity.rootId) {
       const root: ProcessedMessage = { ...msg, replies: [] }
-      rootMap.set(msg.id, root)
+      setCanonicalPostIdentity(root, identity.id)
+      rootMap.set(identity.id, root)
       roots.push(root)
     }
   }
 
   for (const msg of sorted) {
-    if (!msg.rootId) continue
+    const identity = canonicalIdentity(msg)
+    if (!identity.rootId) continue
 
-    const root = rootMap.get(msg.rootId)
+    const root = rootMap.get(identity.rootId)
     if (root) {
       root.replies?.push(msg)
     } else {

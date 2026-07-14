@@ -12,7 +12,7 @@ import {
   mentionSearchAfterDate,
   mergeTruncation,
 } from '../src/cli'
-import type { Channel, Post, PostsResponse, User } from '../src/types'
+import type { Channel, Post, PostsResponse, Redaction, User } from '../src/types'
 import { installRouteFetch } from './helpers/fake-fetch'
 
 afterEach(() => {
@@ -278,6 +278,51 @@ describe('watch post deduplication', () => {
       'sk-abcdefghijklmnopqrstuvwxyz123456',
     )
   })
+
+  test('sanitizes every remotely controlled watch presentation field', () => {
+    const token = `ghp_${'a'.repeat(36)}`
+    const lines: string[] = []
+    const handlePost = createWatchPostHandler({ json: true, color: false, redact: true }, (line) =>
+      lines.push(line),
+    )
+    handlePost(
+      {
+        id: `post\u001b${token}`,
+        channel_id: `channel\u001b${token}`,
+        user_id: `user\u001b${token}`,
+        create_at: 1,
+        update_at: 1,
+        delete_at: 0,
+        edit_at: 0,
+        message: `message\u001b${token}`,
+        type: '',
+        props: {},
+        hashtags: '',
+        file_ids: [`file\u001b${token}`],
+        root_id: `root\u001b${token}`,
+        reply_count: 0,
+        pending_post_id: '',
+      },
+      `town\u001b${token}`,
+      `sender\u001b${token}`,
+    )
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).not.toContain(token)
+    expect(lines[0]).not.toContain('\u001b')
+    expect(JSON.parse(lines[0] as string).redactions.map(({ field }: Redaction) => field)).toEqual(
+      expect.arrayContaining([
+        'watch.sender',
+        'watch.message',
+        'watch.postId',
+        'watch.channelId',
+        'watch.channelName',
+        'watch.senderId',
+        'watch.rootId',
+        'watch.fileId',
+      ]),
+    )
+  })
 })
 
 describe('thread retrieval metadata', () => {
@@ -510,6 +555,48 @@ describe('thread retrieval metadata', () => {
       hydratedRootCount: 0,
       failedRootIds: ['missing-root'],
     })
+  })
+
+  test('sanitizes partial-thread warnings, failed roots, and fallback channel ids', async () => {
+    const token = `ghp_${'a'.repeat(36)}`
+    const unsafeRoot = `root\u001b${token}`
+    const unsafeChannel = `channel\u001b${token}`
+    const reply = {
+      ...makeThreadPost('reply', unsafeRoot, 1),
+      channel_id: unsafeChannel,
+      user_id: 'me',
+    }
+    installRouteFetch([
+      { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+      {
+        method: 'GET',
+        path: `/api/v4/posts/${encodeURIComponent(unsafeRoot)}/thread`,
+        handle: () => ({ ...responsePage([reply]), has_next: false }),
+      },
+      {
+        method: 'GET',
+        path: `/api/v4/channels/${encodeURIComponent(unsafeChannel)}`,
+        handle: () => null,
+      },
+    ])
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await fetchThread({
+      url: 'https://mattermost.test',
+      token: 'token',
+      json: true,
+      color: false,
+      relative: false,
+      redact: true,
+      threads: true,
+      postId: unsafeRoot,
+    })
+
+    const serialized = String(log.mock.calls.at(-1)?.[0])
+    expect(serialized).not.toContain(token)
+    expect(String(error.mock.calls.at(-1)?.[0])).not.toContain(token)
+    expect(serialized).not.toContain('\u001b')
   })
 
   test('does not count an unproven root as hydrated in mm thread metadata', async () => {

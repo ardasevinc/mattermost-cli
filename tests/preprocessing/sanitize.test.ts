@@ -32,4 +32,22 @@ describe('preprocess', () => {
     expect(result.text).toBe('hello\\u001b[31mworld')
     expect(result.redactions).toEqual([])
   })
+
+  test('reports redaction positions after visible control expansion', () => {
+    const token = `ghp_${'a'.repeat(36)}`
+    const result = preprocess(`x\u001b ${token}`)
+
+    expect(result.redactions[0]?.position).toBe('x\\u001b '.length)
+  })
+
+  test('reports multiple redactions at their offsets in final emitted text', () => {
+    const first = `ghp_${'a'.repeat(36)}`
+    const second = `ghp_${'b'.repeat(36)}`
+    const result = preprocess(`x\u001b ${first} gap ${second}`)
+
+    expect(result.redactions).toHaveLength(2)
+    for (const redaction of result.redactions) {
+      expect(redaction.position).toBe(result.text.indexOf(redaction.masked))
+    }
+  })
 })

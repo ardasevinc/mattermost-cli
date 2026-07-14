@@ -182,7 +182,13 @@ describe('command-level JSON retrieval metadata', () => {
   ] as const)('%s keeps per-channel counts with global limit/truncation', async (source, text) => {
     const alpha = channel('alpha')
     const beta = channel('beta')
-    const alphaPost = { ...post('alpha-new', 'alpha', 3, text), user_id: 'alpha-user' }
+    const alphaPost = {
+      ...post('alpha-new', 'alpha', 3, text),
+      user_id: 'alpha-user',
+      metadata: {
+        reactions: [{ user_id: 'reactor', post_id: 'alpha-new', emoji_name: 'eyes', create_at: 1 }],
+      },
+    }
     const betaPost = { ...post('beta-new', 'beta', 2, text), user_id: 'beta-user' }
     const { requests } = installRouteFetch([
       ...commonRoutes(),
@@ -197,6 +203,7 @@ describe('command-level JSON retrieval metadata', () => {
         handle: () => [
           { id: 'alpha-user', username: 'alpha-user' },
           { id: 'beta-user', username: 'beta-user' },
+          { id: 'reactor', username: 'reactor' },
         ],
       },
       { method: 'GET', path: '/api/v4/channels/alpha', handle: () => alpha },
@@ -242,6 +249,12 @@ describe('command-level JSON retrieval metadata', () => {
       })
     }
     expect(requests.filter(({ url }) => url.pathname.endsWith('/users/ids'))).toHaveLength(1)
+    expect(requests.find(({ url }) => url.pathname.endsWith('/users/ids'))?.body).toEqual([
+      'alpha-user',
+      'reactor',
+      'beta-user',
+    ])
+    expect(requests.some(({ url }) => /\/(files|reactions)(\/|$)/.test(url.pathname))).toBe(false)
   })
 
   test.each([

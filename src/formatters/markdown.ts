@@ -19,10 +19,10 @@ export function formatMarkdown(outputs: MessageOutput[], options: MarkdownOption
 
 function channelHeaderMarkdown(channel: ProcessedChannel): string {
   if (channel.type === 'dm') {
-    return `## DMs with ${channel.name}`
+    return `## DMs with ${escapeMarkdown(channel.name)}`
   }
-  const display = channel.displayName ? ` (${channel.displayName})` : ''
-  return `## #${channel.name}${display}`
+  const display = channel.displayName ? ` (${escapeMarkdown(channel.displayName)})` : ''
+  return `## #${escapeMarkdown(channel.name)}${display}`
 }
 
 function formatChannelMarkdown(output: MessageOutput, relative: boolean): string {
@@ -65,21 +65,87 @@ function formatMessage(msg: ProcessedMessage, relative: boolean, depth: number =
   const lines: string[] = []
   const prefix = depth > 0 ? '> '.repeat(depth) : ''
 
-  const postRef = `[${msg.id}](<${msg.permalink}>)`
-  lines.push(`${prefix}**${msg.user}** (${timeStr}, ${postRef}):`)
+  const safePermalink = safeHttpUrl(msg.permalink)
+  const postId = escapeMarkdown(msg.id)
+  const postRef = safePermalink ? `[${postId}](<${safePermalink}>)` : postId
+  const markers = messageMarkers(msg)
+  lines.push(
+    `${prefix}**${escapeMarkdown(msg.user)}**${markers ? ` ${markers}` : ''} (${timeStr}, ${postRef}):`,
+  )
 
   // Quote the message content
   const quotePrefix = `${prefix}> `
-  const quotedText = msg.text
-    .split('\n')
-    .map((line) => `${quotePrefix}${line}`)
-    .join('\n')
-
-  lines.push(quotedText)
+  lines.push(quoteLines(escapeMarkdown(msg.text), quotePrefix))
+  const stateParts = [`Updated ${msg.updatedAt.toISOString()}`]
+  if (msg.editedAt) stateParts.push(`edited ${msg.editedAt.toISOString()}`)
+  if (msg.deletedAt) stateParts.push(`deleted ${msg.deletedAt.toISOString()}`)
+  lines.push(`${quotePrefix}_${stateParts.join('; ')}_`)
 
   // Add file attachments if any
-  if (msg.files.length > 0) {
-    lines.push(`${quotePrefix}_Attachments: ${msg.files.join(', ')}_`)
+  if (msg.fileDetails.length > 0) {
+    const files = msg.fileDetails
+      .map((file) => {
+        const label = file.name ? `${file.name} (${file.id})` : file.id
+        const details = [
+          file.mime,
+          file.extension,
+          file.size === undefined ? undefined : `${file.size} B`,
+        ]
+          .filter(Boolean)
+          .join(', ')
+        return escapeMarkdown(`${label}${details ? `, ${details}` : ''}`)
+      })
+      .join(', ')
+    lines.push(`${quotePrefix}_Files: ${files}_`)
+  }
+
+  for (const attachment of msg.attachments) {
+    const title = attachment.title ?? 'Attachment'
+    const safeTitleLink = attachment.titleLink ? safeHttpUrl(attachment.titleLink) : undefined
+    if (attachment.pretext) lines.push(quoteLines(escapeMarkdown(attachment.pretext), quotePrefix))
+    lines.push(
+      safeTitleLink
+        ? `${quotePrefix}**[${escapeMarkdown(title)}](<${safeTitleLink}>)**`
+        : `${quotePrefix}**${escapeMarkdown(title)}**`,
+    )
+    if (attachment.authorName)
+      lines.push(quoteLines(`By: ${escapeMarkdown(attachment.authorName)}`, quotePrefix))
+    if (attachment.text) lines.push(quoteLines(escapeMarkdown(attachment.text), quotePrefix))
+    for (const field of attachment.fields ?? []) {
+      lines.push(
+        quoteLines(
+          `${field.title ? `**${escapeMarkdown(field.title)}:** ` : ''}${escapeMarkdown(field.value ?? '')}`,
+          quotePrefix,
+        ),
+      )
+    }
+    if (attachment.fallback)
+      lines.push(quoteLines(`Fallback: ${escapeMarkdown(attachment.fallback)}`, quotePrefix))
+    if (attachment.footer)
+      lines.push(quoteLines(`_${escapeMarkdown(attachment.footer)}_`, quotePrefix))
+    if (attachment.color) lines.push(`${quotePrefix}Color: ${escapeMarkdown(attachment.color)}`)
+    if (attachment.timestamp)
+      lines.push(`${quotePrefix}Timestamp: ${escapeMarkdown(attachment.timestamp)}`)
+    for (const url of [
+      attachment.authorLink,
+      attachment.authorIcon,
+      attachment.footerIcon,
+      attachment.imageUrl,
+      attachment.thumbUrl,
+    ]) {
+      const safeUrl = url ? safeHttpUrl(url) : undefined
+      if (safeUrl) lines.push(`${quotePrefix}<${safeUrl}>`)
+    }
+  }
+
+  if (msg.reactions.length > 0) {
+    const reactions = msg.reactions
+      .map(({ emoji, count, actors }) => {
+        const names = actors.map((actor) => escapeMarkdown(actor.username ?? actor.id)).join(', ')
+        return `:${escapeMarkdown(emoji)}: ${count}${names ? ` (${names})` : ''}`
+      })
+      .join(' · ')
+    lines.push(`${quotePrefix}_Reactions: ${reactions}_`)
   }
 
   // Render replies
@@ -92,6 +158,37 @@ function formatMessage(msg: ProcessedMessage, relative: boolean, depth: number =
   }
 
   return lines.join('\n')
+}
+
+function messageMarkers(msg: ProcessedMessage): string {
+  const markers: string[] = []
+  if (msg.isDeleted) markers.push('[deleted]')
+  else if (msg.editedAt) markers.push('[edited]')
+  if (msg.isSystem)
+    markers.push(msg.postType ? `[system:${escapeMarkdown(msg.postType)}]` : '[system]')
+  if (msg.isPinned) markers.push('[pinned]')
+  return markers.join(' ')
+}
+
+function escapeMarkdown(value: string): string {
+  return value.replace(/([\\`*_[\]{}()<>#+\-.!|~])/g, '\\$1')
+}
+
+function quoteLines(value: string, prefix: string): string {
+  return value
+    .split('\n')
+    .map((line) => `${prefix}${line}`)
+    .join('\n')
+}
+
+function safeHttpUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+    return url.replace(/</g, '%3C').replace(/>/g, '%3E').replace(/\\/g, '%5C')
+  } catch {
+    return undefined
+  }
 }
 
 function groupByDate(messages: ProcessedMessage[]): Map<string, ProcessedMessage[]> {

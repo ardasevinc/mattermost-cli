@@ -70,8 +70,43 @@ function parsePostEvent(payload: SocketMessage): {
   const event = payload as unknown as WSPostEvent
   if (typeof event.data.post !== 'string') return null
   try {
-    const post = JSON.parse(event.data.post) as Post
-    if (!post || typeof post.id !== 'string' || typeof post.channel_id !== 'string') return null
+    const value: unknown = JSON.parse(event.data.post)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const raw = value as Record<string, unknown>
+    if (
+      typeof raw.id !== 'string' ||
+      typeof raw.channel_id !== 'string' ||
+      typeof raw.user_id !== 'string' ||
+      typeof raw.message !== 'string' ||
+      typeof raw.root_id !== 'string' ||
+      typeof raw.create_at !== 'number' ||
+      !Number.isFinite(raw.create_at) ||
+      !Number.isFinite(new Date(raw.create_at).getTime()) ||
+      !Array.isArray(raw.file_ids) ||
+      !raw.file_ids.every((id) => typeof id === 'string')
+    ) {
+      return null
+    }
+    const post: Post = {
+      id: raw.id,
+      channel_id: raw.channel_id,
+      user_id: raw.user_id,
+      message: raw.message,
+      root_id: raw.root_id,
+      create_at: raw.create_at,
+      file_ids: raw.file_ids as string[],
+      update_at: typeof raw.update_at === 'number' ? raw.update_at : raw.create_at,
+      delete_at: typeof raw.delete_at === 'number' ? raw.delete_at : 0,
+      edit_at: typeof raw.edit_at === 'number' ? raw.edit_at : 0,
+      type: typeof raw.type === 'string' ? raw.type : '',
+      props:
+        raw.props && typeof raw.props === 'object' && !Array.isArray(raw.props)
+          ? (raw.props as Record<string, unknown>)
+          : {},
+      hashtags: typeof raw.hashtags === 'string' ? raw.hashtags : '',
+      reply_count: typeof raw.reply_count === 'number' ? raw.reply_count : 0,
+      pending_post_id: typeof raw.pending_post_id === 'string' ? raw.pending_post_id : '',
+    }
     return {
       post,
       channelName: typeof event.data.channel_name === 'string' ? event.data.channel_name : '',

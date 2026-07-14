@@ -264,6 +264,52 @@ describe('connectWebSocket', () => {
     connection.close()
   })
 
+  test('rejects malformed post fields before watch formatting can throw', () => {
+    const malformed = vi.fn()
+    const onPost = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', 'secret', onPost, vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      diagnostics: { malformed },
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    authenticate(socket)
+    const invalid = [
+      { ...post, message: null },
+      { ...post, user_id: 42 },
+      { ...post, create_at: null },
+      { ...post, create_at: 1e100 },
+      { ...post, file_ids: [7] },
+    ]
+    invalid.forEach((value, index) => {
+      socket.message({
+        event: 'posted',
+        seq: index + 1,
+        data: { post: JSON.stringify(value), channel_name: 'town', sender_name: 'arda' },
+      })
+    })
+
+    expect(onPost).not.toHaveBeenCalled()
+    expect(malformed).toHaveBeenCalledTimes(invalid.length)
+    connection.close()
+  })
+
+  test('accepts the maximum finite ECMAScript timestamp without toISOString failure', () => {
+    const onPost = vi.fn()
+    const connection = connectWebSocket('https://mm.example.com', 'secret', onPost, vi.fn(), {
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+    })
+    const socket = FakeWebSocket.instances[0] as FakeWebSocket
+    authenticate(socket)
+    posted(socket, 1, { ...post, create_at: 8.64e15 })
+
+    expect(onPost).toHaveBeenCalledWith(
+      expect.objectContaining({ create_at: 8.64e15 }),
+      'town',
+      'arda',
+    )
+    connection.close()
+  })
+
   test('uses a fifteen second handshake timeout by default', () => {
     const connection = connectWebSocket('https://mm.example.com', 'secret', vi.fn(), vi.fn(), {
       WebSocket: FakeWebSocket as unknown as typeof WebSocket,

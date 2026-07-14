@@ -105,13 +105,14 @@ export function redactSecrets(text: string): {
     // and re-append part of a previously redacted value.
     const groupValue = text.slice(group.start, group.end)
     const masked = maskSecret(groupValue, group.secrets[0]?.type ?? 'secret')
+    const emittedPosition = result.length
     result += masked
 
     const types = [...new Set(group.secrets.map((secret) => secret.type))]
     redactions.push({
       type: types.join('+'),
       masked,
-      position: group.start,
+      position: emittedPosition,
     })
 
     lastEnd = group.end

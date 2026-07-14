@@ -183,6 +183,12 @@ hydrates each visible thread, including its root and sibling replies as context.
 `retrieval.visibleThreads` before treating that context as complete; `partial` lists unproven roots
 in `failedRootIds` while preserving all selected and successfully hydrated posts.
 
+Outputs describe each post's latest visible state, including edited/system/pinned markers, payload
+file metadata, safe attachment fields, and reactions when Mattermost includes them. The CLI does
+not fetch edit history or issue extra per-post file/reaction requests. Deleted posts are normally
+excluded; a deleted post returned during context hydration is reduced to `[deleted post]` without
+stale content.
+
 ## Security
 
 All secrets are automatically redacted before output:
@@ -193,7 +199,8 @@ All secrets are automatically redacted before output:
 
 Masking preserves context: `ghp_abc123xyz789secret` → `ghp_...cret`
 
-Output is safe to include in context or pass to other LLMs. Disable with `--no-redact` if needed.
+Remote strings are control-character sanitized even with `--no-redact`. Secret masking can be
+disabled with `--no-redact` when explicitly needed.
 
 ## Configuration
 

@@ -31,7 +31,7 @@ import {
   formatWatchEvent,
   formatWatchJSON,
 } from './formatters'
-import { preprocess, sanitizeTerminalLabel } from './preprocessing'
+import { normalizePosts, postUserIds, preprocess, sanitizeTerminalLabel } from './preprocessing'
 import type {
   Channel,
   ChannelMember,
@@ -42,7 +42,6 @@ import type {
   MessageOutput,
   Post,
   ProcessedChannel,
-  ProcessedMessage,
   Redaction,
   RetrievalMetadata,
   SearchOptions,
@@ -110,21 +109,28 @@ export function createWatchPostHandler(
 
   return (post, channelName, senderName) => {
     if (!seenPostIds.add(post.id)) return
-    const username = sanitizeTerminalLabel(
+    const redactions: Redaction[] = []
+    const clean = (value: string, field: string, oneLine = true): string => {
+      const result = preprocess(value, { redact: options.redact })
+      redactions.push(...result.redactions.map((item) => ({ ...item, field })))
+      return oneLine ? result.text.replace(/\n/g, '\\n').replace(/\t/g, '\\t') : result.text
+    }
+    const username = clean(
       getCachedUser(post.user_id)?.username || senderName || 'unknown',
+      'watch.sender',
     )
-    const { text, redactions } = preprocess(post.message, { redact: options.redact })
+    const text = clean(post.message, 'watch.message', false)
     const event: WatchEvent = {
       type: 'posted',
-      postId: post.id,
-      channelId: post.channel_id,
-      channelName: sanitizeTerminalLabel(channelName),
+      postId: clean(post.id, 'watch.postId'),
+      channelId: clean(post.channel_id, 'watch.channelId'),
+      channelName: clean(channelName, 'watch.channelName'),
       sender: username,
-      senderId: post.user_id,
+      senderId: clean(post.user_id, 'watch.senderId'),
       message: text,
       timestamp: new Date(post.create_at).toISOString(),
-      rootId: post.root_id || undefined,
-      fileIds: post.file_ids || [],
+      rootId: post.root_id ? clean(post.root_id, 'watch.rootId') : undefined,
+      fileIds: arrayStringValues(post.file_ids).map((id) => clean(id, 'watch.fileId')),
       redactions,
     }
     write(
@@ -133,6 +139,12 @@ export function createWatchPostHandler(
         : formatWatchEvent(event, options.color && Boolean(process.stdout.isTTY)),
     )
   }
+}
+
+function arrayStringValues(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
@@ -204,17 +216,41 @@ function groupPostsByChannel(posts: Post[]): Map<string, Post[]> {
   return grouped
 }
 
+function presentVisibleThreads(
+  value: RetrievalMetadata['visibleThreads'],
+  redact: boolean,
+  redactions: Redaction[],
+): RetrievalMetadata['visibleThreads'] {
+  return {
+    ...value,
+    failedRootIds: value.failedRootIds.map((id) => {
+      const result = preprocess(id, { redact })
+      redactions.push(
+        ...result.redactions.map((item) => ({ ...item, field: 'retrieval.failedRootId' })),
+      )
+      return result.text.replace(/\n/g, '\\n').replace(/\t/g, '\\t')
+    }),
+  }
+}
+
 async function buildProcessedChannel(
   channel: Channel,
   myUserId: string,
+  redact = true,
+  redactions: Redaction[] = [],
 ): Promise<ProcessedChannel> {
   const type = channelTypeLabel(channel.type)
+  const clean = (value: string, field: string): string => {
+    const result = preprocess(value, { redact })
+    redactions.push(...result.redactions.map((item) => ({ ...item, field })))
+    return result.text.replace(/\n/g, '\\n').replace(/\t/g, '\\t')
+  }
 
   if (type === 'dm') {
     const otherUserId = getOtherUserIdFromDMChannel(channel, myUserId)
     if (!otherUserId) {
       return {
-        id: channel.id,
+        id: clean(channel.id, 'channel.id'),
         type: 'dm',
         name: '@unknown',
       }
@@ -222,49 +258,20 @@ async function buildProcessedChannel(
 
     const otherUser = await getUser(otherUserId)
     return {
-      id: channel.id,
+      id: clean(channel.id, 'channel.id'),
       type: 'dm',
-      name: `@${sanitizeTerminalLabel(otherUser.username)}`,
+      name: `@${clean(otherUser.username, 'channel.dmUsername')}`,
     }
   }
 
   return {
-    id: channel.id,
+    id: clean(channel.id, 'channel.id'),
     type,
-    name: sanitizeTerminalLabel(channel.name),
-    displayName: channel.display_name ? sanitizeTerminalLabel(channel.display_name) : undefined,
+    name: clean(channel.name, 'channel.name'),
+    displayName: channel.display_name
+      ? clean(channel.display_name, 'channel.displayName')
+      : undefined,
   }
-}
-
-async function processMessages(
-  posts: Post[],
-  myUserId: string,
-  redact: boolean,
-  serverUrl: string,
-): Promise<{ messages: ProcessedMessage[]; redactions: Redaction[] }> {
-  const allRedactions: Redaction[] = []
-  const messages: ProcessedMessage[] = []
-
-  for (const post of posts) {
-    const postUser = await getUser(post.user_id)
-    const { text, redactions } = preprocess(post.message, { redact })
-
-    allRedactions.push(...redactions)
-
-    messages.push({
-      id: post.id,
-      permalink: buildPostPermalink(serverUrl, post.id),
-      user: postUser.id === myUserId ? 'you' : sanitizeTerminalLabel(postUser.username),
-      userId: post.user_id,
-      text,
-      timestamp: new Date(post.create_at),
-      files: post.file_ids || [],
-      rootId: post.root_id || undefined,
-      replyCount: post.reply_count || undefined,
-    })
-  }
-
-  return { messages, redactions: allRedactions }
 }
 
 async function buildOutputsFromPosts(
@@ -290,35 +297,53 @@ async function buildOutputsFromPosts(
     const { posts: channelPosts, visibleThreads } = await hydrateVisibleThreads(
       seedPosts,
       options.threads,
+      options.redact,
     )
     hydratedGroups.push({ channelId, seedPosts, channelPosts, visibleThreads })
   }
 
   const userIds = [
-    ...new Set(
-      hydratedGroups.flatMap(({ channelPosts }) => channelPosts.map((post) => post.user_id)),
-    ),
+    ...new Set(hydratedGroups.flatMap(({ channelPosts }) => postUserIds(channelPosts))),
   ]
   if (userIds.length > 0) await getUsersByIds(userIds)
+  const usersById = new Map(
+    userIds.flatMap((id) => {
+      const user = getCachedUser(id)
+      return user ? ([[id, user]] as const) : []
+    }),
+  )
 
   for (const { channelId, seedPosts, channelPosts, visibleThreads } of hydratedGroups) {
     const channel = knownChannels.get(channelId) ?? (await getChannel(channelId))
-    const processedChannel = await buildProcessedChannel(channel, myUserId)
-    const { messages, redactions } = await processMessages(
-      channelPosts,
+    const channelRedactions: Redaction[] = []
+    const processedChannel = await buildProcessedChannel(
+      channel,
       myUserId,
       options.redact,
+      channelRedactions,
+    )
+    const { messages, redactions } = normalizePosts(
+      channelPosts,
+      usersById,
+      myUserId,
       options.url,
+      buildPostPermalink,
+      options.redact,
+    )
+    const presentedVisibleThreads = presentVisibleThreads(
+      visibleThreads,
+      options.redact,
+      redactions,
     )
 
     outputs.push({
       channel: processedChannel,
       messages: options.threads ? groupIntoThreads(messages) : messages,
-      redactions,
+      redactions: [...channelRedactions, ...redactions],
       retrieval: retrievalMetadata(
         retrieval,
         seedPosts.length,
-        visibleThreads,
+        presentedVisibleThreads,
         channelPosts.length,
       ),
     })
@@ -330,6 +355,7 @@ async function buildOutputsFromPosts(
 export async function hydrateVisibleThreads(
   seedPosts: Post[],
   requested: boolean,
+  redact = true,
 ): Promise<{ posts: Post[]; visibleThreads: RetrievalMetadata['visibleThreads'] }> {
   if (!requested) {
     return {
@@ -373,12 +399,14 @@ export async function hydrateVisibleThreads(
       } else {
         failedRootIdSet.add(rootId)
         console.error(
-          `Warning: Thread ${sanitizeTerminalLabel(rootId)} could only be partially hydrated.`,
+          `Warning: Thread ${preprocess(rootId, { redact }).text.replace(/\n/g, '\\n').replace(/\t/g, '\\t')} could only be partially hydrated.`,
         )
       }
     } catch {
       failedRootIdSet.add(rootId)
-      console.error(`Warning: Could not hydrate thread ${sanitizeTerminalLabel(rootId)}.`)
+      console.error(
+        `Warning: Could not hydrate thread ${preprocess(rootId, { redact }).text.replace(/\n/g, '\\n').replace(/\t/g, '\\t')}.`,
+      )
     }
   }
   const worker = async () => {
@@ -491,7 +519,7 @@ export async function listChannels(options: {
 
   const output = await Promise.all(
     channels.map(async (channel) => {
-      const processed = await buildProcessedChannel(channel, me.id)
+      const processed = await buildProcessedChannel(channel, me.id, options.redact)
       return buildChannelListItem(processed, channel)
     }),
   )
@@ -673,22 +701,51 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
   const requestedRootId = rootPost?.id ?? missingRootId ?? options.postId
   const threadComplete = result.truncated === false && rootPost !== undefined
   if (result.truncated !== false || !rootPost) {
-    console.error(
-      `Warning: Thread ${sanitizeTerminalLabel(requestedRootId)} could only be partially hydrated.`,
-    )
+    const safeRequestedRootId = preprocess(requestedRootId, { redact: options.redact })
+      .text.replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t')
+    console.error(`Warning: Thread ${safeRequestedRootId} could only be partially hydrated.`)
   }
 
-  const userIds = [...new Set(posts.map((post) => post.user_id))]
+  const userIds = postUserIds(posts)
   if (userIds.length > 0) {
     await getUsersByIds(userIds)
   }
 
-  const { messages, redactions } = await processMessages(posts, me.id, options.redact, options.url)
+  const usersById = new Map(
+    userIds.flatMap((id) => {
+      const user = getCachedUser(id)
+      return user ? ([[id, user]] as const) : []
+    }),
+  )
+  const { messages, redactions } = normalizePosts(
+    posts,
+    usersById,
+    me.id,
+    options.url,
+    buildPostPermalink,
+    options.redact,
+  )
+  const threadState: RetrievalMetadata['visibleThreads'] = {
+    status: threadComplete ? 'complete' : 'partial',
+    hydratedRootCount: threadComplete ? 1 : 0,
+    failedRootIds: threadComplete ? [] : [requestedRootId],
+  }
+  const presentedThreadState = presentVisibleThreads(threadState, options.redact, redactions)
 
+  const channelRedactions: Redaction[] = []
+  const fallbackChannelId = preprocess(channelPost?.channel_id || '', {
+    redact: options.redact,
+  })
+  if (!channel) {
+    redactions.push(
+      ...fallbackChannelId.redactions.map((item) => ({ ...item, field: 'channel.id' })),
+    )
+  }
   const processedChannel = channel
-    ? await buildProcessedChannel(channel, me.id)
+    ? await buildProcessedChannel(channel, me.id, options.redact, channelRedactions)
     : {
-        id: channelPost?.channel_id || '',
+        id: fallbackChannelId.text.replace(/\n/g, '\\n').replace(/\t/g, '\\t'),
         type: 'public' as const,
         name: 'unknown',
       }
@@ -698,7 +755,7 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
       {
         channel: processedChannel,
         messages: groupIntoThreads(messages),
-        redactions,
+        redactions: [...channelRedactions, ...redactions],
         retrieval: retrievalMetadata(
           {
             source: 'thread',
@@ -707,11 +764,7 @@ export async function fetchThread(options: CLIOptions & { postId: string }): Pro
             queryTruncated: result.truncated,
           },
           posts.length,
-          {
-            status: threadComplete ? 'complete' : 'partial',
-            hydratedRootCount: threadComplete ? 1 : 0,
-            failedRootIds: threadComplete ? [] : [requestedRootId],
-          },
+          presentedThreadState,
         ),
       },
     ],
@@ -847,7 +900,7 @@ export async function showUnread(options: UnreadOptions): Promise<void> {
     const { unreadCount, mentionCount } = calculateUnreadMetrics(channel, member)
     if (unreadCount <= 0) continue
 
-    const processedChannel = await buildProcessedChannel(channel, me.id)
+    const processedChannel = await buildProcessedChannel(channel, me.id, options.redact)
 
     unreadEntries.push({
       channel,
@@ -948,6 +1001,8 @@ export async function watchChannel(
   options: CLIOptions & { channel?: string; team?: string; dm?: string },
 ): Promise<void> {
   initClient(options.url, options.token)
+  const presentLabel = (value: string): string =>
+    preprocess(value, { redact: options.redact }).text.replace(/\n/g, '\\n').replace(/\t/g, '\\t')
 
   printRedactionWarning(options.redact)
 
@@ -965,16 +1020,16 @@ export async function watchChannel(
     : await getChannelByName(await resolveTeamId(options.team), options.channel as string)
   if (!channel) {
     const target = options.dm
-      ? `DM channel with @${sanitizeTerminalLabel(options.dm)}`
-      : `channel #${sanitizeTerminalLabel(options.channel ?? '')}`
+      ? `DM channel with @${presentLabel(options.dm)}`
+      : `channel #${presentLabel(options.channel ?? '')}`
     console.error(`Error: ${target} not found.`)
     process.exit(1)
   }
 
   const watchTarget =
     channel.type === 'D'
-      ? `DMs with @${sanitizeTerminalLabel(options.dm ?? '')}`
-      : `#${sanitizeTerminalLabel(channel.name)}`
+      ? `DMs with @${presentLabel(options.dm ?? '')}`
+      : `#${presentLabel(channel.name)}`
   console.error(`Watching ${watchTarget} (Ctrl+C to stop)`)
 
   await new Promise<void>((resolve, reject) => {

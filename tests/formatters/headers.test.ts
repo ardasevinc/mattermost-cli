@@ -14,7 +14,15 @@ function makeOutput(channel: ProcessedChannel): MessageOutput {
         userId: 'u1',
         text: 'hello',
         timestamp: new Date('2026-02-21T10:00:00Z'),
+        updatedAt: new Date('2026-02-21T10:00:00Z'),
+        isDeleted: false,
+        postType: '',
+        isSystem: false,
+        isPinned: false,
         files: [],
+        fileDetails: [],
+        attachments: [],
+        reactions: [],
       },
     ],
     redactions: [],
@@ -89,6 +97,28 @@ describe('formatter channel headers', () => {
       })
       expect(output).toContain(wording)
     })
+
+    test('shows current-state markers, file metadata, attachments, and reactions', () => {
+      const fixture = makeOutput(publicChannel)
+      const message = fixture.messages[0]
+      if (!message) throw new Error('missing formatter fixture message')
+      message.editedAt = new Date('2026-02-21T10:01:00Z')
+      message.isPinned = true
+      message.fileDetails = [{ id: 'file1', name: 'report.txt' }]
+      message.files = ['file1']
+      message.attachments = [
+        { title: 'Deploy', titleLink: 'https://example.test/deploy', text: 'Passed' },
+      ]
+      message.reactions = [
+        { emoji: 'white_check_mark', count: 1, actors: [{ id: 'u2', username: 'bob' }] },
+      ]
+
+      const output = formatPretty([fixture], { color: false })
+      expect(output).toContain('[edited] [pinned]')
+      expect(output).toContain('report.txt (file1)')
+      expect(output).toContain('Attachment: Deploy')
+      expect(output).toContain(':white_check_mark: 1 (bob)')
+    })
   })
 
   describe('markdown formatter', () => {
@@ -104,7 +134,7 @@ describe('formatter channel headers', () => {
 
     test('private channel header omits display name when absent', () => {
       const output = formatMarkdown([makeOutput(privateChannel)])
-      expect(output).toContain('## #secret-stuff')
+      expect(output).toContain('## #secret\\-stuff')
       expect(output).not.toContain('undefined')
     })
 
@@ -130,6 +160,58 @@ describe('formatter channel headers', () => {
     ] as const)('reports %j query coverage honestly', (state, wording) => {
       const output = formatMarkdown([withTruncation(makeOutput(publicChannel), state)])
       expect(output).toContain(wording)
+    })
+
+    test('uses safe markdown link destinations for attachment links', () => {
+      const fixture = makeOutput(publicChannel)
+      const message = fixture.messages[0]
+      if (!message) throw new Error('missing formatter fixture message')
+      message.isSystem = true
+      message.postType = 'system_webhook'
+      message.attachments = [{ title: 'Deploy', titleLink: 'https://example.test/a>b\\c' }]
+      message.reactions = [{ emoji: 'eyes', count: 1, actors: [{ id: 'u2' }] }]
+
+      const output = formatMarkdown([fixture])
+      expect(output).toContain('[system:system\\_webhook]')
+      expect(output).toContain('[Deploy](<https://example.test/a%3Eb%5Cc>)')
+      expect(output).toContain(':eyes: 1 (u2)')
+    })
+
+    test('escapes remote markdown, quotes multiline fields, and rejects unsafe links', () => {
+      const fixture = makeOutput(publicChannel)
+      const message = fixture.messages[0]
+      if (!message) throw new Error('missing formatter fixture message')
+      message.user = '[admin](https://evil.test)'
+      message.text = 'one\ntwo *bold*'
+      message.attachments = [
+        {
+          title: '[click](https://evil.test)',
+          titleLink: 'javascript:alert(1)',
+          text: 'first\nsecond',
+        },
+      ]
+
+      const output = formatMarkdown([fixture])
+      expect(output).toContain('**\\[admin\\]\\(https://evil\\.test\\)**')
+      expect(output).toContain('> one\n> two \\*bold\\*')
+      expect(output).toContain('> first\n> second')
+      expect(output).not.toContain('javascript:')
+      expect(output).not.toContain('[click](https://evil.test)')
+    })
+
+    test('neutralizes block and table markdown from remote text', () => {
+      const fixture = makeOutput(publicChannel)
+      const message = fixture.messages[0]
+      if (!message) throw new Error('missing formatter fixture message')
+      message.text = '# heading\n---\n- item\n+ item\n~~strike~~\na | b'
+
+      const output = formatMarkdown([fixture])
+      expect(output).toContain('> \\# heading')
+      expect(output).toContain('> \\-\\-\\-')
+      expect(output).toContain('> \\- item')
+      expect(output).toContain('> \\+ item')
+      expect(output).toContain('> \\~\\~strike\\~\\~')
+      expect(output).toContain('> a \\| b')
     })
   })
 })

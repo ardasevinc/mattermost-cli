@@ -251,9 +251,23 @@ boundary, whether the query was proven truncated, visible post/thread coverage, 
 proved. `visibleThreads.status: "partial"` and `failedRootIds` report threads the server did not let
 the CLI prove complete. Each message also includes its stable post `id` and Mattermost `permalink`.
 
+### Current post state
+
+Message output represents the latest visible state returned by Mattermost, not edit history. It
+includes edit/update timestamps, pinned and system-post markers, webhook display names, payload
+file metadata, safe attachment display fields, and reaction summaries. This data comes from the
+list, search, or thread response itself; the CLI does not make per-post file or reaction requests.
+
+Normal retrieval excludes deleted posts and reports `deletedPostsIncluded: false`. If Mattermost
+does return a deleted post while hydrating context, the CLI emits only `[deleted post]` plus stable
+post metadata and suppresses its stale message, files, attachments, and reactions. Availability of
+file details, reactions, and actor usernames depends on the metadata included by the server and the
+caller's permissions.
+
 ## Security
 
-This tool automatically detects and redacts secrets in message content:
+This tool automatically detects and redacts secrets in all remotely controlled emitted strings,
+including messages, display names, file metadata, attachments, URLs, and reactions:
 
 - AWS access keys and secret keys
 - GitHub/GitLab tokens
@@ -265,6 +279,7 @@ This tool automatically detects and redacts secrets in message content:
 Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while preventing exposure.
 
 **Note:** Redaction happens on display. Original messages are not modified on the server.
+`--no-redact` disables secret masking, but unsafe control characters are still made visible.
 
 ## AI Agent Skill
 

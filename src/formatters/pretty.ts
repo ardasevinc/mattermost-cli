@@ -86,9 +86,12 @@ function formatMessagePretty(
   const timeStr = relative ? formatRelativeTime(msg.timestamp) : formatTime(msg.timestamp)
   const time = dim(timeStr)
   const user = userColor(msg.user)
+  const markers = messageMarkers(msg)
 
   const lines: string[] = []
-  lines.push(`${indent}${time} ${bold(user)} ${dim(compactPostRef(msg))}`)
+  lines.push(
+    `${indent}${time} ${bold(user)}${markers ? ` ${dim(markers)}` : ''} ${dim(compactPostRef(msg))}`,
+  )
 
   // Indent message content
   const textIndent = `${indent}  `
@@ -97,11 +100,13 @@ function formatMessagePretty(
     .map((line) => `${textIndent}${line}`)
     .join('\n')
   lines.push(indentedText)
+  lines.push(dim(`${textIndent}${formatStateTimes(msg)}`))
 
   // File attachments
-  if (msg.files.length > 0) {
-    lines.push(dim(`${textIndent}📎 ${msg.files.join(', ')}`))
+  if (msg.fileDetails.length > 0) {
+    lines.push(dim(`${textIndent}📎 ${formatFiles(msg)}`))
   }
+  appendRichContent(lines, msg, textIndent, (value) => dim(value))
 
   lines.push('')
 
@@ -154,16 +159,21 @@ function formatMessageNoColor(
   indent: string,
 ): void {
   const timeStr = relative ? formatRelativeTime(msg.timestamp) : formatTime(msg.timestamp)
-  lines.push(`${indent}[${timeStr}] ${msg.user} ${compactPostRef(msg)}`)
+  const markers = messageMarkers(msg)
+  lines.push(
+    `${indent}[${timeStr}] ${msg.user}${markers ? ` ${markers}` : ''} ${compactPostRef(msg)}`,
+  )
   const textIndent = `${indent}  `
   const indentedText = msg.text
     .split('\n')
     .map((line) => `${textIndent}${line}`)
     .join('\n')
   lines.push(indentedText)
-  if (msg.files.length > 0) {
-    lines.push(`${textIndent}Attachments: ${msg.files.join(', ')}`)
+  lines.push(`${textIndent}${formatStateTimes(msg)}`)
+  if (msg.fileDetails.length > 0) {
+    lines.push(`${textIndent}Files: ${formatFiles(msg)}`)
   }
+  appendRichContent(lines, msg, textIndent, (value) => value)
   lines.push('')
 
   if (msg.replies && msg.replies.length > 0) {
@@ -176,6 +186,80 @@ function formatMessageNoColor(
 function compactPostRef(msg: ProcessedMessage): string {
   const id = msg.id.length > 8 ? msg.id.slice(0, 8) : msg.id
   return `${id} ${msg.permalink}`
+}
+
+function messageMarkers(msg: ProcessedMessage): string {
+  const markers: string[] = []
+  if (msg.isDeleted) markers.push('[deleted]')
+  else if (msg.editedAt) markers.push('[edited]')
+  if (msg.isSystem) markers.push(msg.postType ? `[system:${msg.postType}]` : '[system]')
+  if (msg.isPinned) markers.push('[pinned]')
+  return markers.join(' ')
+}
+
+function formatFiles(msg: ProcessedMessage): string {
+  return msg.fileDetails
+    .map((file) => {
+      const label = file.name ? `${file.name} (${file.id})` : file.id
+      const details = [
+        file.mime,
+        file.extension,
+        file.size === undefined ? undefined : `${file.size} B`,
+      ]
+        .filter(Boolean)
+        .join(', ')
+      return `${label}${details ? `, ${details}` : ''}`
+    })
+    .join(', ')
+}
+
+function formatStateTimes(msg: ProcessedMessage): string {
+  const values = [`Updated ${msg.updatedAt.toISOString()}`]
+  if (msg.editedAt) values.push(`edited ${msg.editedAt.toISOString()}`)
+  if (msg.deletedAt) values.push(`deleted ${msg.deletedAt.toISOString()}`)
+  return values.join('; ')
+}
+
+function appendRichContent(
+  lines: string[],
+  msg: ProcessedMessage,
+  indent: string,
+  decorate: (value: string) => string,
+): void {
+  for (const attachment of msg.attachments) {
+    if (attachment.pretext) lines.push(decorate(`${indent}${attachment.pretext}`))
+    if (attachment.title) lines.push(decorate(`${indent}Attachment: ${attachment.title}`))
+    if (attachment.titleLink) lines.push(decorate(`${indent}  Link: ${attachment.titleLink}`))
+    if (attachment.authorName) lines.push(decorate(`${indent}  By: ${attachment.authorName}`))
+    if (attachment.text) lines.push(decorate(`${indent}  ${attachment.text}`))
+    for (const field of attachment.fields ?? []) {
+      lines.push(
+        decorate(`${indent}  ${field.title ? `${field.title}: ` : ''}${field.value ?? ''}`),
+      )
+    }
+    if (attachment.footer) lines.push(decorate(`${indent}  ${attachment.footer}`))
+    if (attachment.fallback) lines.push(decorate(`${indent}  Fallback: ${attachment.fallback}`))
+    if (attachment.color) lines.push(decorate(`${indent}  Color: ${attachment.color}`))
+    if (attachment.timestamp) lines.push(decorate(`${indent}  Timestamp: ${attachment.timestamp}`))
+    for (const url of [
+      attachment.authorLink,
+      attachment.authorIcon,
+      attachment.footerIcon,
+      attachment.imageUrl,
+      attachment.thumbUrl,
+    ]) {
+      if (url) lines.push(decorate(`${indent}  ${url}`))
+    }
+  }
+  if (msg.reactions.length > 0) {
+    const reactions = msg.reactions
+      .map(({ emoji, count, actors }) => {
+        const names = actors.map((actor) => actor.username ?? actor.id).join(', ')
+        return `:${emoji}: ${count}${names ? ` (${names})` : ''}`
+      })
+      .join('  ')
+    lines.push(decorate(`${indent}Reactions: ${reactions}`))
+  }
 }
 
 function appendCoverage(lines: string[], output: MessageOutput): void {

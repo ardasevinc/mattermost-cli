@@ -44,12 +44,21 @@ export interface Post {
   reply_count: number // number of replies (root posts only)
   file_ids: string[]
   pending_post_id: string
+  is_pinned?: boolean
+  override_username?: string
   metadata?: PostMetadata
 }
 
 export interface PostMetadata {
   files?: FileInfo[]
   reactions?: Reaction[]
+  embeds?: PostEmbed[]
+}
+
+export interface PostEmbed {
+  type?: string
+  url?: string
+  data?: Record<string, unknown>
 }
 
 export interface FileInfo {
@@ -65,6 +74,30 @@ export interface Reaction {
   post_id: string
   emoji_name: string
   create_at: number
+}
+
+export interface PostAttachmentField {
+  title?: unknown
+  value?: unknown
+  short?: boolean
+}
+
+export interface PostAttachment {
+  fallback?: unknown
+  pretext?: unknown
+  title?: unknown
+  title_link?: unknown
+  text?: unknown
+  fields?: unknown
+  footer?: unknown
+  footer_icon?: unknown
+  author_name?: unknown
+  author_link?: unknown
+  author_icon?: unknown
+  color?: unknown
+  image_url?: unknown
+  thumb_url?: unknown
+  ts?: unknown
 }
 
 export interface PostsResponse {
@@ -151,10 +184,63 @@ export interface ProcessedMessage {
   userId: string
   text: string
   timestamp: Date
+  updatedAt: Date
+  editedAt?: Date
+  deletedAt?: Date
+  isDeleted: boolean
+  postType: string
+  isSystem: boolean
+  isPinned: boolean
   files: string[]
+  fileDetails: ProcessedFile[]
+  attachments: ProcessedAttachment[]
+  reactions: ReactionSummary[]
   rootId?: string
   replyCount?: number
   replies?: ProcessedMessage[]
+}
+
+export interface ProcessedFile {
+  id: string
+  name?: string
+  mime?: string
+  size?: number
+  extension?: string
+}
+
+export interface ProcessedAttachmentField {
+  title?: string
+  value?: string
+  short?: boolean
+}
+
+export interface ProcessedAttachment {
+  fallback?: string
+  pretext?: string
+  title?: string
+  titleLink?: string
+  text?: string
+  fields?: ProcessedAttachmentField[]
+  footer?: string
+  footerIcon?: string
+  authorName?: string
+  authorLink?: string
+  authorIcon?: string
+  color?: string
+  imageUrl?: string
+  thumbUrl?: string
+  timestamp?: string
+}
+
+export interface ReactionActor {
+  id: string
+  username?: string
+}
+
+export interface ReactionSummary {
+  emoji: string
+  count: number
+  actors: ReactionActor[]
 }
 
 export interface ProcessedChannel {
@@ -188,13 +274,11 @@ export interface RetrievalMetadata {
   deletedPostsIncluded: false
 }
 
-/** @deprecated Use MessageOutput */
-export type DMOutput = MessageOutput
-
 export interface Redaction {
   type: string
   masked: string
   position: number
+  field?: string
 }
 
 export interface PreprocessResult {
