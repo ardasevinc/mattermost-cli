@@ -74,6 +74,13 @@ mm dms -c <channel-id>             # specific DM channel by ID
 `mm dms --limit` is a total output cap across all matched DM channels.
 The limit selects seed messages; complete thread context may make the visible output larger.
 
+### Fetch Group Direct Messages
+```bash
+mm group-dms                         # all group DMs, last 7 days
+mm group-dms --channel <channel-id>  # one validated group DM
+mm group-dms --since 24h --limit 100 # shared output budget across group DMs
+```
+
 ### Fetch Channel Messages
 ```bash
 mm channel general                 # last 7 days from #general
@@ -176,7 +183,7 @@ These apply to all commands:
 | `--json` flag | JSON | Parsing, analysis, programmatic access |
 | `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 
-Empty `dms`, `channel`, `search`, and `mentions` reads are successful: JSON output is `[]`, while
+Empty `dms`, `group-dms`, `channel`, `search`, and `mentions` reads are successful: JSON output is `[]`, while
 terminal and piped text output is `No messages found.`. Treat a missing requested thread or post as
 an error. Empty `unread --json` output is `{ "unread": [] }`.
 

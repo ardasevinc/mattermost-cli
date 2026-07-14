@@ -121,6 +121,21 @@ mm dms --no-threads
 
 `mm dms --limit` is a total output cap across all matched DM channels, not a per-channel cap.
 
+### Fetch group direct messages
+
+```bash
+# All group DMs from the last 7 days
+mm group-dms
+
+# One group DM by channel ID
+mm group-dms --channel <channel-id>
+
+# Adjust the shared output budget and time range
+mm group-dms --since 24h --limit 100
+```
+
+`mm group-dms --limit` is a total output cap across all matched group-DM channels.
+
 ### Fetch a specific thread
 
 ```bash
@@ -201,7 +216,12 @@ DMs:
   -u, --user <username>   Filter by username (repeatable)
   -l, --limit <number>    Max total messages across matched DMs (default: 50)
   -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
-  -c, --channel <id>      Specific channel ID
+  -c, --channel <id>      Specific direct-message channel ID (type D only)
+
+Group DMs:
+  -l, --limit <number>    Max total messages across matched group DMs (default: 50)
+  -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
+  -c, --channel <id>      Specific group-DM channel ID (type G only)
 
 Channels:
   channels --type <type>  Filter list by type: dm, public, private, group, all
@@ -251,7 +271,7 @@ boundary, whether the query was proven truncated, visible post/thread coverage, 
 proved. `visibleThreads.status: "partial"` and `failedRootIds` report threads the server did not let
 the CLI prove complete. Each message also includes its stable post `id` and Mattermost `permalink`.
 
-Empty successful reads from `dms`, `channel`, `search`, and `mentions` exit successfully. They emit
+Empty successful reads from `dms`, `group-dms`, `channel`, `search`, and `mentions` exit successfully. They emit
 `[]` with `--json` and `No messages found.` in terminal or piped text output. A missing requested
 thread or post remains an error.
 

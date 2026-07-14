@@ -5,25 +5,25 @@ import type { Channel, ChannelMember, Team } from '../types'
 import { getClient } from './client'
 import { getMe, getUserByUsername } from './users'
 
-export async function getMyChannels(): Promise<Channel[]> {
-  const me = await getMe()
+export async function getMyChannels(userId?: string): Promise<Channel[]> {
+  const resolvedUserId = userId ?? (await getMe()).id
   const client = getClient()
 
   // Get all channels for the user's teams first, then their direct channels
   // For DMs, we use the user's direct channels endpoint
-  const channels = await client.get<Channel[]>(`/users/${me.id}/channels`)
+  const channels = await client.get<Channel[]>(`/users/${resolvedUserId}/channels`)
 
   return channels
 }
 
-export async function getMyDMChannels(): Promise<Channel[]> {
-  const channels = await getMyChannels()
+export async function getMyDMChannels(userId?: string): Promise<Channel[]> {
+  const channels = await getMyChannels(userId)
   // Filter for direct messages only (type 'D')
   return [...new Map(channels.filter((ch) => ch.type === 'D').map((ch) => [ch.id, ch])).values()]
 }
 
-export async function getMyGroupDMChannels(): Promise<Channel[]> {
-  const channels = await getMyChannels()
+export async function getMyGroupDMChannels(userId?: string): Promise<Channel[]> {
+  const channels = await getMyChannels(userId)
   // Filter for group DMs (type 'G')
   return channels.filter((ch) => ch.type === 'G')
 }

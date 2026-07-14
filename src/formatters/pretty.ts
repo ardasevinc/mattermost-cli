@@ -8,6 +8,9 @@ function channelHeader(channel: ProcessedChannel): string {
   if (channel.type === 'dm') {
     return `💬 DMs with ${cyan(channel.name)}`
   }
+  if (channel.type === 'group') {
+    return `💬 Group DM: ${cyan(channel.name)}`
+  }
   const name = `#${channel.name}`
   const display = channel.displayName ? ` (${channel.displayName})` : ''
   return `📢 ${cyan(name)}${display}`
@@ -16,6 +19,9 @@ function channelHeader(channel: ProcessedChannel): string {
 function channelHeaderPlain(channel: ProcessedChannel): string {
   if (channel.type === 'dm') {
     return `DMs with ${channel.name}`
+  }
+  if (channel.type === 'group') {
+    return `Group DM: ${channel.name}`
   }
   const display = channel.displayName ? ` (${channel.displayName})` : ''
   return `#${channel.name}${display}`

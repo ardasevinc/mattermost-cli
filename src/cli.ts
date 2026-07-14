@@ -12,10 +12,12 @@ import {
   getMe,
   getMyChannels,
   getMyDMChannels,
+  getMyGroupDMChannels,
   getOtherUserIdFromDMChannel,
   getPostThread,
   getTeamChannelMembers,
   getUser,
+  getUserByUsername,
   getUsersByIds,
   initClient,
   normalizeChannelName,
@@ -39,6 +41,7 @@ import type {
   ChannelTypeFilter,
   CLIOptions,
   DMsOptions,
+  GroupDMsOptions,
   MentionOptions,
   MessageOutput,
   Post,
@@ -164,9 +167,13 @@ function channelTypeLabel(type: Channel['type']): ProcessedChannel['type'] {
 }
 
 function channelLabel(channel: ProcessedChannel): string {
-  if (channel.type === 'dm') return channel.name
+  if (channel.type === 'dm' || channel.type === 'group') return channel.name
   const display = channel.displayName ? ` (${channel.displayName})` : ''
   return `#${channel.name}${display}`
+}
+
+function presentOneLine(value: string, redact: boolean): string {
+  return sanitizeTerminalLabel(preprocess(value, { redact }).text)
 }
 
 export function hasLiteralMention(message: string, terms: string[]): boolean {
@@ -262,6 +269,14 @@ async function buildProcessedChannel(
       id: clean(channel.id, 'channel.id'),
       type: 'dm',
       name: `@${clean(otherUser.username, 'channel.dmUsername')}`,
+    }
+  }
+
+  if (type === 'group') {
+    return {
+      id: clean(channel.id, 'channel.id'),
+      type,
+      name: clean(channel.display_name || channel.name, 'channel.displayName'),
     }
   }
 
@@ -513,7 +528,7 @@ export async function listChannels(options: {
   initClient(options.url, options.token)
 
   const me = await getMe()
-  let channels = await getMyChannels()
+  let channels = await getMyChannels(me.id)
 
   if (options.typeFilter !== 'all') {
     const typeMap: Record<Exclude<ChannelTypeFilter, 'all'>, Channel['type']> = {
@@ -576,7 +591,8 @@ export async function listChannels(options: {
           : formatDate(date, { includeYear: true })
       }
 
-      const label = channel.type === 'dm' ? channel.name : `#${channel.name}`
+      const label =
+        channel.type === 'dm' || channel.type === 'group' ? channel.name : `#${channel.name}`
       const display = channel.displayName ? ` (${channel.displayName})` : ''
       console.log(
         `  ${label.padEnd(25)}${display ? display.padEnd(25) : ''.padEnd(25)} ${channel.messageCount} msgs, last: ${lastPost}`,
@@ -590,26 +606,71 @@ export async function listChannels(options: {
 export async function fetchDMs(options: DMsOptions): Promise<void> {
   initClient(options.url, options.token)
 
-  const me = await getMe()
+  let myUserId: string
   let channels: Channel[] = []
 
   if (options.channel) {
-    channels = [await getChannel(options.channel)]
+    const channel = await getChannel(options.channel)
+    if (channel.type !== 'D') {
+      throw new Error(
+        `Channel "${presentOneLine(channel.id, options.redact)}" is not a direct-message channel.`,
+      )
+    }
+    channels = [channel]
+    myUserId = (await getMe()).id
   } else if (options.user.length > 0) {
+    const me = await getMe()
+    myUserId = me.id
+    const dmChannels = await getMyDMChannels(me.id)
     for (const username of options.user) {
       try {
-        const channel = await getDMChannelByUsername(username)
+        const user = await getUserByUsername(username)
+        const channel = dmChannels.find(
+          (candidate) => getOtherUserIdFromDMChannel(candidate, me.id) === user.id,
+        )
         if (channel) channels.push(channel)
       } catch {
         console.error(`Warning: Could not find DM channel with @${sanitizeTerminalLabel(username)}`)
       }
     }
   } else {
-    channels = await getMyDMChannels()
+    const me = await getMe()
+    myUserId = me.id
+    channels = await getMyDMChannels(me.id)
   }
 
   channels = [...new Map(channels.map((channel) => [channel.id, channel])).values()]
 
+  await fetchConversationChannels(channels, myUserId, options)
+}
+
+export async function fetchGroupDMs(options: GroupDMsOptions): Promise<void> {
+  initClient(options.url, options.token)
+
+  if (options.channel) {
+    const channel = await getChannel(options.channel)
+    if (channel.type !== 'G') {
+      throw new Error(`Channel "${presentOneLine(channel.id, options.redact)}" is not a group DM.`)
+    }
+    const me = await getMe()
+    await fetchConversationChannels([channel], me.id, options)
+    return
+  }
+
+  const me = await getMe()
+  const channels = await getMyGroupDMChannels(me.id)
+  await fetchConversationChannels(
+    [...new Map(channels.map((channel) => [channel.id, channel])).values()],
+    me.id,
+    options,
+  )
+}
+
+async function fetchConversationChannels(
+  channels: Channel[],
+  myUserId: string,
+  options: GroupDMsOptions | DMsOptions,
+): Promise<void> {
   if (channels.length === 0) {
     formatOutput([], options)
     return
@@ -640,7 +701,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
     return
   }
 
-  // `--limit` for DMs is a total output budget across all matched DM channels.
+  // `--limit` is a total output budget across all matched conversation channels.
   const selectedPostIds = new Set(
     takeMostRecentPosts(allPosts, options.limit).map((post) => post.id),
   )
@@ -648,7 +709,7 @@ export async function fetchDMs(options: DMsOptions): Promise<void> {
   const selectedPosts = allPosts.filter((post) => selectedPostIds.has(post.id))
   const outputs = await buildOutputsFromPosts(
     selectedPosts,
-    me.id,
+    myUserId,
     options,
     {
       source: 'recent',

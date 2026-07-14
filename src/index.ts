@@ -7,6 +7,7 @@ import pkg from '../package.json'
 import {
   fetchChannel,
   fetchDMs,
+  fetchGroupDMs,
   fetchMentions,
   fetchThread,
   listChannels,
@@ -187,7 +188,7 @@ program
   .option('-u, --user <username...>', 'Filter by username (repeatable)')
   .option('-l, --limit <number>', 'Max messages to fetch', '50')
   .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
-  .option('-c, --channel <id>', 'Specific channel ID')
+  .option('-c, --channel <id>', 'Specific direct-message channel ID (type D only)')
   .action(async (cmdOpts) => {
     const globalOpts = program.opts()
     const config = await resolveConfig(globalOpts)
@@ -202,6 +203,35 @@ program
         redact: resolveRedact(globalOpts, config.fileConfig),
         threads: globalOpts.threads ?? true,
         user: cmdOpts.user || [],
+        limit: validateLimit(cmdOpts.limit),
+        since: cmdOpts.since,
+        channel: cmdOpts.channel,
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('group-dms')
+  .description('Fetch group direct messages')
+  .option('-l, --limit <number>', 'Max messages to fetch', '50')
+  .option('-s, --since <duration>', 'Time range: "24h", "7d", "30d"', '7d')
+  .option('-c, --channel <id>', 'Specific group DM channel ID (type G only)')
+  .action(async (cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+
+    try {
+      await fetchGroupDMs({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        color: globalOpts.color,
+        relative: resolveRelative(globalOpts),
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        threads: globalOpts.threads ?? true,
         limit: validateLimit(cmdOpts.limit),
         since: cmdOpts.since,
         channel: cmdOpts.channel,

@@ -42,6 +42,10 @@ mm dms [options]
 mm dms --user=<username>
 mm dms -u bob -u alice    # Multiple users
 
+# Fetch group DMs (all or one validated group channel)
+mm group-dms [--limit 50] [--since 7d]
+mm group-dms --channel <channel-id>
+
 # Fetch one thread
 mm thread <postId>
 
@@ -71,7 +75,15 @@ mm channel #dev --team myteam
 --user, -u        Filter by username (repeatable)
 --limit, -l       Max total messages across matched DMs (default: 50)
 --since, -s       Time range: "24h", "7d", "30d" (default: 7d)
---channel, -c     Specific channel ID (skip channel lookup)
+--channel, -c     Specific direct-message channel ID (type D only)
+```
+
+### Group DMs Options
+
+```
+--limit, -l       Max total messages across matched group DMs (default: 50)
+--since, -s       Time range: "24h", "7d", "30d" (default: 7d)
+--channel, -c     Specific group-DM channel ID (type G only)
 ```
 
 ### Channels Options
@@ -153,7 +165,7 @@ if one is returned in hydrated context, only a stable `[deleted post]` placehold
 - Includes redaction log
 - Good for programmatic use
 
-Empty successful message reads (`dms`, `channel`, `search`, and `mentions`) return `[]` and exit
+Empty successful message reads (`dms`, `group-dms`, `channel`, `search`, and `mentions`) return `[]` and exit
 zero. Pretty and Markdown modes print `No messages found.` instead. A missing requested thread or
 post is still an error. Empty unread JSON retains its command-specific shape: `{ "unread": [] }`.
 

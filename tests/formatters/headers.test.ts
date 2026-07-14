@@ -64,6 +64,11 @@ describe('formatter channel headers', () => {
     type: 'private',
     name: 'secret-stuff',
   }
+  const groupChannel: ProcessedChannel = {
+    id: 'ch4',
+    type: 'group',
+    name: 'Design Crew',
+  }
 
   describe('pretty formatter (no color)', () => {
     test('DM header shows "DMs with @user"', () => {
@@ -80,6 +85,12 @@ describe('formatter channel headers', () => {
       const output = formatPretty([makeOutput(privateChannel)], { color: false })
       expect(output).toContain('#secret-stuff')
       expect(output).not.toContain('undefined')
+    })
+
+    test('group DM header shows its display label without a hash', () => {
+      const output = formatPretty([makeOutput(groupChannel)], { color: false })
+      expect(output).toContain('Group DM: Design Crew')
+      expect(output).not.toContain('#Design Crew')
     })
 
     test('shows a compact post id, permalink, and coverage warning', () => {

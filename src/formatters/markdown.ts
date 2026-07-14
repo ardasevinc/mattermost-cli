@@ -21,6 +21,9 @@ function channelHeaderMarkdown(channel: ProcessedChannel): string {
   if (channel.type === 'dm') {
     return `## DMs with ${escapeMarkdown(channel.name)}`
   }
+  if (channel.type === 'group') {
+    return `## Group DM: ${escapeMarkdown(channel.name)}`
+  }
   const display = channel.displayName ? ` (${escapeMarkdown(channel.displayName)})` : ''
   return `## #${escapeMarkdown(channel.name)}${display}`
 }

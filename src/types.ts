@@ -151,6 +151,12 @@ export interface DMsOptions extends CLIOptions {
   channel?: string
 }
 
+export interface GroupDMsOptions extends CLIOptions {
+  limit: number
+  since: string
+  channel?: string
+}
+
 export interface ChannelOptions extends CLIOptions {
   channel: string // channel name or ID
   team?: string // team name (required if multi-team)
