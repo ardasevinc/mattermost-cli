@@ -92,3 +92,29 @@ describe.each([
     expect(output.map(({ id }) => id).sort()).toEqual(expectedIds.sort())
   })
 })
+
+test('human channel listing labels group DMs without a hash', async () => {
+  installRouteFetch([
+    { method: 'GET', path: '/api/v4/users/me', handle: () => ({ id: 'me', username: 'me' }) },
+    {
+      method: 'GET',
+      path: '/api/v4/users/me/channels',
+      handle: () => channels.filter((channel) => channel.type === 'G'),
+    },
+  ])
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+  await listChannels({
+    url: 'https://mattermost.test',
+    token: 'token',
+    json: false,
+    color: false,
+    relative: false,
+    redact: true,
+    typeFilter: 'group',
+  })
+
+  const output = log.mock.calls.map(([value]) => String(value)).join('\n')
+  expect(output).toContain('Group')
+  expect(output).not.toContain('#Group')
+})
