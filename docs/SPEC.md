@@ -113,9 +113,9 @@ send group <channel-id> [--dry-run]
 ```
 
 Messages come only from stdin. Input is preserved exactly, including multiline content and a final
-newline. It must be valid UTF-8, non-whitespace, and no larger than 65,535 bytes. TTY reads are
-rejected rather than waiting for hidden interactive input. The active Mattermost credential is
-blocked from outbound content before any API request.
+newline. It must be valid UTF-8, non-whitespace, no longer than 16,383 Unicode characters, and no
+larger than 65,535 bytes. TTY reads are rejected rather than waiting for hidden interactive input.
+The active Mattermost credential is blocked from outbound content before any API request.
 
 DM sending resolves an exact case-insensitive username, validates the authenticated identity and
 all discovered D channels, then reuses the matching channel or calls `POST /channels/direct` once.

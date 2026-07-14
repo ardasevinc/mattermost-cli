@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { clearUserCache, MattermostMutationOutcomeUnknownError } from '../src/api'
 import { MattermostDeliveryConfirmedError, sendDirectMessage, sendGroupMessage } from '../src/cli'
+import { LONG_MARKDOWN, SHORT_MARKDOWN } from './fixtures/markdown'
 
 const base = {
   url: 'https://mattermost.test',
@@ -133,7 +134,7 @@ describe('message sending handlers', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  test('creates a missing DM, sends once, and omits message content from the receipt', async () => {
+  test('creates a missing DM and sends short Markdown verbatim without reflecting it', async () => {
     const direct = channel()
     const fetchMock = vi
       .fn()
@@ -147,20 +148,24 @@ describe('message sending handlers', () => {
           channel_id: 'channel-id',
           user_id: 'me',
           create_at: 1_784_023_427_000,
-          message: 'very private',
+          message: SHORT_MARKDOWN,
         }),
       )
     vi.stubGlobal('fetch', fetchMock)
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000000')
     const output = captureStdout()
 
-    await sendDirectMessage({ ...base, username: 'alice', message: 'very private' })
+    await sendDirectMessage({ ...base, username: 'alice', message: SHORT_MARKDOWN })
 
     expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(fetchMock.mock.calls[3]?.[0]).toBe('https://mattermost.test/api/v4/channels/direct')
     expect(fetchMock.mock.calls[4]?.[0]).toBe('https://mattermost.test/api/v4/posts')
+    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toMatchObject({
+      channel_id: 'channel-id',
+      message: SHORT_MARKDOWN,
+    })
     const receiptText = output()
-    expect(receiptText).not.toContain('very private')
+    expect(receiptText).not.toContain('Release ready')
     expect(JSON.parse(receiptText)).toMatchObject({
       status: 'sent',
       destination: { type: 'dm', label: '@alice', channelId: 'channel-id' },
@@ -194,7 +199,7 @@ describe('message sending handlers', () => {
     )
   })
 
-  test('sends once to an existing group DM after validating its type', async () => {
+  test('sends long Markdown verbatim to an existing group without reflecting it', async () => {
     const group = channel({ type: 'G', name: 'group-name', display_name: 'Test Group' })
     const fetchMock = vi
       .fn()
@@ -211,11 +216,17 @@ describe('message sending handlers', () => {
     vi.stubGlobal('fetch', fetchMock)
     const output = captureStdout()
 
-    await sendGroupMessage({ ...base, channelId: 'channel-id', message: 'hello group' })
+    await sendGroupMessage({ ...base, channelId: 'channel-id', message: LONG_MARKDOWN })
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://mattermost.test/api/v4/posts')
-    expect(JSON.parse(output())).toMatchObject({
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+      channel_id: 'channel-id',
+      message: LONG_MARKDOWN,
+    })
+    const receipt = output()
+    expect(receipt).not.toContain('Extended deployment report')
+    expect(JSON.parse(receipt)).toMatchObject({
       status: 'sent',
       destination: { type: 'group', label: 'Test Group', channelId: 'channel-id' },
       post: { id: postId },

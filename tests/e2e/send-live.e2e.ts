@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { describe, expect, test } from 'vitest'
+import { MAX_MESSAGE_CHARACTERS } from '../../src/input'
+import { LONG_MARKDOWN, LONG_MARKDOWN_CHARACTERS, SHORT_MARKDOWN } from '../fixtures/markdown'
 
 const url = process.env.MM_E2E_URL
 const token = process.env.MM_E2E_TOKEN
@@ -47,7 +49,7 @@ function cli(args: string[], input?: string): Receipt {
 }
 
 describe.sequential('disposable Mattermost message sending', () => {
-  test('dry-runs and then creates exactly one direct-message post with exact stdin bytes', async () => {
+  test('dry-runs and sends short Markdown exactly once to a direct message', async () => {
     const dryRun = cli(['send', 'dm', 'alice', '--dry-run'])
     expect(dryRun).toEqual({
       status: 'dry_run',
@@ -59,7 +61,7 @@ describe.sequential('disposable Mattermost message sending', () => {
       },
     })
 
-    const message = `isolated DM ${crypto.randomUUID()} 🌍\nsecond line\n`
+    const message = `${SHORT_MARKDOWN}\n<!-- ${crypto.randomUUID()} -->\n`
     const sent = cli(['send', 'dm', 'alice'], message)
     expect(sent.status).toBe('sent')
     expect(sent.destination).toMatchObject({
@@ -90,7 +92,7 @@ describe.sequential('disposable Mattermost message sending', () => {
     expect(page.order.filter((id) => page.posts[id]?.message === message)).toHaveLength(1)
   })
 
-  test('dry-runs and sends exactly once to an existing group conversation', async () => {
+  test('dry-runs and sends long Markdown exactly once to an existing group conversation', async () => {
     const users = await Promise.all(
       ['sender', 'alice', 'bob'].map((username) =>
         api<{ id: string }>(`/users/username/${username}`),
@@ -108,7 +110,9 @@ describe.sequential('disposable Mattermost message sending', () => {
     })
     const before = await api<{ order: string[] }>(`/channels/${group.id}/posts?per_page=200`)
 
-    const message = `isolated group ${crypto.randomUUID()}\n`
+    const message = `${LONG_MARKDOWN}\n<!-- ${crypto.randomUUID()} -->\n`
+    expect([...message].length).toBeGreaterThan(LONG_MARKDOWN_CHARACTERS)
+    expect([...message].length).toBeLessThan(MAX_MESSAGE_CHARACTERS)
     const sent = cli(['send', 'group', group.id], message)
     expect(sent).toMatchObject({
       status: 'sent',

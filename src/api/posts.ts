@@ -1,6 +1,7 @@
 // Post/message fetching with pagination
 
 import { comparePostIds } from '../cursor'
+import { validateMessageContent } from '../input'
 import type { Post, PostRetrievalResult, SearchResponse } from '../types'
 import { getClient, MattermostMutationOutcomeUnknownError } from './client'
 
@@ -37,7 +38,7 @@ export async function createPost(
   pendingPostId: string = crypto.randomUUID(),
 ): Promise<CreatedPostReceipt> {
   if (!channelId.trim()) throw new Error('A destination channel is required.')
-  if (!message.trim()) throw new Error('Message cannot be empty.')
+  validateMessageContent(message)
   if (!pendingPostId.trim()) throw new Error('A pending post ID is required.')
 
   const post = await getClient().post<unknown>('/posts', {

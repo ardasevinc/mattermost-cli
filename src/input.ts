@@ -1,4 +1,15 @@
 export const MAX_MESSAGE_BYTES = 65_535
+export const MAX_MESSAGE_CHARACTERS = 16_383
+
+export function validateMessageContent(message: string): void {
+  if (!message.trim()) throw new Error('Message cannot be empty.')
+  if ([...message].length > MAX_MESSAGE_CHARACTERS) {
+    throw new Error(`Message exceeds ${MAX_MESSAGE_CHARACTERS} Unicode characters.`)
+  }
+  if (Buffer.byteLength(message) > MAX_MESSAGE_BYTES) {
+    throw new Error(`Message exceeds ${MAX_MESSAGE_BYTES} UTF-8 bytes.`)
+  }
+}
 
 export interface MessageInputStream extends AsyncIterable<Uint8Array | string> {
   isTTY?: boolean
@@ -24,6 +35,6 @@ export async function readMessageInput(stream: MessageInputStream): Promise<stri
   } catch {
     throw new Error('Message must be valid UTF-8.')
   }
-  if (!message.trim()) throw new Error('Message cannot be empty.')
+  validateMessageContent(message)
   return message
 }

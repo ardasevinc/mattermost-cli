@@ -162,8 +162,8 @@ mm --json send group <group-channel-id> --dry-run
 `send dm` reuses an existing direct channel or creates one for the exact resolved username.
 `send group` never creates or guesses a group conversation. Both commands validate the destination
 before posting, send the message exactly once, and never echo message content in their receipts.
-Input must be valid UTF-8, non-empty, and at most 65,535 bytes. The exact active Mattermost
-credential is blocked from outbound content regardless of `--no-redact`.
+Input must be valid UTF-8, non-empty, at most 16,383 Unicode characters, and at most 65,535 bytes.
+The exact active Mattermost credential is blocked from outbound content regardless of `--no-redact`.
 
 Dry runs perform reads only. A missing DM reports `channelId: null` and `willCreate: true` without
 creating it. Successful JSON receipts contain only status, sanitized destination identity, post ID,

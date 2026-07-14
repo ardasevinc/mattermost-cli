@@ -5,6 +5,7 @@ import {
   initClient,
   MattermostMutationOutcomeUnknownError,
 } from '../../src/api'
+import { MAX_MESSAGE_CHARACTERS } from '../../src/input'
 
 describe('message write API', () => {
   const postId = 'p'.repeat(26)
@@ -117,6 +118,17 @@ describe('message write API', () => {
     initClient('https://mattermost.test', 'token')
 
     await expect(createPost('channel-id', message)).rejects.toThrow('Message cannot be empty.')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects a message above the Mattermost character limit before network access', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    initClient('https://mattermost.test', 'token')
+
+    await expect(createPost('channel-id', 'a'.repeat(MAX_MESSAGE_CHARACTERS + 1))).rejects.toThrow(
+      `Message exceeds ${MAX_MESSAGE_CHARACTERS} Unicode characters.`,
+    )
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
