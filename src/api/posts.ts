@@ -2,7 +2,7 @@
 
 import { comparePostIds } from '../cursor'
 import type { Post, PostRetrievalResult, SearchResponse } from '../types'
-import { getClient } from './client'
+import { getClient, MattermostMutationOutcomeUnknownError } from './client'
 
 interface GetPostsOptions {
   limit?: number
@@ -36,7 +36,7 @@ export async function createPost(
     pending_post_id: pendingPostId,
   })
   if (typeof post !== 'object' || post === null || Array.isArray(post)) {
-    throw new Error('Invalid create-post response.')
+    throw new MattermostMutationOutcomeUnknownError()
   }
   const raw = post as Record<string, unknown>
   if (
@@ -49,7 +49,7 @@ export async function createPost(
     !Number.isFinite(raw.create_at) ||
     raw.create_at <= 0
   ) {
-    throw new Error('Invalid create-post response.')
+    throw new MattermostMutationOutcomeUnknownError()
   }
 
   return {

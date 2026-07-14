@@ -205,6 +205,18 @@ export interface UsersOptions extends IdentityOptions {
   limit: number
 }
 
+export interface SendDirectMessageOptions extends IdentityOptions {
+  username: string
+  message?: string
+  dryRun: boolean
+}
+
+export interface SendGroupMessageOptions extends IdentityOptions {
+  channelId: string
+  message?: string
+  dryRun: boolean
+}
+
 // Processed message for output
 
 export interface ProcessedMessage {

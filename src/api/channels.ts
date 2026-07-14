@@ -2,7 +2,7 @@
 
 import { preprocess, sanitizeTerminalLabel } from '../preprocessing'
 import type { Channel, ChannelMember, Team } from '../types'
-import { getClient } from './client'
+import { getClient, MattermostMutationOutcomeUnknownError } from './client'
 import { getMe, getUserByUsername } from './users'
 
 export interface CanonicalTeam {
@@ -89,12 +89,12 @@ export async function createDirectChannel(myUserId: string, otherUserId: string)
     (channel as Record<string, unknown>).type !== 'D' ||
     typeof (channel as Record<string, unknown>).name !== 'string'
   ) {
-    throw new Error('Invalid direct-message channel response.')
+    throw new MattermostMutationOutcomeUnknownError()
   }
 
   const directChannel = channel as Channel
   if (getOtherUserIdFromDMChannel(directChannel, myUserId) !== otherUserId) {
-    throw new Error('Invalid direct-message channel response.')
+    throw new MattermostMutationOutcomeUnknownError()
   }
   return directChannel
 }

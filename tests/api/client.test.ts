@@ -133,7 +133,9 @@ describe('MattermostClient', () => {
     await vi.advanceTimersByTimeAsync(1000)
 
     await expect(read).resolves.toEqual({ id: 'me' })
-    await expect(client.post('/posts', { message: 'hello' })).rejects.toMatchObject({ status: 503 })
+    await expect(client.post('/posts', { message: 'hello' })).rejects.toBeInstanceOf(
+      MattermostMutationOutcomeUnknownError,
+    )
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
@@ -222,6 +224,22 @@ describe('MattermostClient', () => {
     await expect(
       new MattermostClient('https://mattermost.example.com', 'fake-token').get('/users/me'),
     ).rejects.toThrow('Mattermost returned an invalid JSON response.')
+  })
+
+  test('treats malformed mutation success JSON as an unknown outcome without replaying', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.reject(new SyntaxError('secret response fragment')),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      new MattermostClient('https://mattermost.example.com', 'fake-token').post('/posts', {
+        message: 'secret message',
+      }),
+    ).rejects.toBeInstanceOf(MattermostMutationOutcomeUnknownError)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   test('retries a terminated response body for a read-only request', async () => {

@@ -33,11 +33,12 @@ function waitForRetry(delay: number, reason: string, attempt: number): Promise<v
 
 class RequestTimeoutError extends Error {}
 class RequestTransportError extends Error {}
+class InvalidJSONResponseError extends Error {}
 
 export class MattermostMutationOutcomeUnknownError extends Error {
   constructor() {
     super(
-      'Mattermost did not confirm the write. Its outcome is unknown; do not retry automatically.',
+      'Mattermost did not confirm the write. Its outcome is unknown; check the destination before retrying.',
     )
     this.name = 'MattermostMutationOutcomeUnknownError'
   }
@@ -88,7 +89,7 @@ export class MattermostClient {
       } catch (error) {
         if (controller.signal.aborted) throw new RequestTimeoutError()
         if (error instanceof TypeError) throw new RequestTransportError()
-        throw new Error('Mattermost returned an invalid JSON response.')
+        throw new InvalidJSONResponseError()
       }
     } finally {
       clearTimeout(timeout)
@@ -107,6 +108,10 @@ export class MattermostClient {
     try {
       attempt = await this.attempt<T>(method, url, body)
     } catch (error) {
+      if (error instanceof InvalidJSONResponseError) {
+        if (!retrySafe && method !== 'GET') throw new MattermostMutationOutcomeUnknownError()
+        throw new Error('Mattermost returned an invalid JSON response.')
+      }
       if (!(error instanceof RequestTimeoutError || error instanceof RequestTransportError)) {
         throw error
       }
@@ -128,6 +133,10 @@ export class MattermostClient {
       return this.request<T>(method, path, body, retrySafe, retryCount + 1)
     }
     const { response } = attempt
+
+    if (!retrySafe && method !== 'GET' && response.status >= 500) {
+      throw new MattermostMutationOutcomeUnknownError()
+    }
 
     if (retrySafe && response.status === 429 && retryCount < MAX_RETRIES) {
       const delay = rateLimitDelay(response, retryCount)

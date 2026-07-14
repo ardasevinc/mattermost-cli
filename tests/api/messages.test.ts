@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { createDirectChannel, createPost, initClient } from '../../src/api'
+import {
+  createDirectChannel,
+  createPost,
+  initClient,
+  MattermostMutationOutcomeUnknownError,
+} from '../../src/api'
 
 describe('message write API', () => {
   afterEach(() => {
@@ -37,8 +42,8 @@ describe('message write API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(response)))
     initClient('https://mattermost.test', 'token')
 
-    await expect(createDirectChannel('me', 'recipient')).rejects.toThrow(
-      'Invalid direct-message channel response.',
+    await expect(createDirectChannel('me', 'recipient')).rejects.toBeInstanceOf(
+      MattermostMutationOutcomeUnknownError,
     )
   })
 
@@ -86,8 +91,8 @@ describe('message write API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(response)))
     initClient('https://mattermost.test', 'token')
 
-    await expect(createPost('channel-id', 'hello', 'pending-id')).rejects.toThrow(
-      'Invalid create-post response.',
+    await expect(createPost('channel-id', 'hello', 'pending-id')).rejects.toBeInstanceOf(
+      MattermostMutationOutcomeUnknownError,
     )
   })
 

@@ -4,6 +4,8 @@ import type { CanonicalTeam } from './api'
 import {
   buildPostPermalink,
   connectWebSocket,
+  createDirectChannel,
+  createPost,
   fetchUsers,
   getAllChannelPosts,
   getCachedUser,
@@ -24,6 +26,7 @@ import {
   getUsersByIds,
   initClient,
   MattermostAPIError,
+  MattermostMutationOutcomeUnknownError,
   normalizeCanonicalTeams,
   normalizeChannelName,
   parseDuration,
@@ -56,6 +59,8 @@ import type {
   Redaction,
   RetrievalMetadata,
   SearchOptions,
+  SendDirectMessageOptions,
+  SendGroupMessageOptions,
   UnreadOptions,
   UsersOptions,
   WatchEvent,
@@ -93,6 +98,31 @@ interface UnreadSummaryItem {
   unreadCount: number
   mentionCount: number
   lastViewedAt: number
+}
+
+export interface SendReceipt {
+  status: 'dry_run' | 'sent'
+  destination: {
+    type: 'dm' | 'group'
+    label: string
+    channelId: string | null
+    willCreate: boolean
+  }
+  post?: {
+    id: string
+    createAt: string
+    pendingPostId: string
+    permalink: string
+  }
+}
+
+export class MattermostDeliveryConfirmedError extends Error {
+  constructor() {
+    super(
+      'Mattermost confirmed delivery, but the local receipt could not be written. Do not retry.',
+    )
+    this.name = 'MattermostDeliveryConfirmedError'
+  }
 }
 
 export interface WhoAmIOutput {
@@ -993,6 +1023,163 @@ export async function listChannels(options: {
   }
 
   console.log(`\nTotal: ${output.length} channels`)
+}
+
+function emitSendReceipt(receipt: SendReceipt, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(receipt, null, 2))
+    return
+  }
+  const destination = receipt.destination.channelId
+    ? `${receipt.destination.label} [${receipt.destination.channelId}]`
+    : receipt.destination.label
+  if (receipt.status === 'dry_run') {
+    console.log(
+      receipt.destination.willCreate
+        ? `Would create a conversation with ${destination}, then send one message.`
+        : `Would send one message to ${destination}.`,
+    )
+    return
+  }
+  console.log(`Sent one message to ${destination}. Post ${receipt.post?.id}.`)
+}
+
+function emitConfirmedSendReceipt(receipt: SendReceipt, json: boolean): void {
+  try {
+    emitSendReceipt(receipt, json)
+  } catch {
+    throw new MattermostDeliveryConfirmedError()
+  }
+}
+
+function safeSendLabel(value: string, redact: boolean): string {
+  return safeString(value, redact).replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t')
+}
+
+export async function sendDirectMessage(options: SendDirectMessageOptions): Promise<void> {
+  if (options.message?.includes(options.token)) {
+    throw new Error('Refusing to send the active Mattermost credential.')
+  }
+  const username = options.username.replace(/^@/, '')
+  if (!username) throw new Error('A direct-message username is required.')
+  initClient(options.url, options.token)
+
+  const me = await getMe()
+  if (typeof me?.id !== 'string' || me.id.length === 0) {
+    throw new Error('Mattermost returned an invalid identity response.')
+  }
+  const recipient = await getUserByUsername(username)
+  if (
+    typeof recipient?.id !== 'string' ||
+    recipient.id.length === 0 ||
+    typeof recipient.username !== 'string' ||
+    recipient.username.length === 0 ||
+    recipient.username.toLowerCase() !== username.toLowerCase()
+  ) {
+    throw new Error('Mattermost returned an invalid user response.')
+  }
+
+  const channels = validateAndDedupeConversationChannels(await getMyDMChannels(me.id), me.id)
+  let channel =
+    channels.find((candidate) => getOtherUserIdFromDMChannel(candidate, me.id) === recipient.id) ??
+    null
+  const label = `@${safeSendLabel(recipient.username, options.redact)}`
+
+  if (options.dryRun) {
+    emitSendReceipt(
+      {
+        status: 'dry_run',
+        destination: {
+          type: 'dm',
+          label,
+          channelId: channel ? safeSendLabel(channel.id, options.redact) : null,
+          willCreate: channel === null,
+        },
+      },
+      options.json,
+    )
+    return
+  }
+
+  if (options.message === undefined) throw new Error('Message content is required.')
+  if (!channel) {
+    try {
+      channel = requireConversationChannelContext(
+        await createDirectChannel(me.id, recipient.id),
+        me.id,
+      )
+    } catch (error) {
+      if (error instanceof MattermostMutationOutcomeUnknownError) {
+        throw new Error(
+          'Mattermost did not confirm DM setup. The message was not attempted; run a dry-run before retrying.',
+        )
+      }
+      throw error
+    }
+  }
+  const post = await createPost(channel.id, options.message)
+  if (post.userId !== me.id) throw new MattermostMutationOutcomeUnknownError()
+  emitConfirmedSendReceipt(
+    {
+      status: 'sent',
+      destination: {
+        type: 'dm',
+        label,
+        channelId: safeSendLabel(channel.id, options.redact),
+        willCreate: false,
+      },
+      post: {
+        id: safeSendLabel(post.id, options.redact),
+        createAt: new Date(post.createAt).toISOString(),
+        pendingPostId: safeSendLabel(post.pendingPostId, options.redact),
+        permalink: buildPostPermalink(options.url, post.id),
+      },
+    },
+    options.json,
+  )
+}
+
+export async function sendGroupMessage(options: SendGroupMessageOptions): Promise<void> {
+  if (options.message?.includes(options.token)) {
+    throw new Error('Refusing to send the active Mattermost credential.')
+  }
+  if (!options.channelId) throw new Error('A group-DM channel ID is required.')
+  initClient(options.url, options.token)
+  const channel = requireRawChannelShape(await getChannel(options.channelId), options.channelId)
+  if (channel.type !== 'G') {
+    throw new Error(`Channel "${presentOneLine(channel.id, options.redact)}" is not a group DM.`)
+  }
+  const label = safeSendLabel(channel.display_name || channel.name, options.redact)
+  const channelId = safeSendLabel(channel.id, options.redact)
+
+  if (options.dryRun) {
+    emitSendReceipt(
+      {
+        status: 'dry_run',
+        destination: { type: 'group', label, channelId, willCreate: false },
+      },
+      options.json,
+    )
+    return
+  }
+
+  if (options.message === undefined) throw new Error('Message content is required.')
+  const me = await getMe()
+  const post = await createPost(channel.id, options.message)
+  if (post.userId !== me.id) throw new MattermostMutationOutcomeUnknownError()
+  emitConfirmedSendReceipt(
+    {
+      status: 'sent',
+      destination: { type: 'group', label, channelId, willCreate: false },
+      post: {
+        id: safeSendLabel(post.id, options.redact),
+        createAt: new Date(post.createAt).toISOString(),
+        pendingPostId: safeSendLabel(post.pendingPostId, options.redact),
+        permalink: buildPostPermalink(options.url, post.id),
+      },
+    },
+    options.json,
+  )
 }
 
 export async function fetchDMs(options: DMsOptions): Promise<void> {

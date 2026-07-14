@@ -14,12 +14,15 @@ import {
   listTeams,
   listUsers,
   searchMessages,
+  sendDirectMessage,
+  sendGroupMessage,
   showUnread,
   showWhoAmI,
   watchChannel,
 } from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, resolveConfigState } from './config'
 import { formatDoctorReport, runDoctor } from './doctor'
+import { readMessageInput } from './input'
 import { setActiveMattermostCredential } from './preprocessing'
 import { parsePositiveSafeInteger } from './validation'
 
@@ -331,6 +334,54 @@ program
         channel: cmdOpts.channel,
         cursor: cmdOpts.cursor,
         sinceExplicit: command.getOptionValueSource('since') === 'cli',
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+const send = program.command('send').description('Send a message to a direct or group conversation')
+
+send
+  .command('dm <username>')
+  .description('Send stdin to a direct-message user, creating the DM if needed')
+  .option('--dry-run', 'Resolve the exact destination without writing', false)
+  .action(async (username, cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+    try {
+      await sendDirectMessage({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        username,
+        dryRun: cmdOpts.dryRun,
+        message: cmdOpts.dryRun ? undefined : await readMessageInput(process.stdin),
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+send
+  .command('group <channel-id>')
+  .description('Send stdin to an existing group-DM channel')
+  .option('--dry-run', 'Resolve the exact destination without writing', false)
+  .action(async (channelId, cmdOpts) => {
+    const globalOpts = program.opts()
+    const config = await resolveConfig(globalOpts)
+    try {
+      await sendGroupMessage({
+        url: config.url,
+        token: config.token,
+        json: globalOpts.json,
+        redact: resolveRedact(globalOpts, config.fileConfig),
+        channelId,
+        dryRun: cmdOpts.dryRun,
+        message: cmdOpts.dryRun ? undefined : await readMessageInput(process.stdin),
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)
