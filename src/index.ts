@@ -251,7 +251,7 @@ program
 program
   .command('channels')
   .description('List account-wide channels with team identity for public/private channels')
-  .option('--type <type>', 'Filter by channel type', 'all')
+  .option('--type <type>', 'Filter by channel type: dm, public, private, group, all', 'all')
   .action(async (cmdOpts) => {
     const opts = program.opts()
     const config = await resolveConfig(opts)

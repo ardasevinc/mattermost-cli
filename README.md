@@ -10,7 +10,7 @@ A CLI tool to fetch and display Mattermost messages (DMs, channels, threads) wit
 - Find mentions via `mm mentions` (supports configurable aliases)
 - Show unread summary via `mm unread` (optional `--peek`)
 - Watch channel live via `mm watch <channel>`
-- List all channel types via `mm channels` with `--type` filtering
+- List all messaging channel types via `mm channels` with `--type` filtering
 - Complete visible threads by default (`--no-threads` returns selected seeds only)
 - Fetch a single thread via `mm thread <postId>`
 - Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
@@ -257,7 +257,7 @@ Global:
   -r, --relative          Show relative times
   --no-relative           Show absolute times
   --redact                Enable secret redaction (default)
-  --no-redact             Disable secret redaction (or MM_REDACT=false env)
+  --no-redact             Disable heuristic redaction; active MM credential stays masked
   --threads               Show thread structure (default)
   --no-threads            Return selected seed posts only (except thread command)
 

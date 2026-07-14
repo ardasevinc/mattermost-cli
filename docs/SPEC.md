@@ -69,7 +69,7 @@ mm channel '#dev' --team myteam
 -r, --relative    Show relative times
 --no-relative     Show absolute times
 --redact          Enable secret redaction (default)
---no-redact       Disable secret redaction
+--no-redact       Disable heuristic redaction; active Mattermost credential stays masked
 --threads         Show thread structure (default)
 --no-threads      Return selected seed posts only (except thread command)
 ```

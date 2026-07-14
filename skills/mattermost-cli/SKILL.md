@@ -64,7 +64,7 @@ mm users --team core      # restrict the directory to one team
 mm --json users arda      # narrow user schema plus retrieval coverage
 ```
 
-Both commands are read-only and intentionally omit private profile and server metadata. An account
+All three commands are read-only and intentionally omit private profile and server metadata. An account
 with no team memberships prints `No teams found.` (`[]` in JSON mode).
 User results omit email, roles, authentication, notification, and arbitrary property fields.
 
@@ -208,7 +208,7 @@ These apply to all commands:
 | `-r, --relative` | Relative timestamps ("2 days ago") |
 | `--no-relative` | Absolute timestamps |
 | `--redact` | Enable secret redaction (default) |
-| `--no-redact` | Disable secret redaction |
+| `--no-redact` | Disable heuristic redaction; the active Mattermost credential stays fully masked |
 | `--threads` | Show thread structure (default) |
 | `--no-threads` | Return selected seeds only, without hydration requests (except `mm thread`) |
 
@@ -261,8 +261,8 @@ All secrets are automatically redacted before output:
 
 Masking preserves context: `ghp_abc123xyz789secret` → `ghp_...cret`
 
-Remote strings are control-character sanitized even with `--no-redact`. Secret masking can be
-disabled with `--no-redact` when explicitly needed.
+Remote strings are control-character sanitized even with `--no-redact`. Heuristic secret masking
+can be disabled when explicitly needed, but the active Mattermost credential stays fully masked.
 
 ## Configuration
 
