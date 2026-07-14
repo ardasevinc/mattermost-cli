@@ -197,18 +197,25 @@ mm config --path    # Print config file path
 mm config --init    # Create config file with template
 ```
 
-### Inspect identity and teams
+### Inspect identity, teams, and users
 
 ```bash
 mm whoami           # Authenticated user, id, and roles
 mm teams            # Team names, ids, and access types
 mm --json whoami    # Whitelisted identity JSON
 mm --json teams     # Deterministically sorted team JSON
+mm users            # List active users (default limit: 20)
+mm users arda       # Search active users
+mm users --team core --limit 50
+mm --json users arda
 ```
 
 These commands are read-only. Identity output omits email, authentication, notification, and
 arbitrary property fields. Team output likewise exposes only names, IDs, and access type. A valid
-account with no team memberships prints `No teams found.` (`[]` with `--json`).
+account with no team memberships prints `No teams found.` (`[]` with `--json`). `users` emits only
+IDs, usernames, display names, and nicknames. Its JSON envelope includes retrieval coverage;
+`truncated: null` means the single-page endpoint ceiling prevented a conclusive limit-plus-one
+probe. Listing is capped at 200 fetched users; search is capped at 1000.
 
 ### Options
 
@@ -238,6 +245,11 @@ Group DMs:
 
 Channels:
   channels --type <type>  Filter list by type: dm, public, private, group, all
+
+Users:
+  users [query]            List or search active users
+  --team <name>           Restrict users to a team
+  -l, --limit <number>    Max users to show (default: 20)
 
 Channel:
   channel <name>          Fetch messages from one channel

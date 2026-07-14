@@ -34,6 +34,7 @@ MM_REDACT=false
 # Inspect the authenticated identity and team memberships
 mm whoami
 mm teams
+mm users [query] [--team <name>] [--limit 20]
 
 # List all channels
 mm channels
@@ -175,6 +176,11 @@ post is still an error. Empty unread JSON retains its command-specific shape: `{
 Empty `teams` JSON is `[]`; human output is `No teams found.`. `whoami` and `teams` use narrow
 command-specific schemas and never emit raw Mattermost user or team objects. Malformed identity or
 team responses fail closed without including remote values in errors.
+`users` is a read-only directory lookup (its search endpoint uses POST semantically). It emits a
+narrow user whitelist inside `{ users, retrieval }`, sorts by username then ID, and probes with
+`limit + 1`. Single-page probes are capped at 200 users for listing and 1000 for search, with
+`truncated: null` when the relevant endpoint ceiling prevents a conclusive result. Empty human
+output is `No users found.`.
 
 ### JSON Lines (`--json watch ...`)
 - One redacted `posted` event per stdout line

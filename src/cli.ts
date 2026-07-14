@@ -3,6 +3,7 @@
 import {
   buildPostPermalink,
   connectWebSocket,
+  fetchUsers,
   getAllChannelPosts,
   getCachedUser,
   getChannel,
@@ -52,6 +53,7 @@ import type {
   RetrievalMetadata,
   SearchOptions,
   UnreadOptions,
+  UsersOptions,
   WatchEvent,
 } from './types'
 import {
@@ -92,6 +94,68 @@ export interface TeamOutput {
   name: string
   displayName?: string
   type: 'open' | 'invite_only'
+}
+
+export interface UserDirectoryOutput {
+  id: string
+  username: string
+  displayName?: string
+  nickname?: string
+}
+
+interface CanonicalTeam {
+  id: string
+  name: string
+  displayName: string
+}
+
+function normalizeCanonicalTeams(teams: unknown): CanonicalTeam[] {
+  if (!Array.isArray(teams)) throw new Error('Invalid teams response.')
+  return teams.map((team) => {
+    if (!isRecord(team)) throw new Error('Invalid teams response.')
+    const id = requiredString(team.id, 'Invalid teams response.')
+    const name = requiredString(team.name, 'Invalid teams response.')
+    if (typeof team.display_name !== 'string') throw new Error('Invalid teams response.')
+    if (team.type !== 'O' && team.type !== 'I') throw new Error('Invalid teams response.')
+    return { id, name, displayName: team.display_name }
+  })
+}
+
+export function resolveUsersTeamId(teams: unknown, requested: string, redact = true): string {
+  const canonical = normalizeCanonicalTeams(teams)
+  const match = canonical.find((team) => team.name === requested || team.displayName === requested)
+  if (match) return match.id
+
+  const safeRequested = safeString(requested, redact)
+  const available = canonical.map((team) => safeString(team.name, redact)).join(', ')
+  throw new Error(
+    `Team "${safeRequested}" not found.${available ? ` Your teams: ${available}` : ''}`,
+  )
+}
+
+export function normalizeUsers(users: unknown, redact = true): UserDirectoryOutput[] {
+  if (!Array.isArray(users)) throw new Error('Invalid users response.')
+  return users
+    .map((user) => {
+      if (!isRecord(user)) throw new Error('Invalid users response.')
+      const id = requiredString(user.id, 'Invalid users response.')
+      const username = requiredString(user.username, 'Invalid users response.')
+      const firstName = safeString(user.first_name, redact)
+      const lastName = safeString(user.last_name, redact)
+      const displayName = [firstName, lastName].filter(Boolean).join(' ')
+      const nickname = safeString(user.nickname, redact)
+      return {
+        id: safeString(id, redact),
+        username: safeString(username, redact),
+        ...(displayName ? { displayName } : {}),
+        ...(nickname ? { nickname } : {}),
+      }
+    })
+    .sort((a, b) => {
+      if (a.username !== b.username) return a.username < b.username ? -1 : 1
+      if (a.id === b.id) return 0
+      return a.id < b.id ? -1 : 1
+    })
 }
 
 function safeString(value: unknown, redact: boolean): string {
@@ -198,6 +262,46 @@ export async function listTeams(options: IdentityOptions): Promise<void> {
       team.displayName && team.displayName !== team.name ? ` (${team.displayName})` : ''
     console.log(`${team.name}${display} [${team.id}] ${team.type}`)
   }
+}
+
+export async function listUsers(options: UsersOptions): Promise<void> {
+  initClient(options.url, options.token)
+  let teamId: string | undefined
+  if (options.team) {
+    const me = await getMe()
+    if (!isRecord(me)) throw new Error('Invalid identity response.')
+    const userId = requiredString(me.id, 'Invalid identity response.')
+    teamId = resolveUsersTeamId(await getMyTeams(userId), options.team, options.redact)
+  }
+
+  const query = options.query?.trim() || undefined
+  const result = await fetchUsers({ query, teamId, limit: options.limit })
+  const users = normalizeUsers(result.users, options.redact).slice(0, options.limit)
+  const retrieval = {
+    selectedCount: users.length,
+    requestedLimit: options.limit,
+    query: query ? safeString(query, options.redact) : null,
+    teamId: teamId ? safeString(teamId, options.redact) : null,
+    truncated: result.truncated,
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({ users, retrieval }, null, 2))
+    return
+  }
+  if (users.length === 0) {
+    console.log('No users found.')
+    return
+  }
+  for (const user of users) {
+    const labels = [user.displayName, user.nickname ? `aka ${user.nickname}` : undefined]
+      .filter(Boolean)
+      .join(', ')
+    console.log(`@${user.username}${labels ? ` (${labels})` : ''} [${user.id}]`)
+  }
+  const coverage =
+    result.truncated === true ? 'truncated' : result.truncated === false ? 'complete' : 'unknown'
+  console.log(`Showing ${users.length} of up to ${options.limit} users (coverage: ${coverage}).`)
 }
 
 export class BoundedPostIdSet {

@@ -58,10 +58,14 @@ mm whoami                 # authenticated username, id, and roles
 mm teams                  # team names, ids, and access types
 mm --json whoami          # narrow identity schema for automation
 mm --json teams           # stable sorted team list for automation
+mm users [query]          # list or search active users
+mm users --team core      # restrict the directory to one team
+mm --json users arda      # narrow user schema plus retrieval coverage
 ```
 
 Both commands are read-only and intentionally omit private profile and server metadata. An account
 with no team memberships prints `No teams found.` (`[]` in JSON mode).
+User results omit email, roles, authentication, notification, and arbitrary property fields.
 
 ### List Channels
 ```bash

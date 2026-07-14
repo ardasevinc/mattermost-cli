@@ -12,12 +12,14 @@ import {
   fetchThread,
   listChannels,
   listTeams,
+  listUsers,
   searchMessages,
   showUnread,
   showWhoAmI,
   watchChannel,
 } from './cli'
 import { getConfigPath, getConfigStatus, initConfigFile, loadConfigFile } from './config'
+import { parsePositiveSafeInteger } from './validation'
 
 const isRunningUnderAgent = isAgent() !== null
 
@@ -34,8 +36,8 @@ function resolveRedact(opts: { redact?: boolean }, fileConfig: { redact?: boolea
 }
 
 function validateLimit(value: string): number {
-  const n = parseInt(value, 10)
-  if (Number.isNaN(n) || n <= 0) {
+  const n = parsePositiveSafeInteger(value)
+  if (n === null) {
     console.error(`Error: --limit must be a positive number, got "${value}"`)
     process.exit(1)
   }
@@ -44,8 +46,8 @@ function validateLimit(value: string): number {
 
 function validatePeek(value?: string): number | undefined {
   if (value === undefined) return undefined
-  const n = parseInt(value, 10)
-  if (Number.isNaN(n) || n <= 0) {
+  const n = parsePositiveSafeInteger(value)
+  if (n === null) {
     console.error(`Error: --peek must be a positive number, got "${value}"`)
     process.exit(1)
   }
@@ -187,6 +189,30 @@ program
         token: config.token,
         json: opts.json,
         redact: resolveRedact(opts, config.fileConfig),
+      })
+    } catch (err) {
+      console.error('Error:', err instanceof Error ? err.message : err)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('users [query]')
+  .description('List or search active users')
+  .option('--team <name>', 'Restrict users to a team')
+  .option('-l, --limit <number>', 'Max users to show', '20')
+  .action(async (query, cmdOpts) => {
+    const opts = program.opts()
+    const config = await resolveConfig(opts)
+    try {
+      await listUsers({
+        url: config.url,
+        token: config.token,
+        json: opts.json,
+        redact: resolveRedact(opts, config.fileConfig),
+        query,
+        team: cmdOpts.team,
+        limit: validateLimit(cmdOpts.limit),
       })
     } catch (err) {
       console.error('Error:', err instanceof Error ? err.message : err)

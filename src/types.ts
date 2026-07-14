@@ -191,6 +191,12 @@ export interface IdentityOptions {
   redact: boolean
 }
 
+export interface UsersOptions extends IdentityOptions {
+  query?: string
+  team?: string
+  limit: number
+}
+
 // Processed message for output
 
 export interface ProcessedMessage {
