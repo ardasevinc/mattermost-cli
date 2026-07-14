@@ -24,12 +24,16 @@ export async function fetchUsers(options: {
   const endpointLimit = query ? MAX_USERS_SEARCH_PAGE : MAX_USERS_LIST_PAGE
   const probeLimit = Math.min(options.limit + 1, endpointLimit)
   const users = query
-    ? await client.post<unknown>('/users/search', {
-        term: query,
-        ...(options.teamId ? { team_id: options.teamId } : {}),
-        limit: probeLimit,
-        allow_inactive: false,
-      })
+    ? await client.post<unknown>(
+        '/users/search',
+        {
+          term: query,
+          ...(options.teamId ? { team_id: options.teamId } : {}),
+          limit: probeLimit,
+          allow_inactive: false,
+        },
+        true,
+      )
     : await client.get<unknown>(
         `/users?page=0&per_page=${probeLimit}&active=true${options.teamId ? `&in_team=${encodeURIComponent(options.teamId)}` : ''}`,
       )
@@ -59,7 +63,7 @@ export async function getUser(userId: string): Promise<User> {
   if (cached) return cached
 
   const client = getClient()
-  const user = await client.get<User>(`/users/${userId}`)
+  const user = await client.get<User>(`/users/${encodeURIComponent(userId)}`)
   cacheUser(user)
   return user
 }
@@ -74,7 +78,7 @@ export async function getUserByUsername(username: string): Promise<User> {
   }
 
   const client = getClient()
-  const user = await client.get<User>(`/users/username/${username}`)
+  const user = await client.get<User>(`/users/username/${encodeURIComponent(username)}`)
   cacheUser(user)
   return user
 }
@@ -85,7 +89,7 @@ export async function getUsersByIds(userIds: string[]): Promise<User[]> {
 
   if (uncachedIds.length > 0) {
     const client = getClient()
-    const users = await client.post<User[]>('/users/ids', uncachedIds)
+    const users = await client.post<User[]>('/users/ids', uncachedIds, true)
     users.forEach(cacheUser)
   }
 

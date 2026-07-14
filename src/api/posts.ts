@@ -29,7 +29,9 @@ export async function getChannelPosts(
   params.set('skipFetchThreads', String(skipFetchThreads))
   if (before !== undefined) params.set('before', before)
 
-  const response = await client.get<PostsResponse>(`/channels/${channelId}/posts?${params}`)
+  const response = await client.get<PostsResponse>(
+    `/channels/${encodeURIComponent(channelId)}/posts?${params}`,
+  )
 
   // Convert posts object to array, sorted by order
   const posts = response.order
@@ -88,6 +90,7 @@ export async function getAllChannelPosts(
         stagnantPages = 0
         continue
       }
+      if (pageResult.hasNext === true) uncertain = true
       exhausted = !uncertain
       break
     }
@@ -163,7 +166,9 @@ export async function getPostThread(postId: string): Promise<PostRetrievalResult
     if (fromCreateAt !== undefined) params.set('fromCreateAt', String(fromCreateAt))
     let response: PostsResponse
     try {
-      response = await client.get<PostsResponse>(`/posts/${postId}/thread?${params}`)
+      response = await client.get<PostsResponse>(
+        `/posts/${encodeURIComponent(postId)}/thread?${params}`,
+      )
     } catch (error) {
       if (successfulPages === 0) throw error
       return { posts: [...posts.values()], truncated: null }
@@ -232,12 +237,16 @@ export async function searchPosts(
   let uncertain = false
 
   while (true) {
-    const response = await client.post<SearchResponse>(`/teams/${teamId}/posts/search`, {
-      terms,
-      is_or_search: false,
-      page,
-      per_page: perPage,
-    })
+    const response = await client.post<SearchResponse>(
+      `/teams/${encodeURIComponent(teamId)}/posts/search`,
+      {
+        terms,
+        is_or_search: false,
+        page,
+        per_page: perPage,
+      },
+      true,
+    )
     if (response.first_inaccessible_post_time) uncertain = true
     if (response.has_next === true && response.order.length === 0) uncertain = true
     let madeProgress = false

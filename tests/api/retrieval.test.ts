@@ -149,6 +149,47 @@ describe('route-aware retrieval integration', () => {
     expect(requests.every(({ url }) => url.searchParams.get('page') === '0')).toBe(true)
   })
 
+  test('does not claim exhaustion for an empty channel page that reports more data', async () => {
+    installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: () => ({ ...page([]), has_next: true }),
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    expect((await getAllChannelPosts('channel', { limit: 2 })).truncated).toBeNull()
+  })
+
+  test('retries an empty has-next page zero without an unchanged safe anchor', async () => {
+    const { requests } = installRouteFetch([
+      {
+        method: 'GET',
+        path: '/api/v4/channels/channel/posts',
+        handle: ({ url }) =>
+          url.searchParams.has('before')
+            ? { ...page([]), has_next: true }
+            : { ...page([post('older', 100)]), has_next: false },
+      },
+    ])
+    initClient('https://mattermost.test', 'token')
+
+    const result = await getAllChannelPosts('channel', {
+      limit: 2,
+      safeBeforePostId: 'missing-anchor',
+    })
+
+    expect(result.posts.map(({ id }) => id)).toEqual(['older'])
+    expect(result.truncated).toBe(false)
+    expect(result.safeBeforeValid).toBe(false)
+    expect(requests.map(({ url }) => url.searchParams.get('page'))).toEqual(['0', '0'])
+    expect(requests.map(({ url }) => url.searchParams.get('before'))).toEqual([
+      'missing-anchor',
+      null,
+    ])
+  })
+
   test('reports unknown after two full stagnant channel pages', async () => {
     const { requests } = installRouteFetch([
       {

@@ -11,7 +11,9 @@ export async function getMyChannels(userId?: string): Promise<Channel[]> {
 
   // Get all channels for the user's teams first, then their direct channels
   // For DMs, we use the user's direct channels endpoint
-  const channels = await client.get<Channel[]>(`/users/${resolvedUserId}/channels`)
+  const channels = await client.get<Channel[]>(
+    `/users/${encodeURIComponent(resolvedUserId)}/channels`,
+  )
 
   return channels
 }
@@ -49,7 +51,7 @@ export async function getDMChannelByUsername(username: string): Promise<Channel 
 
 export async function getChannel(channelId: string): Promise<Channel> {
   const client = getClient()
-  return client.get<Channel>(`/channels/${channelId}`)
+  return client.get<Channel>(`/channels/${encodeURIComponent(channelId)}`)
 }
 
 export function normalizeChannelName(channelName: string): string {
@@ -59,13 +61,15 @@ export function normalizeChannelName(channelName: string): string {
 export async function getMyTeams(userId?: string): Promise<Team[]> {
   const resolvedUserId = userId ?? (await getMe()).id
   const client = getClient()
-  return client.get<Team[]>(`/users/${resolvedUserId}/teams`)
+  return client.get<Team[]>(`/users/${encodeURIComponent(resolvedUserId)}/teams`)
 }
 
 export async function getChannelByName(teamId: string, channelName: string): Promise<Channel> {
   const client = getClient()
   const name = normalizeChannelName(channelName)
-  return client.get<Channel>(`/teams/${teamId}/channels/name/${name}`)
+  return client.get<Channel>(
+    `/teams/${encodeURIComponent(teamId)}/channels/name/${encodeURIComponent(name)}`,
+  )
 }
 
 export function resolveTeamIdFromList(teams: Team[], teamName?: string): string {
@@ -117,13 +121,17 @@ export async function resolveTeamId(teamName?: string): Promise<string> {
 export async function getTeamChannelMembers(teamId: string): Promise<ChannelMember[]> {
   const me = await getMe()
   const client = getClient()
-  return client.get<ChannelMember[]>(`/users/${me.id}/teams/${teamId}/channels/members`)
+  return client.get<ChannelMember[]>(
+    `/users/${encodeURIComponent(me.id)}/teams/${encodeURIComponent(teamId)}/channels/members`,
+  )
 }
 
 export async function getChannelMember(channelId: string): Promise<ChannelMember> {
   const me = await getMe()
   const client = getClient()
-  return client.get<ChannelMember>(`/channels/${channelId}/members/${me.id}`)
+  return client.get<ChannelMember>(
+    `/channels/${encodeURIComponent(channelId)}/members/${encodeURIComponent(me.id)}`,
+  )
 }
 
 // Extract the other user's ID from a DM channel name
