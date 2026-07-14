@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { parseDuration, takeMostRecentPosts } from '../../src/api/posts'
 
 describe('parseDuration', () => {

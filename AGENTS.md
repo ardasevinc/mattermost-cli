@@ -81,7 +81,8 @@ cli.ts:153 calls preprocess(post.message)
 
 ## Code Conventions
 
-- **Bun for dev** - use `bun test`, `bun run`; production code uses cross-runtime APIs
+- **Bun for dev** - use `bun run`; production code uses cross-runtime APIs
+- **Vitest for tests** - use `bun run test` or `bun run test -- <pattern>`; do not use Bun's built-in test runner
 - **No `npx` in this repo** - use `bunx`/`bun run` only
 - **Biome is configured** - use `bun run lint` / `bun run check` / `bun run format`
 - **No dotenv** - Bun auto-loads `.env`
@@ -94,8 +95,8 @@ cli.ts:153 calls preprocess(post.message)
 bun run lint                # Biome lint
 bun run check               # Biome full check
 bun x tsc --noEmit          # Typecheck
-bun test                    # Run all tests
-bun test secrets            # Run tests matching "secrets"
+bun run test                # Run all tests with Vitest
+bun run test -- secrets     # Run tests matching "secrets"
 bun run build               # Build npm artifact
 ```
 

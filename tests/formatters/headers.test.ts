@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { formatMarkdown } from '../../src/formatters/markdown'
 import { formatPretty } from '../../src/formatters/pretty'
 import type { MessageOutput, ProcessedChannel } from '../../src/types'

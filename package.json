@@ -30,13 +30,15 @@
     "format": "bunx biome format --write .",
     "lint": "bunx biome lint .",
     "lint:fix": "bunx biome lint --write .",
-    "test": "bun test",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "bun build src/index.ts --target node --outfile dist/index.js --minify && node -e \"const fs=require('fs');const f='dist/index.js';const c=fs.readFileSync(f,'utf8').replace(/^#!.*\\n/,'');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\" && (chmod +x dist/index.js || true)",
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vitest": "4.1.10"
   },
   "peerDependencies": {
     "typescript": "^5"

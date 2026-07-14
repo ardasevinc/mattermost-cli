@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { detectSecrets, maskSecret, redactSecrets } from '../../src/preprocessing/secrets'
 
 describe('detectSecrets', () => {

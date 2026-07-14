@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import type { Channel, ChannelMember } from '../../src/types'
 import { calculateUnreadMetrics, sortUnreadEntries } from '../../src/utils/unread'
 

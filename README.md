@@ -260,7 +260,7 @@ bun install     # Install dependencies
 bun run lint    # Biome lint
 bun run check   # Biome full check
 bun x tsc --noEmit  # Typecheck
-bun test        # Run tests
+bun run test    # Run tests with Vitest
 bun run build   # Build for npm
 bun run mm      # Run CLI from source
 ```
