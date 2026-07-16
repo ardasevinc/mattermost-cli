@@ -3,6 +3,7 @@ package schema
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +16,18 @@ import (
 )
 
 const maxDocumentBytes = 4 << 20
+
+// InputReadError identifies a physical failure while reading a validation
+// document. JSON and schema validation errors deliberately do not use it.
+type InputReadError struct{ err error }
+
+func (e *InputReadError) Error() string { return "could not read JSON document" }
+func (e *InputReadError) Unwrap() error { return e.err }
+
+func IsInputReadError(err error) bool {
+	var target *InputReadError
+	return errors.As(err, &target)
+}
 
 type Registry struct {
 	raw      map[string][]byte
@@ -94,7 +107,7 @@ func (r *Registry) Validate(id string, input io.Reader) error {
 	limited := io.LimitReader(input, maxDocumentBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return fmt.Errorf("read JSON document: %w", err)
+		return &InputReadError{err: err}
 	}
 	if len(data) > maxDocumentBytes {
 		return fmt.Errorf("JSON document exceeds %d bytes", maxDocumentBytes)

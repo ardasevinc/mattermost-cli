@@ -3,6 +3,7 @@ package schema
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"strings"
 	"testing"
@@ -38,6 +39,27 @@ func TestEmbeddedExamplesValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTypesOnlyPhysicalInputReadFailures(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical := errors.New("fixture read failure")
+	err = registry.Validate("mm/v2/error", errorReader{err: physical})
+	if !IsInputReadError(err) || !errors.Is(err, physical) || strings.Contains(err.Error(), physical.Error()) {
+		t.Fatalf("physical read error = %v", err)
+	}
+	for _, input := range []string{"{", `{}`} {
+		if err := registry.Validate("mm/v2/error", strings.NewReader(input)); err == nil || IsInputReadError(err) {
+			t.Fatalf("content error incorrectly typed as input read failure: %v", err)
+		}
+	}
+}
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
 
 func TestValidateRejectsUnknownFields(t *testing.T) {
 	registry, err := Load()

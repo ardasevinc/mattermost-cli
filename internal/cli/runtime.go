@@ -1,0 +1,251 @@
+package cli
+
+import (
+	"errors"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/internal/config"
+	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
+)
+
+type clientFactory func(baseURL, token string) (*api.Client, error)
+
+type dependencies struct {
+	lookupEnv config.LookupEnv
+	homeDir   func() (string, error)
+	newClient clientFactory
+	stdoutTTY func() bool
+}
+
+func defaultDependencies(out any) dependencies {
+	return dependencies{
+		lookupEnv: os.LookupEnv,
+		homeDir:   os.UserHomeDir,
+		newClient: func(baseURL, token string) (*api.Client, error) { return api.New(baseURL, token) },
+		stdoutTTY: func() bool {
+			file, ok := out.(*os.File)
+			if !ok {
+				return false
+			}
+			info, err := file.Stat()
+			return err == nil && info.Mode()&os.ModeCharDevice != 0
+		},
+	}
+}
+
+type Runtime struct {
+	Config    config.Resolved
+	Client    *api.Client
+	Users     *mattermost.Users
+	Teams     *mattermost.Teams
+	Channels  *mattermost.Channels
+	Posts     *mattermost.Posts
+	StdoutTTY bool
+}
+
+func (r *Runtime) Close() {
+	if r != nil && r.Client != nil {
+		r.Client.Close()
+	}
+}
+
+type rootState struct {
+	streams streams
+	deps    dependencies
+	flags   runtimeFlags
+
+	mu          sync.Mutex
+	runtime     *Runtime
+	runtimeErr  error
+	resolved    bool
+	warned      bool
+	releases    []func()
+	credentials []string
+}
+
+type runtimeFlags struct {
+	url      string
+	token    string
+	redact   bool
+	noRedact bool
+}
+
+func (s *rootState) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runtime != nil {
+		s.runtime.Close()
+		s.runtime = nil
+	}
+}
+
+func (s *rootState) releaseCredentials() {
+	s.mu.Lock()
+	releases := s.releases
+	s.releases = nil
+	s.mu.Unlock()
+	for i := len(releases) - 1; i >= 0; i-- {
+		releases[i]()
+	}
+}
+
+func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.resolved {
+		return s.runtime, s.runtimeErr
+	}
+	s.resolved = true
+
+	home, err := s.deps.homeDir()
+	if err != nil {
+		s.runtimeErr = configFailure("could not resolve the home directory")
+		return nil, s.runtimeErr
+	}
+	paths, err := config.ResolvePaths(home, s.deps.lookupEnv)
+	if err != nil {
+		s.runtimeErr = configFailure(err.Error())
+		return nil, s.runtimeErr
+	}
+	file := config.Load(paths)
+	if file.Config.Token != "" {
+		s.releases = append(s.releases, presentation.ActiveCredentials.Register(file.Config.Token))
+		s.credentials = append(s.credentials, file.Config.Token)
+	}
+	if file.Error == config.FileErrorRead || file.Unsafe != "" {
+		s.runtimeErr = configFailure("could not safely read the Mattermost configuration")
+		return nil, s.runtimeErr
+	}
+	if file.Error == config.FileErrorParse {
+		s.runtimeErr = configFailure("could not parse the Mattermost configuration")
+		return nil, s.runtimeErr
+	}
+	if file.InsecurePermissions && file.Config.Token != "" {
+		s.runtimeErr = configFailure("Mattermost configuration containing a token must not be accessible by other users")
+		return nil, s.runtimeErr
+	}
+	if warning := file.Warning(); warning != "" && !s.warned {
+		warning = presentation.SanitizeLabel(presentation.Preprocess(warning, s.credentials).Text)
+		if err := writeAll(s.streams.err, []byte("warning: "+warning+"\n")); err != nil {
+			s.runtimeErr = err
+			return nil, err
+		}
+		s.warned = true
+	}
+
+	var redact *bool
+	redactFlag := cmd.Flags().Lookup("redact")
+	noRedactFlag := cmd.Flags().Lookup("no-redact")
+	redactChanged := redactFlag != nil && redactFlag.Changed
+	noRedactChanged := noRedactFlag != nil && noRedactFlag.Changed
+	if redactChanged && noRedactChanged {
+		s.runtimeErr = invalidFailure("--redact and --no-redact cannot be used together")
+		return nil, s.runtimeErr
+	}
+	if redactChanged {
+		value := s.flags.redact
+		redact = &value
+	} else if noRedactChanged {
+		value := !s.flags.noRedact
+		redact = &value
+	}
+	resolved := config.Resolve(config.Options{URL: s.flags.url, Token: s.flags.token, Redact: redact}, s.deps.lookupEnv, file)
+	if resolved.URL == "" || resolved.Token == "" {
+		s.runtimeErr = configFailure("Mattermost URL and token are required")
+		return nil, s.runtimeErr
+	}
+	normalized, err := serverurl.Normalize(resolved.URL)
+	if err != nil {
+		s.runtimeErr = configFailure(err.Error())
+		return nil, s.runtimeErr
+	}
+	resolved.URL = normalized
+	client, err := s.deps.newClient(resolved.URL, resolved.Token)
+	if err != nil {
+		s.runtimeErr = configFailure("could not initialize the Mattermost client")
+		return nil, s.runtimeErr
+	}
+	s.runtime = &Runtime{
+		Config: resolved, Client: client, StdoutTTY: s.deps.stdoutTTY(),
+		Users: mattermost.NewUsers(client), Teams: mattermost.NewTeams(client),
+		Channels: mattermost.NewChannels(client), Posts: mattermost.NewPosts(client),
+	}
+	return s.runtime, nil
+}
+
+type errorClass uint8
+
+const (
+	classInvalid errorClass = iota
+	classRead
+)
+
+type classifiedError struct {
+	class errorClass
+	msg   string
+}
+
+func (e classifiedError) Error() string { return e.msg }
+
+func invalidFailure(message string) error { return classifiedError{class: classInvalid, msg: message} }
+func configFailure(message string) error  { return classifiedError{class: classRead, msg: message} }
+
+type operationFailure struct {
+	class errorClass
+	err   error
+}
+
+func (e operationFailure) Error() string { return e.err.Error() }
+func (e operationFailure) Unwrap() error { return e.err }
+
+// readFailure and authFailure preserve the v2 exit contract at command boundaries.
+func readFailure(err error) error { return operationFailure{class: classRead, err: err} }
+func authFailure(err error) error { return operationFailure{class: classRead, err: err} }
+
+func exitCode(err error) int {
+	var outputFailure outputError
+	if errors.As(err, &outputFailure) {
+		return 3
+	}
+	var classified classifiedError
+	if errors.As(err, &classified) && classified.class == classRead {
+		return 3
+	}
+	var operation operationFailure
+	if errors.As(err, &operation) && operation.class == classRead {
+		return 3
+	}
+	return 2
+}
+
+func earlyTokens(args []string) []string {
+	var tokens []string
+	for index, arg := range args {
+		if arg == "--token" && index+1 < len(args) {
+			tokens = append(tokens, args[index+1])
+		}
+		if strings.HasPrefix(arg, "--token=") {
+			tokens = append(tokens, strings.TrimPrefix(arg, "--token="))
+		}
+	}
+	return tokens
+}
+
+func bestEffortFileToken(deps dependencies) string {
+	home, err := deps.homeDir()
+	if err != nil {
+		return ""
+	}
+	paths, err := config.ResolvePaths(home, deps.lookupEnv)
+	if err != nil {
+		return ""
+	}
+	return config.Load(paths).Config.Token
+}

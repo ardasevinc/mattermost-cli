@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,25 +21,41 @@ type streams struct {
 }
 
 func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
-	releaseCredential := presentation.ActiveCredentials.Register(os.Getenv("MM_TOKEN"))
-	defer releaseCredential()
-	cmd := newRoot(streams{in: in, out: out, err: errOut})
+	trackedOut := &writeTracker{writer: out}
+	s := streams{in: in, out: trackedOut, err: errOut}
+	deps := defaultDependencies(out)
+	credentials := append([]string{os.Getenv("MM_TOKEN")}, earlyTokens(args)...)
+	credentials = append(credentials, bestEffortFileToken(deps))
+	state := &rootState{streams: s, deps: deps, credentials: credentials}
+	for _, credential := range credentials {
+		state.releases = append(state.releases, presentation.ActiveCredentials.Register(credential))
+	}
+	defer state.releaseCredentials()
+	defer state.close()
+	cmd := newRootWithState(state)
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		message := presentation.SanitizeLabel(presentation.PreprocessActive(err.Error()).Text)
+		message := presentation.SanitizeLabel(presentation.Preprocess(err.Error(), state.credentials).Text)
 		if writeErr := writeAll(errOut, []byte(fmt.Sprintf("error: %s\n", message))); writeErr != nil {
 			return 3
 		}
-		var outputFailure outputError
-		if errors.As(err, &outputFailure) {
+		if trackedOut.Failed() {
 			return 3
 		}
-		return 2
+		return exitCode(err)
+	}
+	if trackedOut.Failed() {
+		return 3
 	}
 	return 0
 }
 
 func newRoot(s streams) *cobra.Command {
+	return newRootWithState(&rootState{streams: s, deps: defaultDependencies(s.out)})
+}
+
+func newRootWithState(state *rootState) *cobra.Command {
+	s := state.streams
 	cmd := &cobra.Command{
 		Use:           "mm",
 		Short:         "Mattermost CLI for agents and humans",
@@ -58,6 +73,10 @@ func newRoot(s streams) *cobra.Command {
 	cmd.SetIn(s.in)
 	cmd.SetOut(s.out)
 	cmd.SetErr(s.err)
+	cmd.PersistentFlags().StringVar(&state.flags.url, "url", "", "Mattermost server URL")
+	cmd.PersistentFlags().StringVar(&state.flags.token, "token", "", "Mattermost personal access token")
+	cmd.PersistentFlags().BoolVar(&state.flags.redact, "redact", true, "redact detected secrets")
+	cmd.PersistentFlags().BoolVar(&state.flags.noRedact, "no-redact", false, "disable heuristic secret redaction")
 	cmd.AddCommand(newSchemaCommand(s))
 	return cmd
 }
@@ -75,7 +94,7 @@ func newSchemaCommand(s streams) *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			registry, err := mmSchema.Load()
 			if err != nil {
-				return err
+				return readFailure(err)
 			}
 			return writeAll(s.out, []byte(strings.Join(registry.IDs(), "\n")+"\n"))
 		},
@@ -87,7 +106,7 @@ func newSchemaCommand(s streams) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			registry, err := mmSchema.Load()
 			if err != nil {
-				return err
+				return readFailure(err)
 			}
 			data, err := registry.Show(args[0])
 			if err != nil {
@@ -109,9 +128,12 @@ func newSchemaCommand(s streams) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			registry, err := mmSchema.Load()
 			if err != nil {
-				return err
+				return readFailure(err)
 			}
 			if err := registry.Validate(args[0], s.in); err != nil {
+				if mmSchema.IsInputReadError(err) {
+					return readFailure(err)
+				}
 				return err
 			}
 			return writeAll(s.out, []byte("valid: "+args[0]+"\n"))
@@ -123,6 +145,21 @@ func newSchemaCommand(s streams) *cobra.Command {
 type outputError struct {
 	err error
 }
+
+type writeTracker struct {
+	writer io.Writer
+	failed bool
+}
+
+func (w *writeTracker) Write(data []byte) (int, error) {
+	written, err := w.writer.Write(data)
+	if err != nil || written != len(data) {
+		w.failed = true
+	}
+	return written, err
+}
+
+func (w *writeTracker) Failed() bool { return w.failed }
 
 func (e outputError) Error() string {
 	return "write output failed"

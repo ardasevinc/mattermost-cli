@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -74,6 +75,30 @@ func TestSchemaValidate(t *testing.T) {
 	}
 }
 
+func TestSchemaValidatePhysicalReadFailureIsExitThree(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	physical := errors.New("hostile reader detail \x1b[2J")
+	code := Execute(context.Background(), []string{"schema", "validate", "mm/v2/error"}, errorInput{err: physical}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3; stderr=%q", code, stderr.String())
+	}
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), physical.Error()) || !strings.Contains(stderr.String(), "could not read JSON document") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestSchemaValidateInvalidJSONRemainsExitTwo(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Execute(context.Background(), []string{"schema", "validate", "mm/v2/error"}, strings.NewReader("{"), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2; stderr=%q", code, stderr.String())
+	}
+}
+
+type errorInput struct{ err error }
+
+func (r errorInput) Read([]byte) (int, error) { return 0, r.err }
+
 func TestSchemaLookupDoesNotReflectActiveCredential(t *testing.T) {
 	const token = "super-secret-mm-token"
 	t.Setenv("MM_TOKEN", token)
@@ -130,6 +155,16 @@ func TestErrorOutputShortWriteReturnsOutputFailure(t *testing.T) {
 	code := Execute(context.Background(), []string{"unknown"}, strings.NewReader(""), &stdout, shortWriter{})
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
+	}
+}
+
+func TestRootHelpAndVersionShortWritesReturnOutputFailure(t *testing.T) {
+	tests := [][]string{nil, {"--help"}, {"--version"}}
+	for _, args := range tests {
+		var stderr bytes.Buffer
+		if code := Execute(context.Background(), args, strings.NewReader(""), shortWriter{}, &stderr); code != 3 {
+			t.Fatalf("Execute(%q) exit = %d, want 3", args, code)
+		}
 	}
 }
 
