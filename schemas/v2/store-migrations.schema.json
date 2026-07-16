@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:store-migrations",
+  "title": "mm v2 compiled store migrations",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "latest", "migrations"],
+  "properties": {
+    "schema": { "const": "mm/v2/store-migrations" },
+    "latest": { "const": 2 },
+    "migrations": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [{ "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
+        "version": { "const": 1 }, "name": { "const": "core-stage-state" }, "checksum": { "const": "e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f" }
+      } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
+        "version": { "const": 2 }, "name": { "const": "immutable-local-request-receipts" }, "checksum": { "const": "ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c" }
+      } }],
+      "items": false
+    }
+  }
+}

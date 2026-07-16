@@ -373,11 +373,18 @@ func WriteMachineJSON(w io.Writer, value MachineDocument) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return WriteBoundedJSON(w, wireValue)
+}
+
+// WriteBoundedJSON emits canonical machine JSON using the same byte policy as
+// WriteMachineJSON. It is for versioned machine documents whose concrete type
+// is owned outside output's closed MachineDocument set.
+func WriteBoundedJSON(w io.Writer, value any) (int, error) {
 	buffer := boundedBuffer{limit: MaxMachineDocumentBytes}
 	wire := separatorWriter{destination: &buffer}
 	encoder := json.NewEncoder(&wire)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(wireValue); err != nil {
+	if err := encoder.Encode(value); err != nil {
 		return 0, err
 	}
 	if err := wire.flush(); err != nil {

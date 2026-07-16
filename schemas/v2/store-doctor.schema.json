@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:store-doctor",
+  "title": "mm v2 local store diagnostic",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "path", "report"],
+  "properties": {
+    "schema": { "const": "mm/v2/store-doctor" },
+    "path": { "$ref": "#/$defs/safeString" },
+    "report": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exists", "filesystemSafe", "applicationId", "integrity", "integrityTruncated", "foreignKeyIssues", "foreignKeyRows", "foreignKeyTruncated", "migrations", "journalMode", "synchronous", "secureDelete", "foreignKeys", "trustedSchema", "queryOnly", "walFallback", "permissionModelLimitations"],
+      "properties": {
+        "exists": { "type": "boolean" }, "filesystemSafe": {}, "applicationId": {}, "integrity": {}, "integrityTruncated": {},
+        "foreignKeyIssues": {}, "foreignKeyRows": {}, "foreignKeyTruncated": {}, "journalMode": {}, "synchronous": {}, "secureDelete": {},
+        "foreignKeys": {}, "trustedSchema": {}, "queryOnly": {}, "walFallback": {},
+        "migrations": { "type": "object", "additionalProperties": false, "required": ["applied", "latest", "valid"], "properties": { "applied": {}, "latest": { "const": 2 }, "valid": {} } },
+        "permissionModelLimitations": { "type": "array", "items": { "$ref": "#/$defs/safeString" } }
+      },
+      "allOf": [
+        { "if": { "properties": { "exists": { "const": false } }, "required": ["exists"] }, "then": { "properties": {
+          "filesystemSafe": { "const": null }, "applicationId": { "const": null }, "integrity": { "const": null }, "integrityTruncated": { "const": null },
+          "foreignKeyIssues": { "const": null }, "foreignKeyRows": { "const": null }, "foreignKeyTruncated": { "const": null }, "journalMode": { "const": null },
+          "synchronous": { "const": null }, "secureDelete": { "const": null }, "foreignKeys": { "const": null }, "trustedSchema": { "const": null }, "queryOnly": { "const": null }, "walFallback": { "const": null },
+          "migrations": { "properties": { "applied": { "const": null }, "latest": { "const": 2 }, "valid": { "const": null } } }
+        } } },
+        { "if": { "properties": { "exists": { "const": true } }, "required": ["exists"] }, "then": { "properties": {
+          "filesystemSafe": { "const": true }, "applicationId": { "const": 1296913970 }, "integrity": { "$ref": "#/$defs/nonemptyBoundedStrings" }, "integrityTruncated": { "type": "boolean" },
+          "foreignKeyIssues": { "type": "integer", "minimum": 0, "maximum": 21 }, "foreignKeyRows": { "$ref": "#/$defs/boundedStrings" }, "foreignKeyTruncated": { "type": "boolean" },
+          "journalMode": { "enum": ["wal", "delete", "truncate", "persist"] }, "synchronous": { "type": "integer" }, "secureDelete": { "type": "integer" },
+          "foreignKeys": { "const": true }, "trustedSchema": { "const": false }, "queryOnly": { "const": true }, "walFallback": { "type": "boolean" },
+          "migrations": { "properties": { "applied": { "const": 2 }, "latest": { "const": 2 }, "valid": { "const": true } } }
+        }, "allOf": [
+          { "oneOf": [
+            { "properties": { "integrity": { "const": ["ok"] }, "integrityTruncated": { "const": false } } },
+            { "properties": { "integrity": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "allOf": [{ "$ref": "#/$defs/safeString" }, { "not": { "const": "ok" } }] } } } }
+          ] },
+          { "if": { "properties": { "integrityTruncated": { "const": true } }, "required": ["integrityTruncated"] }, "then": { "properties": { "integrity": { "minItems": 20, "maxItems": 20 } } } },
+          { "if": { "properties": { "foreignKeyTruncated": { "const": true } }, "required": ["foreignKeyTruncated"] }, "then": { "properties": { "foreignKeyIssues": { "const": 21 }, "foreignKeyRows": { "minItems": 20, "maxItems": 20 } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 0 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "maxItems": 0 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 1 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 1, "maxItems": 1 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 2 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 2, "maxItems": 2 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 3 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 3, "maxItems": 3 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 4 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 4, "maxItems": 4 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 5 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 5, "maxItems": 5 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 6 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 6, "maxItems": 6 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 7 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 7, "maxItems": 7 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 8 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 8, "maxItems": 8 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 9 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 9, "maxItems": 9 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 10 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 10, "maxItems": 10 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 11 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 11, "maxItems": 11 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 12 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 12, "maxItems": 12 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 13 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 13, "maxItems": 13 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 14 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 14, "maxItems": 14 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 15 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 15, "maxItems": 15 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 16 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 16, "maxItems": 16 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 17 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 17, "maxItems": 17 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 18 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 18, "maxItems": 18 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 19 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 19, "maxItems": 19 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 20 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 20, "maxItems": 20 }, "foreignKeyTruncated": { "const": false } } } },
+          { "if": { "properties": { "foreignKeyIssues": { "const": 21 } }, "required": ["foreignKeyIssues"] }, "then": { "properties": { "foreignKeyRows": { "minItems": 20, "maxItems": 20 }, "foreignKeyTruncated": { "const": true } } } },
+          { "if": { "properties": { "walFallback": { "const": true } }, "required": ["walFallback"] }, "then": { "properties": { "journalMode": { "enum": ["delete", "truncate", "persist"] } } } },
+          { "if": { "properties": { "walFallback": { "const": false } }, "required": ["walFallback"] }, "then": { "properties": { "journalMode": { "const": "wal" } } } }
+        ] } }
+      ]
+    }
+  },
+  "$defs": {
+    "safeString": { "type": "string", "minLength": 1, "pattern": "^[^\\x{0000}-\\x{001F}\\x{007F}-\\x{009F}\\x{202A}-\\x{202E}\\x{2066}-\\x{2069}]*$" },
+    "boundedStrings": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/safeString" } },
+    "nonemptyBoundedStrings": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/safeString" } }
+  }
+}
