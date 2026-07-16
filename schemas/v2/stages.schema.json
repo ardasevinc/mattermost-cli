@@ -118,7 +118,9 @@
         "postId",
         "rootPostId",
         "participantIds",
-        "emoji"
+        "emoji",
+        "postState",
+        "reactionPresent"
       ],
       "properties": {
         "kind": {
@@ -166,6 +168,22 @@
               "type": "null"
             }
           ]
+        },
+        "postState": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/postState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reactionPresent": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },
@@ -183,6 +201,12 @@
               "type": "null"
             },
             "emoji": {
+              "type": "null"
+            },
+            "postState": {
+              "type": "null"
+            },
+            "reactionPresent": {
               "type": "null"
             }
           }
@@ -220,6 +244,12 @@
             },
             "emoji": {
               "type": "null"
+            },
+            "postState": {
+              "type": "null"
+            },
+            "reactionPresent": {
+              "type": "null"
             }
           }
         }
@@ -239,6 +269,12 @@
               "$ref": "#/$defs/id"
             },
             "emoji": {
+              "type": "null"
+            },
+            "postState": {
+              "$ref": "#/$defs/postState"
+            },
+            "reactionPresent": {
               "type": "null"
             }
           }
@@ -260,6 +296,12 @@
             },
             "emoji": {
               "$ref": "#/$defs/emoji"
+            },
+            "postState": {
+              "type": "null"
+            },
+            "reactionPresent": {
+              "type": "boolean"
             }
           }
         }
@@ -283,6 +325,12 @@
             },
             "emoji": {
               "type": "null"
+            },
+            "postState": {
+              "type": "null"
+            },
+            "reactionPresent": {
+              "type": "null"
             }
           }
         }
@@ -305,6 +353,12 @@
               "type": "null"
             },
             "emoji": {
+              "type": "null"
+            },
+            "postState": {
+              "type": "null"
+            },
+            "reactionPresent": {
               "type": "null"
             }
           }
@@ -437,8 +491,8 @@
     "emoji": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9_+.-]+$"
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_+-]+$"
     },
     "oneStep": {
       "type": "object",
@@ -1050,6 +1104,28 @@
           }
         }
       ]
+    },
+    "postState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorUserId",
+        "updateAt",
+        "contentDigest"
+      ],
+      "properties": {
+        "authorUserId": {
+          "$ref": "#/$defs/id"
+        },
+        "updateAt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8640000000000000
+        },
+        "contentDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
     }
   }
 }

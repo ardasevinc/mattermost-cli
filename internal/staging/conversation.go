@@ -50,7 +50,16 @@ func (s *Service) resolveConversation(ctx context.Context, target Target) (Previ
 		value := channel.TeamID
 		teamID = &value
 	}
-	preview := Preview{s.serverURL, s.serverID, current.ID, Destination{"conversation", channel.ID, channelType(channel.Type), teamID, nil, nil, participants, nil}, attachmentPlan(0)}
+	preview := Preview{
+		ServerURL: s.serverURL,
+		ServerID:  s.serverID,
+		UserID:    current.ID,
+		Destination: Destination{
+			Kind: "conversation", ChannelID: channel.ID, ChannelType: channelType(channel.Type),
+			TeamID: teamID, ParticipantIDs: participants,
+		},
+		Plan: attachmentPlan(0),
+	}
 	destination, plan, err := marshalSemantics(preview)
 	if err != nil {
 		return Preview{}, ErrInvalid

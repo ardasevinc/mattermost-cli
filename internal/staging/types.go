@@ -51,14 +51,22 @@ type CreatePostInput struct {
 type DryRunInput struct{ Target Target }
 
 type Destination struct {
-	Kind           string   `json:"kind"`
-	ChannelID      string   `json:"channelId"`
-	ChannelType    string   `json:"channelType"`
-	TeamID         *string  `json:"teamId"`
-	PostID         *string  `json:"postId"`
-	RootPostID     *string  `json:"rootPostId"`
-	ParticipantIDs []string `json:"participantIds"`
-	Emoji          *string  `json:"emoji"`
+	Kind            string     `json:"kind"`
+	ChannelID       string     `json:"channelId"`
+	ChannelType     string     `json:"channelType"`
+	TeamID          *string    `json:"teamId"`
+	PostID          *string    `json:"postId"`
+	RootPostID      *string    `json:"rootPostId"`
+	ParticipantIDs  []string   `json:"participantIds"`
+	Emoji           *string    `json:"emoji"`
+	PostState       *PostState `json:"postState"`
+	ReactionPresent *bool      `json:"reactionPresent"`
+}
+
+type PostState struct {
+	AuthorUserID  string `json:"authorUserId"`
+	UpdateAt      int64  `json:"updateAt"`
+	ContentDigest string `json:"contentDigest"`
 }
 
 type Plan struct {

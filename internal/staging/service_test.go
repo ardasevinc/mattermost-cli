@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/internal/schema"
 	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 )
 
@@ -115,7 +116,7 @@ func TestCreatePostPersistsOneCanonicalExactStage(t *testing.T) {
 	if store.in.ServerURL != "https://mattermost.example/chat/api/v4" || store.in.ServerID != "" || store.in.UserID != "user-1" {
 		t.Fatalf("binding = %#v", store.in)
 	}
-	const exactDestination = `{"kind":"conversation","channelId":"dm-1","channelType":"dm","teamId":null,"postId":null,"rootPostId":null,"participantIds":["peer"],"emoji":null}`
+	const exactDestination = `{"kind":"conversation","channelId":"dm-1","channelType":"dm","teamId":null,"postId":null,"rootPostId":null,"participantIds":["peer"],"emoji":null,"postState":null,"reactionPresent":null}`
 	if string(store.in.Content.Destination) != exactDestination {
 		t.Fatalf("destination = %s", store.in.Content.Destination)
 	}
@@ -303,6 +304,45 @@ func TestDryRunAndPersistResolveIdenticalDestination(t *testing.T) {
 	persistedDestination, _ := json.Marshal(persisted.Preview.Destination)
 	if !bytes.Equal(dryDestination, persistedDestination) {
 		t.Fatalf("dry/persist destinations = %s/%s", dryDestination, persistedDestination)
+	}
+}
+
+func TestCreatePostPreviewDestinationAndPlanMatchPublicSchema(t *testing.T) {
+	store := &recordingStore{}
+	service, _, _ := dmService(t, store)
+	result, err := service.CreatePost(context.Background(), CreatePostInput{
+		RequestID: "schema-1", Target: dmTarget(), Body: bytes.NewReader([]byte("hello")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := struct {
+		Schema           string      `json:"schema"`
+		Persist          bool        `json:"persist"`
+		Operation        string      `json:"operation"`
+		Binding          any         `json:"binding"`
+		Destination      Destination `json:"destination"`
+		Plan             Plan        `json:"plan"`
+		ContentValidated bool        `json:"contentValidated"`
+	}{
+		Schema: "mm/v2/stage-preview", Persist: false, Operation: "create_post",
+		Binding: struct {
+			ServerURL string  `json:"serverUrl"`
+			ServerID  *string `json:"serverId"`
+			UserID    string  `json:"userId"`
+		}{ServerURL: result.Preview.ServerURL, UserID: result.Preview.UserID},
+		Destination: result.Preview.Destination, Plan: result.Preview.Plan,
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := schema.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Validate("mm/v2/stage-preview", bytes.NewReader(encoded)); err != nil {
+		t.Fatalf("producer preview rejected: %v\n%s", err, encoded)
 	}
 }
 
