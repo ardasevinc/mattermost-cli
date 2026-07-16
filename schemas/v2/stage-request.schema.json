@@ -1,0 +1,584 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:stage-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "persist",
+    "requestId",
+    "operation",
+    "target",
+    "body",
+    "emoji",
+    "attachments"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mm/v2/stage-request"
+    },
+    "persist": {
+      "type": "boolean"
+    },
+    "requestId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/requestId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "operation": {
+      "$ref": "#/$defs/operation"
+    },
+    "target": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/conversation"
+        },
+        {
+          "$ref": "#/$defs/post"
+        },
+        {
+          "$ref": "#/$defs/user"
+        },
+        {
+          "$ref": "#/$defs/users"
+        }
+      ]
+    },
+    "body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/body"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "emoji": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/emoji"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attachments": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/attachment"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "persist": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "requestId": {
+            "type": "null"
+          },
+          "body": {
+            "type": "null"
+          },
+          "attachments": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "persist": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "persist": {
+            "const": true
+          },
+          "operation": {
+            "enum": [
+              "create_post",
+              "reply",
+              "edit_post"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/body"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "edit_post",
+              "delete_post",
+              "react",
+              "unreact",
+              "resolve_dm",
+              "resolve_group_dm"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "attachments": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "delete_post",
+              "react",
+              "unreact",
+              "resolve_dm",
+              "resolve_group_dm"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "react",
+              "unreact"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "emoji": {
+            "$ref": "#/$defs/emoji"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "emoji": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "operation": {
+          "const": "create_post"
+        },
+        "target": {
+          "$ref": "#/$defs/conversation"
+        }
+      }
+    },
+    {
+      "properties": {
+        "operation": {
+          "enum": [
+            "reply",
+            "edit_post",
+            "delete_post",
+            "react",
+            "unreact"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/post"
+        }
+      }
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "resolve_dm"
+        },
+        "target": {
+          "$ref": "#/$defs/user"
+        }
+      }
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "resolve_group_dm"
+        },
+        "target": {
+          "$ref": "#/$defs/users"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "enum": [
+        "create_post",
+        "reply",
+        "edit_post",
+        "delete_post",
+        "react",
+        "unreact",
+        "resolve_dm",
+        "resolve_group_dm"
+      ]
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]*$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\x{0000}-\\x{0020}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16383,
+      "pattern": "[^\\x{0009}\\x{000a}\\x{000b}\\x{000c}\\x{000d}\\x{0020}\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}]"
+    },
+    "emoji": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_+.-]+$"
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by",
+        "value"
+      ],
+      "properties": {
+        "by": {
+          "enum": [
+            "id",
+            "name",
+            "username"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by",
+        "value"
+      ],
+      "properties": {
+        "by": {
+          "enum": [
+            "id",
+            "name"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "conversation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "conversationType",
+            "selector",
+            "team"
+          ],
+          "properties": {
+            "kind": {
+              "const": "conversation"
+            },
+            "conversationType": {
+              "const": "dm"
+            },
+            "selector": {
+              "$ref": "#/$defs/usernameSelector"
+            },
+            "team": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "conversationType",
+            "selector",
+            "team"
+          ],
+          "properties": {
+            "kind": {
+              "const": "conversation"
+            },
+            "conversationType": {
+              "const": "group"
+            },
+            "selector": {
+              "$ref": "#/$defs/idSelector"
+            },
+            "team": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "conversationType",
+            "selector",
+            "team"
+          ],
+          "properties": {
+            "kind": {
+              "const": "conversation"
+            },
+            "conversationType": {
+              "const": "channel"
+            },
+            "selector": {
+              "$ref": "#/$defs/idSelector"
+            },
+            "team": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "conversationType",
+            "selector",
+            "team"
+          ],
+          "properties": {
+            "kind": {
+              "const": "conversation"
+            },
+            "conversationType": {
+              "const": "channel"
+            },
+            "selector": {
+              "$ref": "#/$defs/nameSelector"
+            },
+            "team": {
+              "$ref": "#/$defs/team"
+            }
+          }
+        }
+      ]
+    },
+    "idSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by",
+        "value"
+      ],
+      "properties": {
+        "by": {
+          "const": "id"
+        },
+        "value": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "nameSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by",
+        "value"
+      ],
+      "properties": {
+        "by": {
+          "const": "name"
+        },
+        "value": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "usernameSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by",
+        "value"
+      ],
+      "properties": {
+        "by": {
+          "const": "username"
+        },
+        "value": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "post": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "postId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "post"
+        },
+        "postId": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "username"
+      ],
+      "properties": {
+        "kind": {
+          "const": "user"
+        },
+        "username": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "users": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "usernames"
+      ],
+      "properties": {
+        "kind": {
+          "const": "users"
+        },
+        "usernames": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "remoteFilename",
+        "mediaType"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+        },
+        "remoteFilename": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[^/\\\\\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[\\x{0021}-\\x{007e}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
