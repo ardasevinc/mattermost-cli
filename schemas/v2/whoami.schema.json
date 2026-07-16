@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:whoami",
+  "title": "mm v2 authenticated identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "data"],
+  "properties": {
+    "schema": { "const": "mm/v2/whoami" },
+    "data": { "$ref": "#/$defs/identity" }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "username", "displayName", "nickname", "roles"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "username": { "type": "string", "minLength": 1 },
+        "displayName": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "nickname": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "nullableNonEmptyString": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  }
+}

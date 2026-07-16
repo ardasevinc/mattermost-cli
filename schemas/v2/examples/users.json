@@ -1,0 +1,1 @@
+{"schema":"mm/v2/users","users":[{"id":"user-id","username":"alice","displayName":"Alice A","nickname":null}],"retrieval":{"selectedCount":1,"requestedLimit":20,"query":null,"teamId":null,"truncated":false}}
