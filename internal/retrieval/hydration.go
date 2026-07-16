@@ -94,6 +94,10 @@ dispatch:
 	}
 	for index, rootID := range rootIDs {
 		outcome := outcomes[index]
+		if !hydratedThreadMatchesSeedChannel(seeds, rootID, outcome.result.Posts) {
+			outcome.result.Posts = nil
+			outcome.err = mattermost.ErrInvalidPostsResponse
+		}
 		for _, post := range outcome.result.Posts {
 			if _, exists := seen[post.ID]; exists {
 				continue
@@ -116,6 +120,36 @@ dispatch:
 		}
 	}
 	return HydrationResult{Posts: posts, VisibleThreads: metadata}, nil
+}
+
+func hydratedThreadMatchesSeedChannel(seeds []mattermost.Post, rootID string, hydrated []mattermost.Post) bool {
+	expected := ""
+	for _, post := range seeds {
+		if !post.ThreadShapeKnown {
+			continue
+		}
+		candidate := post.RootID
+		if candidate == "" && post.ID == rootID {
+			candidate = post.ID
+		}
+		if candidate != rootID || post.ChannelID == "" {
+			continue
+		}
+		if expected == "" {
+			expected = post.ChannelID
+		} else if expected != post.ChannelID {
+			return false
+		}
+	}
+	if expected == "" {
+		return false
+	}
+	for _, post := range hydrated {
+		if post.ChannelID != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func visibleRootIDs(posts []mattermost.Post) ([]string, bool) {

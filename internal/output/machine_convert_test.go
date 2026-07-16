@@ -290,6 +290,23 @@ func TestThreadEnvelopeRejectsContradictoryRetrievalMetadata(t *testing.T) {
 	}
 }
 
+func TestHistoryEnvelopeRejectsCompletenessThatContradictsQueryTruncation(t *testing.T) {
+	if _, err := output.NewSearchEnvelope(nil, output.MachineUnknown); err == nil {
+		t.Fatal("unknown empty search envelope was accepted without metadata")
+	}
+	value := validOutput()
+	value.Retrieval.Selection.Source = "search"
+	truncated := true
+	value.Retrieval.Selection.QueryTruncated = &truncated
+	if _, err := output.NewSearchEnvelope([]output.MessageOutput{value}, output.MachineComplete); err == nil {
+		t.Fatal("complete search accepted queryTruncated true")
+	}
+	truncated = false
+	if _, err := output.NewSearchEnvelope([]output.MessageOutput{value}, output.MachineUnknown); err == nil {
+		t.Fatal("unknown search accepted known queryTruncated status")
+	}
+}
+
 func validOutput() output.MessageOutput {
 	zone := time.FixedZone("source", 3*60*60)
 	stamp := time.Date(2026, 7, 16, 13, 14, 15, 987654321, zone)

@@ -131,6 +131,23 @@ func TestHydrationFailureMetadataFollowsSeedOrderAndRetainsPartialPosts(t *testi
 	}
 }
 
+func TestHydrationRejectsThreadContextFromAnotherSeedChannel(t *testing.T) {
+	seed := threadPost("seed", "root", 3, 0)
+	foreignRoot := threadPost("root", "", 1, 1)
+	foreignReply := threadPost("foreign-reply", "root", 2, 0)
+	foreignRoot.ChannelID = "other-channel"
+	foreignReply.ChannelID = "other-channel"
+	result, err := HydrateVisibleThreads(context.Background(), threadSourceFunc(func(context.Context, string, mattermost.ThreadPageOptions) (mattermost.OrderedPostsPage, error) {
+		return mattermost.OrderedPostsPage{Posts: []mattermost.Post{foreignRoot, foreignReply}, HasNext: boolPointer(false)}, nil
+	}), []mattermost.Post{seed}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.VisibleThreads.Status != VisibleThreadsPartial || fmt.Sprint(result.VisibleThreads.FailedRootIDs) != "[root]" || fmt.Sprint(ids(result.Posts)) != "[seed]" {
+		t.Fatalf("foreign thread context was not rejected: %#v", result)
+	}
+}
+
 func TestThreadMissingLegacyShapeCannotProveCompleteness(t *testing.T) {
 	root := mattermost.Post{ID: "root", ChannelID: "channel", Message: "root", CreateAt: 1}
 	result, err := Thread(context.Background(), threadSourceFunc(func(context.Context, string, mattermost.ThreadPageOptions) (mattermost.OrderedPostsPage, error) {

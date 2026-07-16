@@ -50,6 +50,9 @@ func MachineHistoryFromOutput(value MessageOutput, completeness MachineCompleten
 	if err := validateRetrieval(value.Retrieval); err != nil {
 		return MachineHistory{}, err
 	}
+	if err := validateQueryCompleteness(value.Retrieval.Selection.QueryTruncated, completeness); err != nil {
+		return MachineHistory{}, err
+	}
 	for index := range value.Messages {
 		if err := validateMessage(value.Messages[index], 0); err != nil {
 			return MachineHistory{}, fmt.Errorf("message %d: %w", index, err)
@@ -78,6 +81,26 @@ func MachineHistoryFromOutput(value MessageOutput, completeness MachineCompleten
 	}, nil
 }
 
+func validateQueryCompleteness(queryTruncated *bool, completeness MachineCompleteness) error {
+	switch completeness {
+	case MachineComplete:
+		if queryTruncated == nil || *queryTruncated {
+			return fmt.Errorf("complete retrieval requires queryTruncated false")
+		}
+	case MachineTruncated:
+		if queryTruncated == nil || !*queryTruncated {
+			return fmt.Errorf("truncated retrieval requires queryTruncated true")
+		}
+	case MachineUnknown:
+		if queryTruncated != nil {
+			return fmt.Errorf("unknown retrieval requires queryTruncated null")
+		}
+	default:
+		return fmt.Errorf("invalid machine completeness %q", completeness)
+	}
+	return nil
+}
+
 func NewChannelEnvelope(value MessageOutput, completeness MachineCompleteness) (ChannelEnvelope, error) {
 	if err := validateSource(value.Retrieval.Selection.Source, "recent"); err != nil {
 		return ChannelEnvelope{}, err
@@ -97,6 +120,9 @@ func NewGroupDMSEnvelope(values []MessageOutput, completeness MachineCompletenes
 }
 
 func NewSearchEnvelope(values []MessageOutput, completeness MachineCompleteness) (SearchEnvelope, error) {
+	if len(values) == 0 && completeness != MachineComplete {
+		return SearchEnvelope{}, fmt.Errorf("empty search output requires confirmed completeness")
+	}
 	histories, err := machineHistories(values, completeness, "search")
 	return SearchEnvelope{Schema: "mm/v2/search", Results: histories}, err
 }

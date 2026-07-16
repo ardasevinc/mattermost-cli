@@ -85,8 +85,52 @@ func TestResolvedReadChannelAcceptsSelfDM(t *testing.T) {
 	}
 	defer client.Close()
 	runtime := &Runtime{Config: config.Resolved{URL: server.URL, Token: "token", Redact: true}, Client: client, Users: mattermost.NewUsers(client), Channels: mattermost.NewChannels(client)}
-	channel, _, unavailable, err := resolvedReadChannel(context.Background(), runtime, "dm1", "user1")
+	channel, _, unavailable, err := resolvedReadChannel(context.Background(), runtime, "dm1", "user1", readChannelBinding{})
 	if err != nil || unavailable || channel.Type != "dm" || channel.Name != "@arda" || channel.MetadataStatus != "resolved" {
+		t.Fatalf("channel=%+v unavailable=%v err=%v", channel, unavailable, err)
+	}
+}
+
+func TestResolvedReadChannelPropagatesCancellation(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	client, err := api.New(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	runtime := &Runtime{Config: config.Resolved{URL: server.URL, Token: "token", Redact: true}, Client: client, Channels: mattermost.NewChannels(client)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, unavailable, err := resolvedReadChannel(ctx, runtime, "channel1", "user1", readChannelBinding{}); err == nil || unavailable {
+		t.Fatalf("unavailable=%v err=%v", unavailable, err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("canceled resolution issued %d requests", requests.Load())
+	}
+}
+
+func TestResolvedReadChannelRequiresSearchGroupMembership(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v4/channels/group1":
+			writeJSON(t, writer, `{"id":"group1","team_id":"","type":"G","name":"group-name","display_name":"Group"}`)
+		case "/api/v4/channels/group1/members/user1":
+			http.Error(writer, "not found", http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := api.New(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	runtime := &Runtime{Config: config.Resolved{URL: server.URL, Token: "token", Redact: true}, Client: client, Channels: mattermost.NewChannels(client)}
+	channel, _, unavailable, err := resolvedReadChannel(context.Background(), runtime, "group1", "user1", readChannelBinding{requireGroupMembership: true})
+	if err != nil || !unavailable || channel.Type != "unknown" || channel.MetadataStatus != "unavailable" {
 		t.Fatalf("channel=%+v unavailable=%v err=%v", channel, unavailable, err)
 	}
 }

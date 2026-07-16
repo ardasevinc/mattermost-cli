@@ -50,6 +50,14 @@ func flagChanged(cmd *cobra.Command, name string) bool {
 }
 
 func normalizeReadPosts(ctx context.Context, runtime *Runtime, posts []mattermost.Post, myUserID string) ([]output.Message, []output.Redaction, error) {
+	users, err := loadReadUsers(ctx, runtime, posts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return normalizeReadPostsWithUsers(runtime, posts, users, myUserID)
+}
+
+func loadReadUsers(ctx context.Context, runtime *Runtime, posts []mattermost.Post) (map[string]mattermost.User, error) {
 	users := make(map[string]mattermost.User)
 	ids := normalization.PostUserIDs(posts)
 	if len(ids) != 0 {
@@ -60,16 +68,25 @@ func normalizeReadPosts(ctx context.Context, runtime *Runtime, posts []mattermos
 			}
 			items, err := runtime.Users.ByIDs(ctx, ids[start:end])
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			for _, user := range items {
 				users[user.ID] = user
 			}
 		}
 	}
+	return users, nil
+}
+
+func normalizeReadPostsWithUsers(runtime *Runtime, posts []mattermost.Post, users map[string]mattermost.User, myUserID string) ([]output.Message, []output.Redaction, error) {
 	return normalization.NormalizePosts(posts, users, myUserID, runtime.Config.URL, presentation.Options{
 		Credentials: []string{runtime.Config.Token}, DisableHeuristics: !runtime.Config.Redact,
 	})
+}
+
+type readChannelBinding struct {
+	selectedTeamID         string
+	requireGroupMembership bool
 }
 
 func processedChannel(raw mattermost.Channel, runtime *Runtime) (output.Channel, []output.Redaction) {
@@ -99,19 +116,31 @@ func processedChannel(raw mattermost.Channel, runtime *Runtime) (output.Channel,
 	}, redactions
 }
 
-func resolvedReadChannel(ctx context.Context, runtime *Runtime, channelID, myUserID string) (output.Channel, []output.Redaction, bool, error) {
+func resolvedReadChannel(ctx context.Context, runtime *Runtime, channelID, myUserID string, binding readChannelBinding) (output.Channel, []output.Redaction, bool, error) {
 	if channelID == "" {
 		channel, redactions := unavailableChannel(channelID, runtime)
 		return channel, redactions, true, nil
 	}
 	raw, err := runtime.Channels.ByID(ctx, channelID)
 	if err != nil {
-		var remote *api.APIError
-		if errors.As(err, &remote) && remote.Status == 401 {
+		if fatalMetadataResolutionError(ctx, err) {
 			return output.Channel{}, nil, false, err
 		}
 		channel, redactions := unavailableChannel(channelID, runtime)
 		return channel, redactions, true, nil
+	}
+	if (raw.Type == "O" || raw.Type == "P") && binding.selectedTeamID != "" && raw.TeamID != binding.selectedTeamID {
+		channel, redactions := unavailableChannel(channelID, runtime)
+		return channel, redactions, true, nil
+	}
+	if raw.Type == "G" && binding.requireGroupMembership {
+		if _, err := runtime.Channels.Member(ctx, raw.ID, myUserID); err != nil {
+			if fatalMetadataResolutionError(ctx, err) {
+				return output.Channel{}, nil, false, err
+			}
+			channel, redactions := unavailableChannel(channelID, runtime)
+			return channel, redactions, true, nil
+		}
 	}
 	if raw.Type != "D" {
 		channel, redactions := processedChannel(raw, runtime)
@@ -128,8 +157,7 @@ func resolvedReadChannel(ctx context.Context, runtime *Runtime, channelID, myUse
 	}
 	other, err := runtime.Users.ByID(ctx, otherID)
 	if err != nil {
-		var remote *api.APIError
-		if errors.As(err, &remote) && remote.Status == 401 {
+		if fatalMetadataResolutionError(ctx, err) {
 			return output.Channel{}, nil, false, err
 		}
 		channel, redactions := unavailableChannel(channelID, runtime)
@@ -140,6 +168,14 @@ func resolvedReadChannel(ctx context.Context, runtime *Runtime, channelID, myUse
 	channel := output.Channel{ID: id, Type: "dm", Name: "@" + name, MetadataStatus: "resolved"}
 	redactions = append(redactions, nameRedactions...)
 	return channel, redactions, false, nil
+}
+
+func fatalMetadataResolutionError(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return true
+	}
+	var remote *api.APIError
+	return errors.As(err, &remote) && remote.Status == 401
 }
 
 func unavailableChannel(channelID string, runtime *Runtime) (output.Channel, []output.Redaction) {

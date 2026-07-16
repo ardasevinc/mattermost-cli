@@ -118,6 +118,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.AddCommand(newSchemaCommand(state))
 	cmd.AddCommand(newChannelCommand(state))
 	cmd.AddCommand(newThreadCommand(state))
+	cmd.AddCommand(newSearchCommand(state))
 	return cmd
 }
 

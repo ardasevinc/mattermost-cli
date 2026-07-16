@@ -73,7 +73,7 @@ func runThread(cmd *cobra.Command, state *rootState, postID string) error {
 		return readFailure(err)
 	}
 	messages = output.GroupIntoThreads(messages)
-	channel, channelRedactions, unavailable, err := resolvedReadChannel(cmd.Context(), runtime, channelID, me.ID)
+	channel, channelRedactions, unavailable, err := resolvedReadChannel(cmd.Context(), runtime, channelID, me.ID, readChannelBinding{})
 	if err != nil {
 		return readFailure(err)
 	}
