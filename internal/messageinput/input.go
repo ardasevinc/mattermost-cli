@@ -27,11 +27,11 @@ func Read(input io.Reader) ([]byte, error) {
 		return nil, ErrRead
 	}
 	data, err := io.ReadAll(io.LimitReader(input, MaxBytes+1))
-	if err != nil {
-		return nil, ErrRead
-	}
 	if len(data) > MaxBytes {
 		return nil, ErrTooManyBytes
+	}
+	if err != nil {
+		return nil, ErrRead
 	}
 	if err := Validate(data); err != nil {
 		return nil, err
@@ -46,11 +46,11 @@ func Validate(message []byte) error {
 	if !utf8.Valid(message) {
 		return ErrInvalidUTF8
 	}
-	if utf8.RuneCount(message) > MaxCharacters {
-		return ErrTooManyRunes
-	}
 	if whitespaceOnly(message) {
 		return ErrEmpty
+	}
+	if utf8.RuneCount(message) > MaxCharacters {
+		return ErrTooManyRunes
 	}
 	return nil
 }
