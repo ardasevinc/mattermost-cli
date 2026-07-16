@@ -11,6 +11,7 @@ require github.com/pelletier/go-toml/v2 v2.4.3
 require golang.org/x/net v0.57.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.40.0
 )

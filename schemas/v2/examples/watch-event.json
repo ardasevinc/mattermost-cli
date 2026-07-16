@@ -1,0 +1,1 @@
+{"schema":"mm/v2/watch-event","type":"posted","sequence":{"connectionId":"connection-1","number":1},"postId":"post-1","channelId":"channel-1","channelName":"town-square","senderId":"user-1","sender":"arda","message":"hello","timestamp":"1970-01-01T00:00:00.001Z","rootId":null,"fileIds":[],"redactions":[]}
