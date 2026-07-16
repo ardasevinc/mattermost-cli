@@ -90,6 +90,28 @@ func TestSchemaLookupDoesNotReflectActiveCredential(t *testing.T) {
 	}
 }
 
+func TestExecuteSanitizesAndRedactsUnknownCommand(t *testing.T) {
+	const token = "super-secret-mm-token"
+	t.Setenv("MM_TOKEN", token)
+	hostile := token + " \x1b[2J " + "AKIAIOSFODNN7EXAMPLE"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Execute(context.Background(), []string{hostile}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if strings.Contains(stderr.String(), token) || strings.ContainsRune(stderr.String(), '\x1b') ||
+		strings.Contains(stderr.String(), "AKIAIOSFODNN7EXAMPLE") {
+		t.Fatalf("stderr retained hostile input: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `[REDACTED:mattermost_credential]`) ||
+		(!strings.Contains(stderr.String(), `\u001b`) && !strings.Contains(stderr.String(), `\x1b`)) {
+		t.Fatalf("stderr did not expose safe provenance: %q", stderr.String())
+	}
+}
+
 func TestSchemaShowTreatsShortWriteAsReadFailure(t *testing.T) {
 	var stderr bytes.Buffer
 

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ardasevinc/mattermost-cli/internal/buildinfo"
+	"github.com/ardasevinc/mattermost-cli/internal/presentation"
 	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
 )
 
@@ -21,13 +22,12 @@ type streams struct {
 }
 
 func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
+	releaseCredential := presentation.ActiveCredentials.Register(os.Getenv("MM_TOKEN"))
+	defer releaseCredential()
 	cmd := newRoot(streams{in: in, out: out, err: errOut})
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		message := err.Error()
-		if token := os.Getenv("MM_TOKEN"); token != "" {
-			message = strings.ReplaceAll(message, token, "[REDACTED:mattermost_credential]")
-		}
+		message := presentation.SanitizeLabel(presentation.PreprocessActive(err.Error()).Text)
 		_, _ = fmt.Fprintf(errOut, "error: %s\n", message)
 		var outputFailure outputError
 		if errors.As(err, &outputFailure) {
