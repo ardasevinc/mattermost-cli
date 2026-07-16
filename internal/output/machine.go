@@ -123,6 +123,23 @@ type ErrorEnvelope struct {
 	Recovery string `json:"recovery"`
 }
 
+type ConfigEnvelope struct {
+	Schema          string  `json:"schema"`
+	Action          string  `json:"action"`
+	SelectedPath    string  `json:"selectedPath"`
+	ReadPath        *string `json:"readPath"`
+	Migration       *string `json:"migration"`
+	Exists          *bool   `json:"exists"`
+	URLConfigured   *bool   `json:"urlConfigured"`
+	TokenConfigured *bool   `json:"tokenConfigured"`
+	Permissions     *string `json:"permissions"`
+	ReadStatus      *string `json:"readStatus"`
+	ParseStatus     *string `json:"parseStatus"`
+	UnsafeReason    *string `json:"unsafeReason"`
+	Created         *bool   `json:"created"`
+	Warning         *string `json:"warning"`
+}
+
 type MachineDocument interface{ machineDocument() }
 
 func (DMSEnvelope) machineDocument()      {}
@@ -132,6 +149,7 @@ func (ThreadEnvelope) machineDocument()   {}
 func (SearchEnvelope) machineDocument()   {}
 func (MentionsEnvelope) machineDocument() {}
 func (ErrorEnvelope) machineDocument()    {}
+func (ConfigEnvelope) machineDocument()   {}
 
 type wireMessage struct {
 	ID          string           `json:"id"`
@@ -246,6 +264,8 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 			Results []wireHistory `json:"results"`
 		}{value.Schema, canonicalHistories(value.Results)}, nil
 	case ErrorEnvelope:
+		return value, nil
+	case ConfigEnvelope:
 		return value, nil
 	default:
 		return nil, fmt.Errorf("unsupported machine document type %T", document)
@@ -417,7 +437,7 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
 	}

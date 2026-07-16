@@ -13,6 +13,8 @@ import (
 
 var errUnsafePath = errors.New("unsafe config path")
 
+var configDirectoryFchmodat = unix.Fchmodat
+
 func openConfigFile(path string) (*os.File, os.FileInfo, UnsafeReason, error) {
 	directory, name, unsafe, err := walkConfigParent(path, false)
 	if err != nil {
@@ -88,17 +90,28 @@ func walkConfigParent(path string, create bool) (int, string, UnsafeReason, erro
 func openConfigDirectory(parent int, name string, boundary, create bool) (int, bool, UnsafeReason, error) {
 	var entry unix.Stat_t
 	err := unix.Fstatat(parent, name, &entry, unix.AT_SYMLINK_NOFOLLOW)
+	created := false
 	if errors.Is(err, unix.ENOENT) && create {
-		if err := unix.Mkdirat(parent, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
-			return -1, boundary, "", err
+		mkdirErr := unix.Mkdirat(parent, name, 0o700)
+		if mkdirErr == nil {
+			created = true
+		} else if !errors.Is(mkdirErr, unix.EEXIST) {
+			return -1, boundary, "", mkdirErr
 		}
 		err = unix.Fstatat(parent, name, &entry, unix.AT_SYMLINK_NOFOLLOW)
 	}
 	if err != nil {
 		return -1, boundary, "", err
 	}
-	isSymlink := entry.Mode&unix.S_IFMT == unix.S_IFLNK
 	currentUser := uint32(os.Geteuid())
+	if created {
+		secured, unsafe, secureErr := secureCreatedConfigDirectory(parent, name, entry, currentUser, boundary)
+		if secureErr != nil {
+			return -1, boundary, unsafe, secureErr
+		}
+		entry = secured
+	}
+	isSymlink := entry.Mode&unix.S_IFMT == unix.S_IFLNK
 	if isSymlink && (boundary || (currentUser != 0 && entry.Uid == currentUser)) {
 		return -1, boundary, UnsafeType, errUnsafePath
 	}
@@ -120,9 +133,27 @@ func openConfigDirectory(parent int, name string, boundary, create bool) (int, b
 		_ = unix.Close(fd)
 		return -1, boundary, UnsafeType, errUnsafePath
 	}
+	if !isSymlink && (entry.Dev != opened.Dev || entry.Ino != opened.Ino) {
+		_ = unix.Close(fd)
+		return -1, boundary, UnsafeChanged, errUnsafePath
+	}
 	if opened.Uid != 0 && opened.Uid != currentUser {
 		_ = unix.Close(fd)
 		return -1, boundary, UnsafeOwnership, errUnsafePath
+	}
+	if created {
+		if err := unix.Fchmod(fd, 0o700); err != nil {
+			_ = unix.Close(fd)
+			return -1, boundary, "", err
+		}
+		if err := unix.Fstat(fd, &opened); err != nil {
+			_ = unix.Close(fd)
+			return -1, boundary, "", err
+		}
+		if opened.Mode&0o777 != 0o700 {
+			_ = unix.Close(fd)
+			return -1, boundary, UnsafeUnsupported, errUnsafePath
+		}
 	}
 	nextBoundary := boundary || (opened.Uid == currentUser && (currentUser != 0 || opened.Mode&0o077 == 0))
 	if nextBoundary && opened.Mode&0o022 != 0 {
@@ -130,6 +161,42 @@ func openConfigDirectory(parent int, name string, boundary, create bool) (int, b
 		return -1, boundary, UnsafeOwnership, errUnsafePath
 	}
 	return fd, nextBoundary, "", nil
+}
+
+func secureCreatedConfigDirectory(parent int, name string, expected unix.Stat_t, currentUser uint32, trustedParent bool) (unix.Stat_t, UnsafeReason, error) {
+	if expected.Mode&unix.S_IFMT != unix.S_IFDIR || expected.Uid != currentUser {
+		return unix.Stat_t{}, UnsafeChanged, errUnsafePath
+	}
+	err := configDirectoryFchmodat(parent, name, 0o700, unix.AT_SYMLINK_NOFOLLOW)
+	if errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOTSUP) {
+		if !trustedParent {
+			return unix.Stat_t{}, UnsafeUnsupported, errUnsafePath
+		}
+		var beforeFallback unix.Stat_t
+		if statErr := unix.Fstatat(parent, name, &beforeFallback, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+			return unix.Stat_t{}, "", statErr
+		}
+		if !sameCreatedConfigDirectory(expected, beforeFallback, currentUser) {
+			return unix.Stat_t{}, UnsafeChanged, errUnsafePath
+		}
+		err = configDirectoryFchmodat(parent, name, 0o700, 0)
+	}
+	if err != nil {
+		return unix.Stat_t{}, "", err
+	}
+	var secured unix.Stat_t
+	if err := unix.Fstatat(parent, name, &secured, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return unix.Stat_t{}, "", err
+	}
+	if !sameCreatedConfigDirectory(expected, secured, currentUser) {
+		return unix.Stat_t{}, UnsafeChanged, errUnsafePath
+	}
+	return secured, "", nil
+}
+
+func sameCreatedConfigDirectory(expected, actual unix.Stat_t, currentUser uint32) bool {
+	return expected.Dev == actual.Dev && expected.Ino == actual.Ino &&
+		actual.Mode&unix.S_IFMT == unix.S_IFDIR && actual.Uid == currentUser
 }
 
 func classifyOpenError(err error) (UnsafeReason, error) {

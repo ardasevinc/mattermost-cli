@@ -63,7 +63,7 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 			return 3
 		}
 	}
-	return 0
+	return state.semanticExitCode()
 }
 
 func machineErrorCode(err error) string {
@@ -106,7 +106,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.SetOut(s.out)
 	cmd.SetErr(s.err)
 	cmd.PersistentFlags().StringVar(&state.flags.url, "url", "", "Mattermost server URL")
-	cmd.PersistentFlags().StringVar(&state.flags.token, "token", "", "Mattermost personal access token")
+	cmd.PersistentFlags().StringVarP(&state.flags.token, "token", "t", "", "Mattermost personal access token")
 	cmd.PersistentFlags().BoolVar(&state.flags.redact, "redact", true, "redact detected secrets")
 	cmd.PersistentFlags().BoolVar(&state.flags.noRedact, "no-redact", false, "disable heuristic secret redaction")
 	cmd.PersistentFlags().BoolVar(&state.flags.json, "json", false, "output a versioned JSON document")
@@ -116,6 +116,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&state.flags.threads, "threads", true, "show visible thread structure")
 	cmd.PersistentFlags().BoolVar(&state.flags.noThreads, "no-threads", false, "return selected seed posts only")
 	cmd.AddCommand(newSchemaCommand(state))
+	cmd.AddCommand(newConfigCommand(state))
 	cmd.AddCommand(newChannelCommand(state))
 	cmd.AddCommand(newDMsCommand(state))
 	cmd.AddCommand(newGroupDMsCommand(state))

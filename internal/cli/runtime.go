@@ -61,14 +61,16 @@ type rootState struct {
 	deps    dependencies
 	flags   runtimeFlags
 
-	mu              sync.Mutex
-	runtime         *Runtime
-	runtimeErr      error
-	resolved        bool
-	warned          bool
-	releases        []func()
-	credentials     []string
-	pendingWarnings []string
+	mu                sync.Mutex
+	runtime           *Runtime
+	runtimeErr        error
+	resolved          bool
+	warned            bool
+	releases          []func()
+	credentials       []string
+	pendingWarnings   []string
+	semanticExit      int
+	disableHeuristics bool
 }
 
 type runtimeFlags struct {
@@ -151,21 +153,10 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 		s.warned = true
 	}
 
-	var redact *bool
-	redactFlag := cmd.Flags().Lookup("redact")
-	noRedactFlag := cmd.Flags().Lookup("no-redact")
-	redactChanged := redactFlag != nil && redactFlag.Changed
-	noRedactChanged := noRedactFlag != nil && noRedactFlag.Changed
-	if redactChanged && noRedactChanged {
-		s.runtimeErr = invalidFailure("--redact and --no-redact cannot be used together")
-		return nil, s.runtimeErr
-	}
-	if redactChanged {
-		value := s.flags.redact
-		redact = &value
-	} else if noRedactChanged {
-		value := !s.flags.noRedact
-		redact = &value
+	redact, err := s.redactOption(cmd)
+	if err != nil {
+		s.runtimeErr = err
+		return nil, err
 	}
 	resolved := config.Resolve(config.Options{URL: s.flags.url, Token: s.flags.token, Redact: redact}, s.deps.lookupEnv, file)
 	if resolved.URL == "" || resolved.Token == "" {
@@ -191,6 +182,26 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 	return s.runtime, nil
 }
 
+func (s *rootState) redactOption(cmd *cobra.Command) (*bool, error) {
+	redactFlag := cmd.Flags().Lookup("redact")
+	noRedactFlag := cmd.Flags().Lookup("no-redact")
+	redactChanged := redactFlag != nil && redactFlag.Changed
+	noRedactChanged := noRedactFlag != nil && noRedactFlag.Changed
+	if redactChanged && noRedactChanged {
+		return nil, invalidFailure("--redact and --no-redact cannot be used together")
+	}
+	var redact *bool
+	if redactChanged {
+		value := s.flags.redact
+		redact = &value
+	} else if noRedactChanged {
+		value := !s.flags.noRedact
+		redact = &value
+	}
+	s.disableHeuristics = redact != nil && !*redact
+	return redact, nil
+}
+
 func (s *rootState) flushMachineWarnings() error {
 	s.mu.Lock()
 	warnings := strings.Join(s.pendingWarnings, "")
@@ -206,6 +217,20 @@ func (s *rootState) queueMachineWarning(message string) {
 	s.mu.Lock()
 	s.pendingWarnings = append(s.pendingWarnings, message)
 	s.mu.Unlock()
+}
+
+func (s *rootState) setSemanticExit(code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if code > s.semanticExit {
+		s.semanticExit = code
+	}
+}
+
+func (s *rootState) semanticExitCode() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.semanticExit
 }
 
 type errorClass uint8
@@ -278,15 +303,51 @@ func exitCode(err error) int {
 
 func earlyTokens(args []string) []string {
 	var tokens []string
-	for index, arg := range args {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
 		if arg == "--token" && index+1 < len(args) {
 			tokens = append(tokens, args[index+1])
+			index++
+			continue
 		}
 		if strings.HasPrefix(arg, "--token=") {
 			tokens = append(tokens, strings.TrimPrefix(arg, "--token="))
+			continue
+		}
+		if value, next, ok := shortTokenValue(args, index); ok {
+			tokens = append(tokens, value)
+			if next {
+				index++
+			}
 		}
 	}
 	return tokens
+}
+
+func shortTokenValue(args []string, index int) (value string, consumedNext, ok bool) {
+	arg := args[index]
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || len(arg) < 2 {
+		return "", false, false
+	}
+	shorthand := strings.TrimPrefix(arg, "-")
+	for position := 0; position < len(shorthand); position++ {
+		switch shorthand[position] {
+		case 'r':
+			continue
+		case 't':
+			value := strings.TrimPrefix(shorthand[position+1:], "=")
+			if value != "" {
+				return value, false, true
+			}
+			if index+1 < len(args) {
+				return args[index+1], true, true
+			}
+			return "", false, false
+		default:
+			return "", false, false
+		}
+	}
+	return "", false, false
 }
 
 func bestEffortFileToken(deps dependencies) string {

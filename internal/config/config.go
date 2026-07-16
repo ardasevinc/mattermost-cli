@@ -140,6 +140,9 @@ func Init(path string) (bool, error) {
 			_ = os.Remove(path)
 		}
 	}()
+	if err := file.Chmod(0o600); err != nil {
+		return false, fmt.Errorf("could not secure config file")
+	}
 	written, err := io.WriteString(file, Template)
 	if err != nil {
 		return false, fmt.Errorf("could not write config template")

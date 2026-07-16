@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:config",
+  "title": "mm v2 configuration status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "action", "selectedPath", "readPath", "migration", "exists", "urlConfigured", "tokenConfigured", "permissions", "readStatus", "parseStatus", "unsafeReason", "created", "warning"],
+  "properties": {
+    "schema": { "const": "mm/v2/config" },
+    "action": { "enum": ["status", "path", "init"] },
+    "selectedPath": { "type": "string", "minLength": 1 },
+    "readPath": { "type": ["string", "null"], "minLength": 1 },
+    "migration": { "type": ["string", "null"], "enum": [null, "none", "legacy_fallback", "legacy_ignored"] },
+    "exists": { "type": ["boolean", "null"] },
+    "urlConfigured": { "type": ["boolean", "null"] },
+    "tokenConfigured": { "type": ["boolean", "null"] },
+    "permissions": { "type": ["string", "null"], "enum": [null, "secure", "insecure", "unknown", "not_applicable"] },
+    "readStatus": { "type": ["string", "null"], "enum": [null, "ok", "missing", "error"] },
+    "parseStatus": { "type": ["string", "null"], "enum": [null, "ok", "not_attempted", "error"] },
+    "unsafeReason": { "type": ["string", "null"], "enum": [null, "type", "changed", "ownership", "unsupported"] },
+    "created": { "type": ["boolean", "null"] },
+    "warning": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "path" } }, "required": ["action"] },
+      "then": { "properties": { "readPath": { "const": null }, "migration": { "const": null }, "exists": { "const": null }, "urlConfigured": { "const": null }, "tokenConfigured": { "const": null }, "permissions": { "const": null }, "readStatus": { "const": null }, "parseStatus": { "const": null }, "unsafeReason": { "const": null }, "created": { "const": null }, "warning": { "const": null } } }
+    },
+    {
+      "if": { "properties": { "action": { "const": "status" } }, "required": ["action"] },
+      "then": { "properties": { "created": { "const": null } } }
+    },
+    {
+      "if": { "properties": { "action": { "const": "init" } }, "required": ["action"] },
+      "then": { "properties": { "created": { "type": "boolean" } } }
+    },
+    {
+      "if": { "properties": { "action": { "enum": ["status", "init"] } }, "required": ["action"] },
+      "then": {
+        "properties": { "migration": { "type": "string" }, "exists": { "type": "boolean" }, "urlConfigured": { "type": "boolean" }, "tokenConfigured": { "type": "boolean" }, "permissions": { "type": "string" }, "readStatus": { "type": "string" }, "parseStatus": { "type": "string" } },
+        "allOf": [
+          {
+            "if": { "properties": { "exists": { "const": false } }, "required": ["exists"] },
+            "then": { "properties": { "readPath": { "const": null }, "urlConfigured": { "const": false }, "tokenConfigured": { "const": false }, "permissions": { "const": "not_applicable" }, "readStatus": { "const": "missing" }, "parseStatus": { "const": "not_attempted" }, "unsafeReason": { "const": null } } }
+          },
+          {
+            "if": { "properties": { "exists": { "const": true } }, "required": ["exists"] },
+            "then": { "properties": { "readPath": { "type": "string" } } }
+          },
+          {
+            "if": { "properties": { "readStatus": { "const": "error" } }, "required": ["readStatus"] },
+            "then": { "properties": { "exists": { "const": true }, "urlConfigured": { "const": false }, "tokenConfigured": { "const": false }, "permissions": { "const": "unknown" }, "parseStatus": { "const": "not_attempted" } } }
+          },
+          {
+            "if": { "properties": { "readStatus": { "const": "missing" } }, "required": ["readStatus"] },
+            "then": { "properties": { "exists": { "const": false } } }
+          },
+          {
+            "if": { "properties": { "readStatus": { "const": "ok" } }, "required": ["readStatus"] },
+            "then": { "properties": { "exists": { "const": true }, "parseStatus": { "enum": ["ok", "error"] } } }
+          },
+          {
+            "if": { "properties": { "parseStatus": { "const": "not_attempted" } }, "required": ["parseStatus"] },
+            "then": { "properties": { "readStatus": { "enum": ["missing", "error"] } } }
+          },
+          {
+            "if": { "properties": { "unsafeReason": { "type": "string" } }, "required": ["unsafeReason"] },
+            "then": { "properties": { "readStatus": { "const": "error" } } }
+          },
+          {
+            "if": { "properties": { "permissions": { "const": "unknown" } }, "required": ["permissions"] },
+            "then": { "properties": { "readStatus": { "const": "error" } } }
+          },
+          {
+            "if": { "properties": { "permissions": { "const": "not_applicable" } }, "required": ["permissions"] },
+            "then": { "properties": { "readStatus": { "const": "missing" } } }
+          },
+          {
+            "if": { "properties": { "permissions": { "enum": ["secure", "insecure"] } }, "required": ["permissions"] },
+            "then": { "properties": { "readStatus": { "const": "ok" } } }
+          },
+          {
+            "if": { "properties": { "parseStatus": { "const": "error" } }, "required": ["parseStatus"] },
+            "then": { "properties": { "exists": { "const": true }, "urlConfigured": { "const": false }, "tokenConfigured": { "const": false }, "readStatus": { "const": "ok" }, "permissions": { "enum": ["secure", "insecure"] }, "unsafeReason": { "const": null } } }
+          },
+          {
+            "if": { "properties": { "parseStatus": { "const": "ok" } }, "required": ["parseStatus"] },
+            "then": { "properties": { "exists": { "const": true }, "readStatus": { "const": "ok" }, "permissions": { "enum": ["secure", "insecure"] }, "unsafeReason": { "const": null } } }
+          },
+          {
+            "if": { "properties": { "migration": { "const": "none" } }, "required": ["migration"] },
+            "then": { "properties": { "warning": { "const": null } } }
+          },
+          {
+            "if": { "properties": { "migration": { "enum": ["legacy_fallback", "legacy_ignored"] } }, "required": ["migration"] },
+            "then": { "properties": { "warning": { "type": "string" } } }
+          }
+        ]
+      }
+    }
+  ]
+}
