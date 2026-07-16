@@ -294,6 +294,9 @@ func TestHistoryEnvelopeRejectsCompletenessThatContradictsQueryTruncation(t *tes
 	if _, err := output.NewSearchEnvelope(nil, output.MachineUnknown); err == nil {
 		t.Fatal("unknown empty search envelope was accepted without metadata")
 	}
+	if _, err := output.NewMentionsEnvelope(nil, output.MachineTruncated); err == nil {
+		t.Fatal("truncated empty mentions envelope was accepted without metadata")
+	}
 	value := validOutput()
 	value.Retrieval.Selection.Source = "search"
 	truncated := true

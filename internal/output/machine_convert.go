@@ -128,6 +128,9 @@ func NewSearchEnvelope(values []MessageOutput, completeness MachineCompleteness)
 }
 
 func NewMentionsEnvelope(values []MessageOutput, completeness MachineCompleteness) (MentionsEnvelope, error) {
+	if len(values) == 0 && completeness != MachineComplete {
+		return MentionsEnvelope{}, fmt.Errorf("empty mentions output requires confirmed completeness")
+	}
 	histories, err := machineHistories(values, completeness, "mentions")
 	return MentionsEnvelope{Schema: "mm/v2/mentions", Results: histories}, err
 }

@@ -22,11 +22,12 @@ const (
 var ErrInvalidMentionsRequest = errors.New("invalid mentions request")
 
 type MentionsOptions struct {
-	Username string
-	Aliases  []string
-	Channel  *string
-	Since    *int64
-	Limit    int
+	Username  string
+	Aliases   []string
+	Channel   *string
+	ChannelID *string
+	Since     *int64
+	Limit     int
 }
 
 type MentionsResult struct {
@@ -60,8 +61,10 @@ func retrieveMentions(ctx context.Context, search mentionSearchFunc, teamID stri
 		}
 		query := searchTermWithScope(term, channel, options.Since)
 		result, err := search(ctx, teamID, query, SearchOptions{
-			Limit:  options.Limit,
-			Accept: func(post mattermost.Post) bool { return isExactMention(post, term, options.Since) },
+			Limit: options.Limit,
+			Accept: func(post mattermost.Post) bool {
+				return (options.ChannelID == nil || post.ChannelID == *options.ChannelID) && isExactMention(post, term, options.Since)
+			},
 		})
 		if err != nil {
 			return MentionsResult{}, err
@@ -78,6 +81,9 @@ func retrieveMentions(ctx context.Context, search mentionSearchFunc, teamID stri
 }
 
 func mentionTerms(options MentionsOptions) ([]string, string, error) {
+	if (options.Channel == nil) != (options.ChannelID == nil) {
+		return nil, "", ErrInvalidMentionsRequest
+	}
 	username := strings.TrimSpace(options.Username)
 	channel := ""
 	if options.Channel != nil {
@@ -86,21 +92,29 @@ func mentionTerms(options MentionsOptions) ([]string, string, error) {
 			return nil, "", ErrInvalidMentionsRequest
 		}
 	}
+	if options.ChannelID != nil {
+		channelID := strings.TrimSpace(*options.ChannelID)
+		if channelID != *options.ChannelID || !safeSearchAtom(channelID) {
+			return nil, "", ErrInvalidMentionsRequest
+		}
+	}
 	if options.Limit <= 0 || int64(options.Limit) > maxSafeInteger || !safeSearchAtom(username) ||
-		len(options.Aliases) > MaxMentionAliases || (options.Since != nil && (*options.Since < 0 || *options.Since > maxDateMilliseconds)) ||
+		(options.Since != nil && (*options.Since < 0 || *options.Since > maxDateMilliseconds)) ||
 		(channel != "" && !safeSearchAtom(channel)) {
 		return nil, "", ErrInvalidMentionsRequest
 	}
 	terms := make([]string, 0, len(options.Aliases)+1)
 	seen := make(map[string]struct{}, len(options.Aliases)+1)
-	add := func(term string) {
+	add := func(term string) bool {
 		if _, ok := seen[term]; ok {
-			return
+			return false
 		}
 		seen[term] = struct{}{}
 		terms = append(terms, term)
+		return true
 	}
 	add("@" + username)
+	aliasCount := 0
 	for _, raw := range options.Aliases {
 		alias := strings.TrimSpace(raw)
 		if alias == "" {
@@ -114,7 +128,12 @@ func mentionTerms(options MentionsOptions) ([]string, string, error) {
 				return nil, "", ErrInvalidMentionsRequest
 			}
 		}
-		add("\"" + alias + "\"")
+		if add("\"" + alias + "\"") {
+			aliasCount++
+			if aliasCount > MaxMentionAliases {
+				return nil, "", ErrInvalidMentionsRequest
+			}
+		}
 	}
 	return terms, channel, nil
 }

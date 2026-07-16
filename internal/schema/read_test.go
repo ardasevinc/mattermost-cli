@@ -215,3 +215,23 @@ func TestSearchSchemaBindsSourceAndCompleteness(t *testing.T) {
 		}
 	}
 }
+
+func TestMentionsSchemaBindsSourceAndCompleteness(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := fs.ReadFile(publicschemas.FS, "v2/examples/mentions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, document := range map[string]string{
+		"wrong source":          strings.Replace(string(valid), `"source":"mentions"`, `"source":"search"`, 1),
+		"complete is truncated": strings.Replace(string(valid), `"queryTruncated":false`, `"queryTruncated":true`, 1),
+		"complete is unknown":   strings.Replace(string(valid), `"queryTruncated":false`, `"queryTruncated":null`, 1),
+	} {
+		if err := registry.Validate("mm/v2/mentions", strings.NewReader(document)); err == nil {
+			t.Errorf("accepted %s", name)
+		}
+	}
+}

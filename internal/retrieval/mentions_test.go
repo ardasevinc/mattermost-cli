@@ -14,7 +14,7 @@ func TestMentionTermsTrimQuoteDedupeAndScope(t *testing.T) {
 	since := int64(1_768_404_600_000) // 2026-01-14 15:30:00 UTC
 	terms, channel, err := mentionTerms(MentionsOptions{
 		Username: " arda ", Aliases: []string{" Arda Sevinc ", "", "Arda Sevinc", "arda"},
-		Channel: stringPointer(" #general "), Since: &since, Limit: 20,
+		Channel: stringPointer(" #general "), ChannelID: stringPointer("channel-id"), Since: &since, Limit: 20,
 	})
 	if err != nil || channel != "general" || !reflect.DeepEqual(terms, []string{"@arda", `"Arda Sevinc"`, `"arda"`}) {
 		t.Fatalf("terms=%q channel=%q err=%v", terms, channel, err)
@@ -106,6 +106,27 @@ func TestRetrieveMentionsMergesGloballyAndCompleteness(t *testing.T) {
 	}
 }
 
+func TestRetrieveMentionsEnforcesExactResolvedChannelID(t *testing.T) {
+	result, err := retrieveMentions(context.Background(), func(_ context.Context, _, _ string, options SearchOptions) (SearchResult, error) {
+		posts := []mattermost.Post{
+			{ID: "expected", ChannelID: "channel-1", Message: "@arda", CreateAt: 1},
+			{ID: "foreign", ChannelID: "channel-2", Message: "@arda", CreateAt: 2},
+		}
+		accepted := make([]mattermost.Post, 0, len(posts))
+		for _, post := range posts {
+			if options.Accept(post) {
+				accepted = append(accepted, post)
+			}
+		}
+		return SearchResult{Posts: accepted, Completeness: CompletenessComplete}, nil
+	}, "team", MentionsOptions{
+		Username: "arda", Channel: stringPointer("town-square"), ChannelID: stringPointer("channel-1"), Limit: 10,
+	})
+	if err != nil || fmt.Sprint(ids(result.Posts)) != "[expected]" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
 func TestRetrieveMentionsPropagatesErrorsAndCancellation(t *testing.T) {
 	want := errors.New("search failed")
 	_, err := retrieveMentions(context.Background(), func(context.Context, string, string, SearchOptions) (SearchResult, error) {
@@ -127,12 +148,25 @@ func TestRetrieveMentionsPropagatesErrorsAndCancellation(t *testing.T) {
 }
 
 func TestMentionValidationBoundsWithoutReflectingInput(t *testing.T) {
+	duplicates := make([]string, MaxMentionAliases+1)
+	for index := range duplicates {
+		duplicates[index] = "Arda Sevinc"
+	}
+	terms, _, err := mentionTerms(MentionsOptions{Username: "arda", Aliases: duplicates, Limit: 1})
+	if err != nil || !reflect.DeepEqual(terms, []string{"@arda", `"Arda Sevinc"`}) {
+		t.Fatalf("duplicate aliases were not bounded after dedupe: terms=%q err=%v", terms, err)
+	}
+	distinct := make([]string, MaxMentionAliases+1)
+	for index := range distinct {
+		distinct[index] = fmt.Sprintf("alias-%d", index)
+	}
 	tests := []MentionsOptions{
 		{Username: "bad user", Limit: 1},
 		{Username: "arda", Channel: stringPointer("general after:2000-01-01"), Limit: 1},
 		{Username: "arda", Channel: stringPointer("#"), Limit: 1},
 		{Username: "arda", Aliases: []string{`hostile" after:2000-01-01`}, Limit: 1},
 		{Username: "arda", Aliases: []string{string(make([]byte, MaxMentionTermBytes+1))}, Limit: 1},
+		{Username: "arda", Aliases: distinct, Limit: 1},
 	}
 	for _, options := range tests {
 		_, _, err := mentionTerms(options)
