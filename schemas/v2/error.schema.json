@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:error",
+  "title": "mm v2 machine error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "code", "message", "exitCode", "recovery"],
+  "properties": {
+    "schema": { "const": "mm/v2/error" },
+    "code": {
+      "type": "string",
+      "enum": [
+        "invalid_invocation",
+        "invalid_input",
+        "configuration",
+        "authentication",
+        "authorization",
+        "read_failed",
+        "mutation_rejected",
+        "mutation_partial",
+        "mutation_unknown",
+        "state_conflict",
+        "confirmed_effect_local_failure",
+        "internal"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1 },
+    "exitCode": { "type": "integer", "enum": [2, 3, 4, 5, 6, 7] },
+    "stageRef": { "type": "string", "minLength": 1 },
+    "recovery": {
+      "type": "string",
+      "enum": ["none", "resume_partial", "force_unknown", "forbidden"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "code": { "enum": ["invalid_invocation", "invalid_input"] }
+        }
+      },
+      "then": { "properties": { "exitCode": { "const": 2 } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "code": {
+            "enum": [
+              "configuration",
+              "authentication",
+              "authorization",
+              "read_failed",
+              "internal"
+            ]
+          }
+        }
+      },
+      "then": { "properties": { "exitCode": { "const": 3 } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "mutation_rejected" } } },
+      "then": { "properties": { "exitCode": { "const": 4 } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "code": { "enum": ["mutation_partial", "mutation_unknown"] }
+        }
+      },
+      "then": { "properties": { "exitCode": { "const": 5 } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "state_conflict" } } },
+      "then": { "properties": { "exitCode": { "const": 6 } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "code": { "const": "confirmed_effect_local_failure" }
+        }
+      },
+      "then": { "properties": { "exitCode": { "const": 7 } } }
+    }
+  ]
+}
