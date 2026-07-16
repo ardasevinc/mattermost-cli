@@ -24,6 +24,61 @@ func TestWriteMachineJSONWireContract(t *testing.T) {
 	}
 }
 
+func TestDoctorEnvelopeConstructorAndPreflightRejectContradictions(t *testing.T) {
+	valid := []DoctorCheck{
+		{Name: "configuration", Status: "pass", Message: "credentials resolved", Details: map[string]any{"urlSource": "cli", "tokenSource": "env"}},
+		{Name: "server", Status: "warn", Message: "incomplete health", Details: map[string]any{"status": "OK", "databaseStatus": "OK", "filestoreStatus": "unknown"}},
+		{Name: "authentication", Status: "pass", Message: "authenticated", Details: map[string]any{"id": "id", "username": "arda"}},
+	}
+	document, err := NewDoctorEnvelope(true, valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteMachineJSON(io.Discard, document); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		ok     bool
+		mutate func([]DoctorCheck)
+	}{
+		{"ok with failure", true, func(checks []DoctorCheck) { checks[1].Status = "fail" }},
+		{"false without failure", false, func([]DoctorCheck) {}},
+		{"wrong order", true, func(checks []DoctorCheck) { checks[0].Name = "server" }},
+		{"invalid status", true, func(checks []DoctorCheck) { checks[1].Status = "healthy" }},
+		{"skipped with details", false, func(checks []DoctorCheck) { checks[1].Status = "skipped" }},
+		{"pass without health", true, func(checks []DoctorCheck) { checks[1].Details = nil }},
+		{"auth pass wrong type", true, func(checks []DoctorCheck) { checks[2].Details["id"] = 42 }},
+		{"hostile message", true, func(checks []DoctorCheck) { checks[2].Message = "bad\x1b[2J" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checks := cloneDoctorChecks(valid)
+			test.mutate(checks)
+			if _, err := NewDoctorEnvelope(test.ok, checks); err == nil {
+				t.Fatal("constructor accepted contradictory doctor document")
+			}
+			writer := &shortMachineWriter{}
+			if _, err := WriteMachineJSON(writer, DoctorEnvelope{Schema: "mm/v2/doctor", OK: test.ok, Checks: checks}); err == nil || writer.calls != 0 {
+				t.Fatalf("preflight err=%v writes=%d", err, writer.calls)
+			}
+		})
+	}
+}
+
+func cloneDoctorChecks(checks []DoctorCheck) []DoctorCheck {
+	result := make([]DoctorCheck, len(checks))
+	for index, check := range checks {
+		result[index] = check
+		result[index].Details = make(map[string]any, len(check.Details))
+		for key, value := range check.Details {
+			result[index].Details[key] = value
+		}
+	}
+	return result
+}
+
 type shortMachineWriter struct{ calls int }
 
 func (w *shortMachineWriter) Write(p []byte) (int, error) { w.calls++; return len(p) - 1, nil }

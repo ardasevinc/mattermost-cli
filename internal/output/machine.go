@@ -140,6 +140,27 @@ type ConfigEnvelope struct {
 	Warning         *string `json:"warning"`
 }
 
+type DoctorCheck struct {
+	Name    string         `json:"name"`
+	Status  string         `json:"status"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+type DoctorEnvelope struct {
+	Schema string        `json:"schema"`
+	OK     bool          `json:"ok"`
+	Checks []DoctorCheck `json:"checks"`
+}
+
+func NewDoctorEnvelope(ok bool, checks []DoctorCheck) (DoctorEnvelope, error) {
+	document := DoctorEnvelope{Schema: "mm/v2/doctor", OK: ok, Checks: cloneSlice(checks)}
+	if err := validateDoctorEnvelope(document); err != nil {
+		return DoctorEnvelope{}, err
+	}
+	return document, nil
+}
+
 type MachineDocument interface{ machineDocument() }
 
 func (DMSEnvelope) machineDocument()      {}
@@ -150,6 +171,7 @@ func (SearchEnvelope) machineDocument()   {}
 func (MentionsEnvelope) machineDocument() {}
 func (ErrorEnvelope) machineDocument()    {}
 func (ConfigEnvelope) machineDocument()   {}
+func (DoctorEnvelope) machineDocument()   {}
 
 type wireMessage struct {
 	ID          string           `json:"id"`
@@ -266,6 +288,8 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 	case ErrorEnvelope:
 		return value, nil
 	case ConfigEnvelope:
+		return value, nil
+	case DoctorEnvelope:
 		return value, nil
 	default:
 		return nil, fmt.Errorf("unsupported machine document type %T", document)
@@ -437,9 +461,14 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
+	}
+	if doctorDocument, ok := document.(DoctorEnvelope); ok {
+		if err := validateDoctorEnvelope(doctorDocument); err != nil {
+			return err
+		}
 	}
 	contentBudget := int64(MaxMachineDocumentBytes)
 	valueBudget := machinePreflightMaxValues
@@ -448,6 +477,123 @@ func preflightMachineDocument(document MachineDocument) error {
 		return err
 	}
 	return nil
+}
+
+func validateDoctorEnvelope(document DoctorEnvelope) error {
+	if document.Schema != "mm/v2/doctor" || len(document.Checks) != 3 {
+		return errors.New("invalid doctor document shape")
+	}
+	names := [3]string{"configuration", "server", "authentication"}
+	hasFailure := false
+	for index, check := range document.Checks {
+		if check.Name != names[index] || !doctorStatusValid(check.Status) || !safeDoctorString(check.Message) {
+			return errors.New("invalid doctor check presentation")
+		}
+		if check.Status == "fail" {
+			hasFailure = true
+		}
+		if err := validateDoctorDetails(index, check.Status, check.Details); err != nil {
+			return err
+		}
+	}
+	if document.OK == hasFailure {
+		return errors.New("doctor ok does not match check statuses")
+	}
+	return nil
+}
+
+func doctorStatusValid(status string) bool {
+	return status == "pass" || status == "warn" || status == "fail" || status == "skipped"
+}
+
+func validateDoctorDetails(index int, status string, details map[string]any) error {
+	switch index {
+	case 0:
+		if status == "skipped" || len(details) != 2 || !doctorSource(details["urlSource"]) || !doctorSource(details["tokenSource"]) {
+			return errors.New("invalid doctor configuration details")
+		}
+	case 1:
+		if status == "skipped" {
+			if len(details) != 0 {
+				return errors.New("skipped doctor server check has details")
+			}
+			return nil
+		}
+		if status == "pass" || status == "warn" {
+			if !doctorHealthDetails(details) {
+				return errors.New("doctor server health details are invalid")
+			}
+			return nil
+		}
+		if len(details) != 0 && !doctorHealthDetails(details) && !doctorHTTPDetails(details) {
+			return errors.New("failed doctor server details are invalid")
+		}
+	case 2:
+		if status == "warn" {
+			return errors.New("doctor authentication cannot warn")
+		}
+		if status == "skipped" {
+			if len(details) != 0 {
+				return errors.New("skipped doctor authentication check has details")
+			}
+			return nil
+		}
+		if status == "pass" {
+			if len(details) != 2 || !safeDoctorValue(details["id"]) || !safeDoctorValue(details["username"]) {
+				return errors.New("doctor authentication identity is invalid")
+			}
+			return nil
+		}
+		if len(details) != 0 && !doctorHTTPDetails(details) {
+			return errors.New("failed doctor authentication details are invalid")
+		}
+	}
+	return nil
+}
+
+func doctorHealthDetails(details map[string]any) bool {
+	if len(details) != 3 {
+		return false
+	}
+	return safeDoctorValue(details["status"]) && safeDoctorValue(details["databaseStatus"]) && safeDoctorValue(details["filestoreStatus"])
+}
+
+func doctorHTTPDetails(details map[string]any) bool {
+	if len(details) != 1 {
+		return false
+	}
+	status, ok := details["httpStatus"].(int)
+	return ok && status >= 100 && status <= 599
+}
+
+func doctorSource(value any) bool {
+	text, ok := doctorString(value)
+	return ok && (text == "cli" || text == "env" || text == "file" || text == "missing")
+}
+
+func safeDoctorValue(value any) bool {
+	text, ok := doctorString(value)
+	return ok && safeDoctorString(text)
+}
+
+func doctorString(value any) (string, bool) {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() || reflected.Kind() != reflect.String {
+		return "", false
+	}
+	return reflected.String(), true
+}
+
+func safeDoctorString(value string) bool {
+	if value == "" || !utf8.ValidString(value) {
+		return false
+	}
+	for _, current := range value {
+		if current < 0x20 || (current >= 0x7f && current <= 0x9f) || current == 0x202a || current == 0x202b || current == 0x202c || current == 0x202d || current == 0x202e || current == 0x2066 || current == 0x2067 || current == 0x2068 || current == 0x2069 {
+			return false
+		}
+	}
+	return true
 }
 
 type preflightVisit struct {

@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:doctor",
+  "title": "mm v2 doctor report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ok", "checks"],
+  "properties": {
+    "schema": { "const": "mm/v2/doctor" },
+    "ok": { "type": "boolean" },
+    "checks": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        { "$ref": "#/$defs/configuration" },
+        { "$ref": "#/$defs/server" },
+        { "$ref": "#/$defs/authentication" }
+      ],
+      "items": false
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] },
+      "then": { "properties": { "checks": { "not": { "contains": { "properties": { "status": { "const": "fail" } }, "required": ["status"] } } } } }
+    },
+    {
+      "if": { "properties": { "ok": { "const": false } }, "required": ["ok"] },
+      "then": { "properties": { "checks": { "contains": { "properties": { "status": { "const": "fail" } }, "required": ["status"] }, "minContains": 1 } } }
+    }
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["name", "status", "message"],
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "enum": ["pass", "warn", "fail", "skipped"] },
+        "message": { "$ref": "#/$defs/safeString" }
+      }
+    },
+    "configuration": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "status", "message", "details"],
+          "properties": {
+            "name": { "const": "configuration" },
+            "status": { "enum": ["pass", "warn", "fail"] },
+            "message": { "$ref": "#/$defs/safeString" },
+            "details": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["urlSource", "tokenSource"],
+              "properties": {
+                "urlSource": { "enum": ["cli", "env", "file", "missing"] },
+                "tokenSource": { "enum": ["cli", "env", "file", "missing"] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "server": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "status", "message"],
+          "properties": {
+            "name": { "const": "server" },
+            "status": { "enum": ["pass", "warn", "fail", "skipped"] },
+            "message": { "$ref": "#/$defs/safeString" },
+            "details": { "$ref": "#/$defs/serverDetails" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "status": { "enum": ["pass", "warn"] } }, "required": ["status"] },
+              "then": { "required": ["details"], "properties": { "details": { "$ref": "#/$defs/health" } } }
+            },
+            {
+              "if": { "properties": { "status": { "const": "skipped" } }, "required": ["status"] },
+              "then": { "not": { "required": ["details"] } }
+            }
+          ]
+        }
+      ]
+    },
+    "serverDetails": {
+      "oneOf": [
+        { "$ref": "#/$defs/health" },
+        { "$ref": "#/$defs/httpStatus" }
+      ]
+    },
+    "health": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "databaseStatus", "filestoreStatus"],
+      "properties": { "status": { "$ref": "#/$defs/safeString" }, "databaseStatus": { "$ref": "#/$defs/safeString" }, "filestoreStatus": { "$ref": "#/$defs/safeString" } }
+    },
+    "authentication": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "status", "message"],
+          "properties": {
+            "name": { "const": "authentication" },
+            "status": { "enum": ["pass", "fail", "skipped"] },
+            "message": { "$ref": "#/$defs/safeString" },
+            "details": {
+              "oneOf": [
+                { "type": "object", "additionalProperties": false, "required": ["id", "username"], "properties": { "id": { "$ref": "#/$defs/safeString" }, "username": { "$ref": "#/$defs/safeString" } } },
+                { "$ref": "#/$defs/httpStatus" }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "status": { "const": "pass" } }, "required": ["status"] },
+              "then": {
+                "required": ["details"],
+                "properties": { "details": { "type": "object", "additionalProperties": false, "required": ["id", "username"], "properties": { "id": { "$ref": "#/$defs/safeString" }, "username": { "$ref": "#/$defs/safeString" } } } }
+              }
+            },
+            {
+              "if": { "properties": { "status": { "const": "skipped" } }, "required": ["status"] },
+              "then": { "not": { "required": ["details"] } }
+            },
+            {
+              "if": { "properties": { "status": { "const": "fail" } }, "required": ["status"] },
+              "then": { "properties": { "details": { "$ref": "#/$defs/httpStatus" } } }
+            }
+          ]
+        }
+      ]
+    },
+    "httpStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["httpStatus"], "properties": { "httpStatus": { "type": "integer", "minimum": 100, "maximum": 599 } }
+    },
+    "safeString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x{0000}-\\x{001F}\\x{007F}-\\x{009F}\\x{202A}-\\x{202E}\\x{2066}-\\x{2069}]*$"
+    }
+  }
+}
