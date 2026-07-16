@@ -61,20 +61,27 @@ type rootState struct {
 	deps    dependencies
 	flags   runtimeFlags
 
-	mu          sync.Mutex
-	runtime     *Runtime
-	runtimeErr  error
-	resolved    bool
-	warned      bool
-	releases    []func()
-	credentials []string
+	mu              sync.Mutex
+	runtime         *Runtime
+	runtimeErr      error
+	resolved        bool
+	warned          bool
+	releases        []func()
+	credentials     []string
+	pendingWarnings []string
 }
 
 type runtimeFlags struct {
-	url      string
-	token    string
-	redact   bool
-	noRedact bool
+	url        string
+	token      string
+	redact     bool
+	noRedact   bool
+	json       bool
+	noColor    bool
+	relative   bool
+	noRelative bool
+	threads    bool
+	noThreads  bool
 }
 
 func (s *rootState) close() {
@@ -133,9 +140,13 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 	}
 	if warning := file.Warning(); warning != "" && !s.warned {
 		warning = presentation.SanitizeLabel(presentation.Preprocess(warning, s.credentials).Text)
-		if err := writeAll(s.streams.err, []byte("warning: "+warning+"\n")); err != nil {
-			s.runtimeErr = err
-			return nil, err
+		if s.flags.json {
+			s.pendingWarnings = append(s.pendingWarnings, "warning: "+warning+"\n")
+		} else {
+			if err := writeAll(s.streams.err, []byte("warning: "+warning+"\n")); err != nil {
+				s.runtimeErr = err
+				return nil, err
+			}
 		}
 		s.warned = true
 	}
@@ -180,6 +191,17 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 	return s.runtime, nil
 }
 
+func (s *rootState) flushMachineWarnings() error {
+	s.mu.Lock()
+	warnings := strings.Join(s.pendingWarnings, "")
+	s.pendingWarnings = nil
+	s.mu.Unlock()
+	if warnings == "" {
+		return nil
+	}
+	return writeAll(s.streams.err, []byte(warnings))
+}
+
 type errorClass uint8
 
 const (
@@ -189,16 +211,22 @@ const (
 
 type classifiedError struct {
 	class errorClass
+	code  string
 	msg   string
 }
 
 func (e classifiedError) Error() string { return e.msg }
 
-func invalidFailure(message string) error { return classifiedError{class: classInvalid, msg: message} }
-func configFailure(message string) error  { return classifiedError{class: classRead, msg: message} }
+func invalidFailure(message string) error {
+	return classifiedError{class: classInvalid, code: "invalid_input", msg: message}
+}
+func configFailure(message string) error {
+	return classifiedError{class: classRead, code: "configuration", msg: message}
+}
 
 type operationFailure struct {
 	class errorClass
+	code  string
 	err   error
 }
 
@@ -206,8 +234,25 @@ func (e operationFailure) Error() string { return e.err.Error() }
 func (e operationFailure) Unwrap() error { return e.err }
 
 // readFailure and authFailure preserve the v2 exit contract at command boundaries.
-func readFailure(err error) error { return operationFailure{class: classRead, err: err} }
-func authFailure(err error) error { return operationFailure{class: classRead, err: err} }
+func readFailure(err error) error {
+	code := "read_failed"
+	var remote *api.APIError
+	if errors.As(err, &remote) {
+		switch remote.Status {
+		case 401:
+			code = "authentication"
+		case 403:
+			code = "authorization"
+		}
+	}
+	return operationFailure{class: classRead, code: code, err: err}
+}
+func authFailure(err error) error {
+	return operationFailure{class: classRead, code: "authentication", err: err}
+}
+func internalFailure(err error) error {
+	return operationFailure{class: classRead, code: "internal", err: err}
+}
 
 func exitCode(err error) int {
 	var outputFailure outputError

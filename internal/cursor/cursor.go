@@ -91,7 +91,7 @@ func ComparePostIDs(a, b string) int {
 func valid(value ChannelHistory) bool {
 	return value.Version == 1 && value.Scope == "channel" &&
 		isSafeID(value.ChannelID) && isSafeID(value.Boundary.ID) &&
-		value.Boundary.CreateAt >= 0 && value.Boundary.CreateAt <= maxDateMillis &&
+		value.Boundary.CreateAt > 0 && value.Boundary.CreateAt <= maxDateMillis &&
 		(value.Since == nil || (*value.Since >= 0 && *value.Since <= value.Boundary.CreateAt)) &&
 		(value.SafeBeforePostID == "" || isSafeID(value.SafeBeforePostID))
 }

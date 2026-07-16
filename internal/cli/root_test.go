@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/ardasevinc/mattermost-cli/internal/api"
 )
 
 func TestExecuteVersion(t *testing.T) {
@@ -147,6 +149,36 @@ func TestSchemaShowTreatsShortWriteAsReadFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "write output failed") {
 		t.Fatalf("stderr = %q, want generic output failure", stderr.String())
+	}
+}
+
+func TestSchemaCommandsRejectJSONWithMachineError(t *testing.T) {
+	for _, args := range [][]string{{"--json", "schema"}, {"--json", "schema", "list"}} {
+		var stdout, stderr bytes.Buffer
+		code := Execute(context.Background(), args, strings.NewReader(""), &stdout, &stderr)
+		if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `"code":"invalid_input"`) {
+			t.Fatalf("args=%q exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestMachineErrorCodePreservesSemantics(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("cobra"), "invalid_invocation"},
+		{invalidFailure("bad"), "invalid_input"},
+		{configFailure("bad"), "configuration"},
+		{readFailure(errors.New("bad")), "read_failed"},
+		{readFailure(&api.APIError{Status: 401}), "authentication"},
+		{readFailure(&api.APIError{Status: 403}), "authorization"},
+		{outputError{err: errors.New("bad")}, "internal"},
+	}
+	for _, test := range tests {
+		if got := machineErrorCode(test.err); got != test.want {
+			t.Errorf("machineErrorCode(%T) = %q, want %q", test.err, got, test.want)
+		}
 	}
 }
 

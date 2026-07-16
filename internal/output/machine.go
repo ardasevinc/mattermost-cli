@@ -114,6 +114,13 @@ type MentionsEnvelope struct {
 	Schema  string           `json:"schema"`
 	Results []MachineHistory `json:"results"`
 }
+type ErrorEnvelope struct {
+	Schema   string `json:"schema"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	ExitCode int    `json:"exitCode"`
+	Recovery string `json:"recovery"`
+}
 
 type MachineDocument interface{ machineDocument() }
 
@@ -123,6 +130,7 @@ func (ChannelEnvelope) machineDocument()  {}
 func (ThreadEnvelope) machineDocument()   {}
 func (SearchEnvelope) machineDocument()   {}
 func (MentionsEnvelope) machineDocument() {}
+func (ErrorEnvelope) machineDocument()    {}
 
 type wireMessage struct {
 	ID          string           `json:"id"`
@@ -234,6 +242,8 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 			Schema  string        `json:"schema"`
 			Results []wireHistory `json:"results"`
 		}{value.Schema, canonicalHistories(value.Results)}, nil
+	case ErrorEnvelope:
+		return value, nil
 	default:
 		return nil, fmt.Errorf("unsupported machine document type %T", document)
 	}
@@ -388,7 +398,7 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
 	}

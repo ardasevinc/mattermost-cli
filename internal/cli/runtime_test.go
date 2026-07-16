@@ -59,6 +59,36 @@ func TestRuntimeUsesMacIndependentXDGPath(t *testing.T) {
 	}
 }
 
+func TestReadDisplayAcceptsNegativeBooleanFlags(t *testing.T) {
+	state, command, _ := runtimeProbe(t, t.TempDir(), map[string]string{"MM_URL": "https://example.com", "MM_TOKEN": "token"}, false)
+	defer state.close()
+	defer state.releaseCredentials()
+
+	command.SetArgs([]string{"--no-threads", "probe"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	display, err := state.readDisplay(command)
+	if err != nil || display.threads {
+		t.Fatalf("readDisplay = %+v, %v", display, err)
+	}
+}
+
+func TestReadDisplayPreservesAgentRelativeDefault(t *testing.T) {
+	env := map[string]string{"MM_URL": "https://example.com", "MM_TOKEN": "token", "CODEX_CI": "1"}
+	state, command, _ := runtimeProbe(t, t.TempDir(), env, false)
+	defer state.close()
+	defer state.releaseCredentials()
+	command.SetArgs([]string{"probe"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	display, err := state.readDisplay(command)
+	if err != nil || !display.relative {
+		t.Fatalf("readDisplay = %+v, %v", display, err)
+	}
+}
+
 func TestRuntimeRejectsUnsafeParseAndInsecureTokenConfig(t *testing.T) {
 	tests := []struct {
 		name, body, want string
@@ -140,6 +170,28 @@ func TestRuntimeMigrationWarningOnceAndTTYInjection(t *testing.T) {
 	}
 	if !captured.runtime.StdoutTTY {
 		t.Fatal("injected stdout TTY capability was not retained")
+	}
+}
+
+func TestMachineRuntimeDefersMigrationWarningUntilSuccessfulCompletion(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(t.TempDir(), "xdg")
+	writeRuntimeConfig(t, home, "url = \"https://legacy.example\"\ntoken = \"legacy-token\"\n")
+	state, command, _ := runtimeProbe(t, home, map[string]string{"XDG_CONFIG_HOME": xdg}, false)
+	defer state.close()
+	defer state.releaseCredentials()
+	command.SetArgs([]string{"--json", "probe"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.streams.err.(*bytes.Buffer).String(); got != "" {
+		t.Fatalf("machine stderr before completion = %q", got)
+	}
+	if err := state.flushMachineWarnings(); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.streams.err.(*bytes.Buffer).String(); !strings.Contains(got, "warning:") || !strings.Contains(got, ".config/mattermost-cli") {
+		t.Fatalf("machine completion warning = %q", got)
 	}
 }
 
