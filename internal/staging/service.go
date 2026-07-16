@@ -3,10 +3,14 @@
 package staging
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"reflect"
 
+	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
 	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
 	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
 	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
@@ -27,14 +31,15 @@ type Service struct {
 	users               Users
 	channels            Channels
 	teams               Teams
+	posts               Posts
 	store               Store
 	bind                AttachmentBinder
 	credentials         [][]byte
 }
 
-func New(serverBaseURL, serverID string, credentials []string, users Users, channels Channels, teams Teams, store Store) (*Service, error) {
+func New(serverBaseURL, serverID string, credentials []string, users Users, channels Channels, teams Teams, posts Posts, store Store) (*Service, error) {
 	normalized, err := serverurl.Normalize(serverBaseURL)
-	if err != nil || users == nil || channels == nil || teams == nil || (serverID != "" && !validSelectorValue(serverID)) {
+	if err != nil || nilDependency(users) || nilDependency(channels) || nilDependency(teams) || nilDependency(posts) || (serverID != "" && !validSelectorValue(serverID)) {
 		return nil, ErrInvalid
 	}
 	protected := credentialBytes(credentials)
@@ -51,7 +56,7 @@ func New(serverBaseURL, serverID string, credentials []string, users Users, chan
 	if contaminated(protected, normalized+"/api/v4", serverID) {
 		return nil, ErrCredential
 	}
-	return &Service{serverURL: normalized + "/api/v4", serverID: serverID, users: users, channels: channels, teams: teams, store: store, bind: stageinput.Bind, credentials: protected}, nil
+	return &Service{serverURL: normalized + "/api/v4", serverID: serverID, users: users, channels: channels, teams: teams, posts: posts, store: store, bind: stageinput.Bind, credentials: protected}, nil
 }
 
 // WithAttachmentBinder is intended for narrow tests which must prove dry-run
@@ -67,14 +72,52 @@ func (s *Service) DryRunCreatePost(ctx context.Context, in DryRunInput) (Preview
 }
 
 func (s *Service) CreatePost(ctx context.Context, in CreatePostInput) (CreatePostResult, error) {
-	if s.store == nil || s.bind == nil || in.Body == nil || !validRequestID(in.RequestID) {
+	if nilDependency(s.store) || s.bind == nil || in.Body == nil || !validRequestID(in.RequestID) {
+		return CreatePostResult{}, ErrInvalid
+	}
+	if !validTargetSyntax(in.Target) {
 		return CreatePostResult{}, ErrInvalid
 	}
 	callerFields := append([]string{in.RequestID}, targetStrings(in.Target)...)
-	if contaminated(s.credentials, callerFields...) {
+	if contaminated(s.credentials, callerFields...) || callerAttachmentsContaminated(s.credentials, in.Attachments) {
 		return CreatePostResult{}, ErrCredential
 	}
-	preview, err := s.resolveConversation(ctx, in.Target)
+	attachmentIntent, err := stageinput.Preflight(in.Attachments)
+	if err != nil {
+		return CreatePostResult{}, ErrInput
+	}
+	if attachmentIntentContaminated(s.credentials, attachmentIntent) {
+		return CreatePostResult{}, ErrCredential
+	}
+	current, err := s.authenticate(ctx)
+	if err != nil {
+		return CreatePostResult{}, err
+	}
+	record, found, err := s.store.FindCreate(ctx, s.serverURL, current.ID, in.RequestID)
+	if err != nil {
+		if errors.Is(err, stagestore.ErrConflict) {
+			return CreatePostResult{}, ErrConflict
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return CreatePostResult{}, err
+		}
+		return CreatePostResult{}, ErrStore
+	}
+	if found {
+		if record.Stage.Operation != stagestore.CreatePost {
+			return CreatePostResult{}, ErrConflict
+		}
+		body, readErr := messageinput.Read(in.Body)
+		if readErr != nil {
+			return CreatePostResult{}, ErrInput
+		}
+		if containsCredential(s.credentials, body) {
+			return CreatePostResult{}, ErrCredential
+		}
+		digest := intentDigest(stagestore.CreatePost, conversationCallerIntent(in.Target), body, "", attachmentIntent)
+		return replayResult(record, digest, stagestore.CreatePost, s.serverURL, current.ID)
+	}
+	preview, err := s.resolveConversationFor(ctx, in.Target, current)
 	if err != nil {
 		return CreatePostResult{}, err
 	}
@@ -90,6 +133,9 @@ func (s *Service) CreatePost(ctx context.Context, in CreatePostInput) (CreatePos
 		if errors.Is(err, stageinput.ErrCredential) {
 			return CreatePostResult{}, ErrCredential
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return CreatePostResult{}, err
+		}
 		return CreatePostResult{}, ErrInput
 	}
 	if !validBoundAttachments(attachments) {
@@ -104,15 +150,68 @@ func (s *Service) CreatePost(ctx context.Context, in CreatePostInput) (CreatePos
 		return CreatePostResult{}, ErrCredential
 	}
 	stored, err := s.store.Create(ctx, stagestore.CreateInput{RequestID: in.RequestID, Operation: stagestore.CreatePost,
-		ServerURL: preview.ServerURL, ServerID: preview.ServerID, UserID: preview.UserID,
+		RequestDigest: intentDigest(stagestore.CreatePost, conversationCallerIntent(in.Target), body, "", attachmentIntent),
+		ServerURL:     preview.ServerURL, ServerID: preview.ServerID, UserID: preview.UserID,
 		Content: stagestore.RevisionContent{Body: body, Destination: destination, Plan: plan, Attachments: attachments}})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return CreatePostResult{}, err
+		}
 		if errors.Is(err, stagestore.ErrConflict) {
 			return CreatePostResult{}, ErrConflict
 		}
 		return CreatePostResult{}, ErrStore
 	}
-	return CreatePostResult{Preview: preview, Stored: stored}, nil
+	return replayResult(stored, stored.RequestDigest, stagestore.CreatePost, preview.ServerURL, preview.UserID)
+}
+
+func (s *Service) authenticate(ctx context.Context) (mattermost.User, error) {
+	if ctx == nil {
+		return mattermost.User{}, ErrInvalid
+	}
+	current, err := s.users.Current(ctx)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return mattermost.User{}, err
+	}
+	if err != nil || !validResolvedUser(current) {
+		return mattermost.User{}, ErrTarget
+	}
+	if contaminated(s.credentials, current.ID, current.Username) {
+		return mattermost.User{}, ErrCredential
+	}
+	return current, nil
+}
+
+func replayResult(record stagestore.CreateRecord, digest [32]byte, operation stagestore.Operation, serverURL, userID string) (CreatePostResult, error) {
+	if record.RequestDigest != digest || record.Stage.Operation != operation {
+		return CreatePostResult{}, ErrConflict
+	}
+	if record.Stage.ServerURL != serverURL || record.Stage.UserID != userID {
+		return CreatePostResult{}, ErrStore
+	}
+	var destination Destination
+	var plan Plan
+	dd := json.NewDecoder(bytes.NewReader(record.Destination))
+	dd.DisallowUnknownFields()
+	pd := json.NewDecoder(bytes.NewReader(record.Plan))
+	pd.DisallowUnknownFields()
+	if dd.Decode(&destination) != nil || dd.Decode(new(any)) != io.EOF || pd.Decode(&plan) != nil || pd.Decode(new(any)) != io.EOF {
+		return CreatePostResult{}, ErrStore
+	}
+	preview := Preview{ServerURL: record.Stage.ServerURL, ServerID: record.Stage.ServerID, UserID: record.Stage.UserID, Destination: destination, Plan: plan}
+	destinationRaw, planRaw, err := marshalSemantics(preview)
+	if err != nil || !bytes.Equal(destinationRaw, record.Destination) || !bytes.Equal(planRaw, record.Plan) {
+		return CreatePostResult{}, ErrStore
+	}
+	return CreatePostResult{preview, record.MutationResult}, nil
+}
+
+func nilDependency(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	return (v.Kind() == reflect.Chan || v.Kind() == reflect.Func || v.Kind() == reflect.Interface || v.Kind() == reflect.Map || v.Kind() == reflect.Pointer || v.Kind() == reflect.Slice) && v.IsNil()
 }
 
 func attachmentPlan(count int) Plan {

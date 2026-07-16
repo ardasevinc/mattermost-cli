@@ -48,6 +48,24 @@ type CreatePostInput struct {
 	Attachments []Attachment
 }
 
+type ReplyInput struct {
+	RequestID   string
+	PostID      string
+	Body        io.Reader
+	Attachments []Attachment
+}
+
+type EditPostInput struct {
+	RequestID string
+	PostID    string
+	Body      io.Reader
+}
+
+type DeletePostInput struct{ RequestID, PostID string }
+type ReactionInput struct{ RequestID, PostID, Emoji string }
+type PostDryRunInput struct{ PostID string }
+type ReactionDryRunInput struct{ PostID, Emoji string }
+
 type DryRunInput struct{ Target Target }
 
 type Destination struct {
@@ -108,8 +126,14 @@ type Teams interface {
 	List(context.Context, string) (mattermost.TeamMembership, error)
 }
 
+type Posts interface {
+	ByID(context.Context, string) (mattermost.Post, error)
+	ReactionState(context.Context, string, string, string, string) (bool, error)
+}
+
 type Store interface {
-	Create(context.Context, stagestore.CreateInput) (stagestore.MutationResult, error)
+	FindCreate(context.Context, string, string, string) (stagestore.CreateRecord, bool, error)
+	Create(context.Context, stagestore.CreateInput) (stagestore.CreateRecord, error)
 }
 
 type AttachmentBinder func(context.Context, []stageinput.Attachment, [][]byte) ([]stagestore.Attachment, error)

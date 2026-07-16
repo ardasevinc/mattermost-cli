@@ -233,8 +233,8 @@ func TestStageDestinationRemoteStateDiscriminants(t *testing.T) {
 		preview("reply", reply, "create_post", false),
 		preview("edit_post", post, "edit_post", false),
 		preview("delete_post", post, "delete_post", false),
-		preview("react", reaction, "add_reaction", false),
-		preview("unreact", reaction, "remove_reaction", false),
+		strings.Replace(preview("react", reaction, "add_reaction", false), `"condition":"always"`, `"condition":"if_missing"`, 1),
+		strings.Replace(preview("unreact", reaction, "remove_reaction", false), `"condition":"always"`, `"condition":"if_missing"`, 1),
 		strings.Replace(preview("resolve_dm", dm, "resolve_conversation", false), `"condition":"always"`, `"condition":"if_missing"`, 1),
 		strings.Replace(preview("resolve_group_dm", group, "resolve_conversation", false), `"condition":"always"`, `"condition":"if_missing"`, 1),
 	}
@@ -260,6 +260,8 @@ func TestStageDestinationRemoteStateDiscriminants(t *testing.T) {
 		strings.Replace(valid[2], `"updateAt":1720000000000`, `"updateAt":8640000000000001`, 1),
 		strings.Replace(valid[2], digest, strings.Repeat("A", 64), 1),
 		strings.Replace(valid[2], digest, strings.Repeat("a", 63), 1),
+		strings.Replace(valid[4], `"condition":"if_missing"`, `"condition":"always"`, 1),
+		strings.Replace(valid[5], `"condition":"if_missing"`, `"condition":"always"`, 1),
 	}
 	for _, document := range invalid {
 		assertInvalid(t, r, "mm/v2/stage-preview", document)
@@ -291,7 +293,7 @@ func TestStageEmojiMatchesMattermostReactionGrammar(t *testing.T) {
 
 func reactionPreview(emoji string) string {
 	destination := `{"kind":"reaction","channelId":"channel-1","channelType":"public","teamId":"team-1","postId":"post-1","rootPostId":null,"participantIds":[],"emoji":` + strconv.Quote(emoji) + `,"postState":null,"reactionPresent":false}`
-	return preview("react", destination, "add_reaction", false)
+	return strings.Replace(preview("react", destination, "add_reaction", false), `"condition":"always"`, `"condition":"if_missing"`, 1)
 }
 
 func example(t *testing.T, name string) string {

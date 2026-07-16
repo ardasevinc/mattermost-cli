@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -151,6 +152,27 @@ func TestPostByIDAcceptsCanonicalReplyRoot(t *testing.T) {
 	post, err := api.ByID(context.Background(), "reply")
 	if err != nil || post.RootID != "root" {
 		t.Fatalf("post=%#v error=%v", post, err)
+	}
+}
+
+func TestPostByIDAcceptsOnlyTypedAuthorlessSystemPosts(t *testing.T) {
+	for _, test := range []struct {
+		name, userID, postType string
+		wantErr                bool
+	}{
+		{"system", "", "system_join_channel", false},
+		{"ordinary authorless", "", "", true},
+		{"non-system typed authorless", "", "custom_type", true},
+		{"ordinary authored", "author", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := `{"id":"post","channel_id":"channel","user_id":` + strconv.Quote(test.userID) + `,"message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":` + strconv.Quote(test.postType) + `,"file_ids":[]}`
+			api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal([]byte(payload), out) }))
+			post, err := api.ByID(context.Background(), "post")
+			if test.wantErr && !errors.Is(err, ErrInvalidPostResponse) || !test.wantErr && (err != nil || post.UserID != test.userID || post.Type != test.postType) {
+				t.Fatalf("post/error = %#v/%v", post, err)
+			}
+		})
 	}
 }
 

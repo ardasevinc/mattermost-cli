@@ -36,7 +36,7 @@ func TestStoreDoctorAbsentIsReadOnlyAndSchemaValid(t *testing.T) {
 	if err := registry.Validate("mm/v2/store-doctor", bytes.NewReader(stdout.Bytes())); err != nil {
 		t.Fatalf("schema: %v\n%s", err, stdout.String())
 	}
-	for _, fact := range []string{`"filesystemSafe":null`, `"applicationId":null`, `"integrity":null`, `"applied":null`, `"latest":2`, `"valid":null`, `"journalMode":null`} {
+	for _, fact := range []string{`"filesystemSafe":null`, `"applicationId":null`, `"integrity":null`, `"applied":null`, `"latest":3`, `"valid":null`, `"journalMode":null`} {
 		if !strings.Contains(stdout.String(), fact) {
 			t.Fatalf("absent report omitted %s: %s", fact, stdout.String())
 		}
@@ -110,7 +110,7 @@ func TestStoreMigrationsIsOfflineAndSchemaValid(t *testing.T) {
 	if err := registry.Validate("mm/v2/store-migrations", bytes.NewReader(stdout.Bytes())); err != nil {
 		t.Fatalf("schema: %v\n%s", err, stdout.String())
 	}
-	want := "{\"schema\":\"mm/v2/store-migrations\",\"latest\":2,\"migrations\":[{\"version\":1,\"name\":\"core-stage-state\",\"checksum\":\"e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f\"},{\"version\":2,\"name\":\"immutable-local-request-receipts\",\"checksum\":\"ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c\"}]}\n"
+	want := "{\"schema\":\"mm/v2/store-migrations\",\"latest\":3,\"migrations\":[{\"version\":1,\"name\":\"core-stage-state\",\"checksum\":\"e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f\"},{\"version\":2,\"name\":\"immutable-local-request-receipts\",\"checksum\":\"ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c\"},{\"version\":3,\"name\":\"caller-intent-stage-create-replay\",\"checksum\":\"237315b734e034951a7394ef708273af5f91ea6a44abe9927537571fbcee78d5\"}]}\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout does not match golden migration contract: %q", stdout.String())
 	}
@@ -310,7 +310,7 @@ func TestStoreHumanOutputStatesBounds(t *testing.T) {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
 	stdout.Reset()
-	if code := Execute(context.Background(), []string{"store", "migrations"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "latest: 2\n1 core-stage-state ") {
+	if code := Execute(context.Background(), []string{"store", "migrations"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "latest: 3\n1 core-stage-state ") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

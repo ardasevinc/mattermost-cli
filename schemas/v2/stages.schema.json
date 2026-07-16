@@ -653,10 +653,7 @@
                     "const": "add_reaction"
                   },
                   "condition": {
-                    "enum": [
-                      "always",
-                      "if_missing"
-                    ]
+                    "const": "if_missing"
                   }
                 }
               }
@@ -679,10 +676,7 @@
                     "const": "remove_reaction"
                   },
                   "condition": {
-                    "enum": [
-                      "always",
-                      "if_missing"
-                    ]
+                    "const": "if_missing"
                   }
                 }
               }

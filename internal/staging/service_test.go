@@ -3,6 +3,7 @@ package staging
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +62,15 @@ func (emptyTeams) List(context.Context, string) (mattermost.TeamMembership, erro
 	return mattermost.TeamMembership{}, nil
 }
 
+type emptyPosts struct{}
+
+func (emptyPosts) ByID(context.Context, string) (mattermost.Post, error) {
+	return mattermost.Post{}, errors.New("unused")
+}
+func (emptyPosts) ReactionState(context.Context, string, string, string, string) (bool, error) {
+	return false, errors.New("unused")
+}
+
 type teamTransport struct{ payload string }
 
 func (t teamTransport) Get(_ context.Context, _ string, out any) error {
@@ -74,12 +84,16 @@ type recordingStore struct {
 	err   error
 }
 
-func (s *recordingStore) Create(_ context.Context, in stagestore.CreateInput) (stagestore.MutationResult, error) {
+func (s *recordingStore) FindCreate(context.Context, string, string, string) (stagestore.CreateRecord, bool, error) {
+	return stagestore.CreateRecord{}, false, nil
+}
+func (s *recordingStore) Create(_ context.Context, in stagestore.CreateInput) (stagestore.CreateRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
 	s.in = in
-	return stagestore.MutationResult{}, s.err
+	result := stagestore.MutationResult{Stage: stagestore.StageSummary{Operation: in.Operation, ServerURL: in.ServerURL, ServerID: in.ServerID, UserID: in.UserID}}
+	return stagestore.CreateRecord{MutationResult: result, Result: result, RequestDigest: in.RequestDigest, Destination: in.Content.Destination, Plan: in.Content.Plan}, s.err
 }
 
 func dmService(t *testing.T, store Store) (*Service, *fakeUsers, *fakeChannels) {
@@ -90,7 +104,7 @@ func dmServiceCredentials(t *testing.T, store Store, credentials []string) (*Ser
 	t.Helper()
 	u := &fakeUsers{current: mattermost.User{ID: "user-1", Username: "arda"}, peer: mattermost.User{ID: "peer", Username: "hakan"}}
 	c := &fakeChannels{direct: mattermost.Channel{ID: "dm-1", Type: "D", Name: "user-1__peer"}, found: true}
-	s, err := New("https://Mattermost.Example/chat/", "", credentials, u, c, emptyTeams{}, store)
+	s, err := New("https://Mattermost.Example/chat/", "", credentials, u, c, emptyTeams{}, emptyPosts{}, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +206,7 @@ func TestMalformedTargetSyntaxIsZeroNetwork(t *testing.T) {
 func TestConstructorAndResolvedIdentityValidation(t *testing.T) {
 	users := &fakeUsers{current: mattermost.User{ID: "user-1", Username: "arda"}}
 	channels := &fakeChannels{}
-	if _, err := New("https://mattermost.example", " bad ", nil, users, channels, emptyTeams{}, nil); !errors.Is(err, ErrInvalid) {
+	if _, err := New("https://mattermost.example", " bad ", nil, users, channels, emptyTeams{}, emptyPosts{}, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("server ID error = %v", err)
 	}
 	for _, unsafe := range []string{"\u200b", "\u200c", "\u200d", "\ufeff"} {
@@ -204,6 +218,25 @@ func TestConstructorAndResolvedIdentityValidation(t *testing.T) {
 		if !errors.Is(err, ErrTarget) || reader.read || store.calls != 0 {
 			t.Fatalf("rune/error/read/calls = %q/%v/%v/%d", unsafe, err, reader.read, store.calls)
 		}
+	}
+}
+
+func TestConstructorRejectsTypedNilDependencies(t *testing.T) {
+	u := &fakeUsers{}
+	c := &fakeChannels{}
+	p := &fakePosts{calls: &[]string{}}
+	for name, dependencies := range map[string][]any{
+		"users":    {(*fakeUsers)(nil), c, emptyTeams{}, p},
+		"channels": {u, (*fakeChannels)(nil), emptyTeams{}, p},
+		"teams":    {u, c, (*emptyTeams)(nil), p},
+		"posts":    {u, c, emptyTeams{}, (*fakePosts)(nil)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := New("https://mattermost.example", "", nil, dependencies[0].(Users), dependencies[1].(Channels), dependencies[2].(Teams), dependencies[3].(Posts), nil)
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
@@ -251,7 +284,7 @@ func TestRealStoreRequestReplayAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s, _, _ := dmService(t, store)
+	s, _, channels := dmService(t, store)
 	input := func(body string) CreatePostInput {
 		return CreatePostInput{RequestID: "same-request", Target: dmTarget(), Body: bytes.NewReader([]byte(body))}
 	}
@@ -259,12 +292,120 @@ func TestRealStoreRequestReplayAndConflict(t *testing.T) {
 	if err != nil || first.Stored.Replay {
 		t.Fatalf("first/error = %#v/%v", first.Stored, err)
 	}
+	channels.err = errors.New("remote target disappeared")
 	replay, err := s.CreatePost(context.Background(), input("hello"))
 	if err != nil || !replay.Stored.Replay || replay.Stored.Stage.ID != first.Stored.Stage.ID {
 		t.Fatalf("replay/error = %#v/%v", replay.Stored, err)
 	}
 	if _, err = s.CreatePost(context.Background(), input("different")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict = %v", err)
+	}
+}
+
+func TestCreateReplayRejectsCredentialInRawAttachmentMetadataBeforeOpen(t *testing.T) {
+	const token = "active-attachment-token"
+	store := realStageStore(t)
+	s, users, _ := dmServiceCredentials(t, store, []string{token})
+	binderCalls := 0
+	s = s.WithAttachmentBinder(func(context.Context, []Attachment, [][]byte) ([]stagestore.Attachment, error) {
+		binderCalls++
+		return []stagestore.Attachment{{
+			SuppliedPath:   "safe.txt",
+			CanonicalPath:  "/tmp/safe.txt",
+			RemoteFilename: "safe.txt",
+			ByteLength:     1,
+			MediaType:      "text/plain",
+			ContentDigest:  sha256.Sum256([]byte("x")),
+		}}, nil
+	})
+	first := CreatePostInput{
+		RequestID:   "raw-attachment-credential",
+		Target:      dmTarget(),
+		Body:        bytes.NewBufferString("hello"),
+		Attachments: []Attachment{{Path: "safe.txt"}},
+	}
+	if _, err := s.CreatePost(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	currentCalls := users.currentCalls.Load()
+	replay := first
+	replay.Body = bytes.NewBufferString("hello")
+	replay.Attachments = []Attachment{{Path: token + "/../safe.txt"}}
+	if _, err := s.CreatePost(context.Background(), replay); !errors.Is(err, ErrCredential) {
+		t.Fatalf("replay error = %v", err)
+	}
+	if binderCalls != 1 || users.currentCalls.Load() != currentCalls {
+		t.Fatalf("binder/current calls = %d/%d, want 1/%d", binderCalls, users.currentCalls.Load(), currentCalls)
+	}
+}
+
+type racingChannels struct{ sequence atomic.Int64 }
+
+func (*racingChannels) ExistingDirect(context.Context, string, string) (mattermost.Channel, bool, error) {
+	return mattermost.Channel{}, false, errors.New("unused")
+}
+func (*racingChannels) ByID(context.Context, string) (mattermost.Channel, error) {
+	return mattermost.Channel{}, errors.New("unused")
+}
+func (r *racingChannels) ByName(context.Context, string, string) (mattermost.Channel, error) {
+	suffix := "a"
+	if r.sequence.Add(1)%2 == 0 {
+		suffix = "b"
+	}
+	return mattermost.Channel{ID: "channel-" + suffix, TeamID: "team-1", Type: "O", Name: "town"}, nil
+}
+func (*racingChannels) Member(_ context.Context, channelID, userID string) (mattermost.ChannelMember, error) {
+	return mattermost.ChannelMember{ChannelID: channelID, UserID: userID}, nil
+}
+
+func TestConcurrentIdenticalServiceRequestsReturnWinnerProjection(t *testing.T) {
+	store := realStageStore(t)
+	c := &racingChannels{}
+	u := &fakeUsers{current: mattermost.User{ID: "user-1", Username: "arda"}}
+	teams := mattermost.NewTeams(teamTransport{payload: `[{"id":"team-1","name":"team","display_name":"Team","type":"O"}]`})
+	service, err := New("https://mattermost.example", "", nil, u, c, teams, emptyPosts{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Conversation: Channel, Selector: ByName, Value: "town", Team: &TeamSelector{By: ByID, Value: "team-1"}}
+	const workers = 20
+	results := make(chan CreatePostResult, workers)
+	failures := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := service.CreatePost(context.Background(), CreatePostInput{RequestID: "racing-request", Target: target, Body: bytes.NewBufferString("body")})
+			if err != nil {
+				failures <- err
+				return
+			}
+			results <- result
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(failures)
+	for err := range failures {
+		t.Fatal(err)
+	}
+	var id, channel string
+	firsts, count := 0, 0
+	for result := range results {
+		count++
+		if !result.Stored.Replay {
+			firsts++
+		}
+		if id == "" {
+			id, channel = result.Stored.Stage.ID, result.Preview.Destination.ChannelID
+		}
+		if result.Stored.Stage.ID != id || result.Preview.Destination.ChannelID != channel {
+			t.Fatalf("result diverged = %#v", result)
+		}
+	}
+	if count != workers || firsts != 1 {
+		t.Fatalf("count/firsts = %d/%d", count, firsts)
 	}
 }
 

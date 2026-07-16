@@ -597,7 +597,7 @@ func (p *canonicalSinglePost) UnmarshalJSON(data []byte) error {
 	}
 	id, idOK := safePostID(raw["id"])
 	channelID, channelOK := safePostID(raw["channel_id"])
-	userID, userOK := safePostID(raw["user_id"])
+	userID, userOK := strictString(raw["user_id"])
 	message, messageOK := strictString(raw["message"])
 	createAt, createOK := nonnegativeInteger(raw["create_at"])
 	updateAt, updateOK := nonnegativeInteger(raw["update_at"])
@@ -605,6 +605,7 @@ func (p *canonicalSinglePost) UnmarshalJSON(data []byte) error {
 	rootID, rootOK := strictString(raw["root_id"])
 	rootShapeOK := rootOK && (rootID == "" || isSafePostID(rootID))
 	postType, typeOK := strictString(raw["type"])
+	userOK = userOK && (isSafePostID(userID) || userID == "" && strings.HasPrefix(postType, "system_"))
 	fileIDs, fileIDsOK := canonicalPostIDs(raw["file_ids"], maxPostFileIDs)
 	if !idOK || !channelOK || !userOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds ||
 		!updateOK || updateAt == 0 || updateAt > maxDateMilliseconds || !deleteOK || deleteAt != 0 || !rootShapeOK ||

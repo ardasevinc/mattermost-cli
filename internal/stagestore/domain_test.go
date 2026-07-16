@@ -3,6 +3,7 @@
 package stagestore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -26,7 +27,183 @@ func attachment(name string) Attachment {
 	return Attachment{"/tmp/" + name, "/private/tmp/" + name, name, 3, "text/plain", sha256.Sum256([]byte(name))}
 }
 func createInput(request, body string) CreateInput {
-	return CreateInput{request, CreatePost, "https://mattermost.example/api/v4", "server-1", "user-1", RevisionContent{[]byte(body), json.RawMessage(`{"kind":"O","channelId":"channel-1"}`), json.RawMessage(`{"steps":[{"kind":"create_post"}]}`), []Attachment{attachment("a.txt"), attachment("b.txt")}}}
+	return CreateInput{request, sha256.Sum256([]byte(body)), CreatePost, "https://mattermost.example/api/v4", "server-1", "user-1", RevisionContent{[]byte(body), json.RawMessage(`{"kind":"O","channelId":"channel-1"}`), json.RawMessage(`{"steps":[{"kind":"create_post"}]}`), []Attachment{attachment("a.txt"), attachment("b.txt")}}}
+}
+
+func TestFindCreateUsesExactReceiptRevisionAndFailsClosedOnCorruption(t *testing.T) {
+	s := openDomainStore(t)
+	in := createInput("exact-revision", "one")
+	created, err := s.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revised, err := s.Revise(context.Background(), ReviseInput{StageID: created.Stage.ID, RequestID: "revise-exact", ExpectedRevision: 1, ExpectedDigest: created.Stage.SemanticDigest, Composition: Composition{Body: []byte("two"), Attachments: in.Content.Attachments}})
+	if err != nil || revised.Stage.Revision != 2 {
+		t.Fatalf("revise = %#v/%v", revised, err)
+	}
+	record, found, err := s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID)
+	if err != nil || !found || record.Stage.Revision != 1 || !reflect.DeepEqual(record.Destination, in.Content.Destination) {
+		t.Fatalf("record = %#v/%v/%v", record, found, err)
+	}
+	if _, err = s.db.Exec(`DROP TRIGGER local_requests_immutable_update`); err != nil {
+		t.Fatal(err)
+	}
+	var originalRaw string
+	if err = s.db.QueryRow(`SELECT result_json FROM local_requests WHERE request_id=?`, in.RequestID).Scan(&originalRaw); err != nil {
+		t.Fatal(err)
+	}
+	var later CreateRecord
+	if err = json.Unmarshal([]byte(originalRaw), &later); err != nil {
+		t.Fatal(err)
+	}
+	later.Result.Stage.Revision = revised.Stage.Revision
+	later.Result.Stage.SemanticDigest = revised.Stage.SemanticDigest
+	laterRaw, err := marshalCanonical(later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE local_requests SET result_json=? WHERE request_id=?`, string(laterRaw), in.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("later-revision corruption error = %v", err)
+	}
+	if _, err = s.db.Exec(`UPDATE local_requests SET result_json=? WHERE request_id=?`, originalRaw, in.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	other := createInput("other-receipt", "one")
+	if _, err = s.Create(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	var otherRaw string
+	if err = s.db.QueryRow(`SELECT result_json FROM local_requests WHERE request_id=?`, other.RequestID).Scan(&otherRaw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE local_requests SET result_json=? WHERE request_id=?`, otherRaw, in.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("cross-stage corruption error = %v", err)
+	}
+	if _, err = s.db.Exec(`UPDATE local_requests SET result_json='{}' WHERE request_id=?`, in.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("corruption error = %v", err)
+	}
+}
+
+func TestConcurrentCreateReturnsOneAuthoritativeProjection(t *testing.T) {
+	s := openDomainStore(t)
+	base := createInput("concurrent-create", "body")
+	const workers = 20
+	results := make(chan CreateRecord, workers)
+	failures := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			in := base
+			in.Content.Destination = json.RawMessage(`{"kind":"O","channelId":"channel-` + string(rune('a'+i)) + `"}`)
+			record, err := s.Create(context.Background(), in)
+			if err != nil {
+				failures <- err
+				return
+			}
+			results <- record
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(failures)
+	for err := range failures {
+		t.Fatal(err)
+	}
+	var id string
+	var projection []byte
+	firsts := 0
+	count := 0
+	for record := range results {
+		count++
+		if !record.Replay {
+			firsts++
+		}
+		if id == "" {
+			id, projection = record.Stage.ID, record.Destination
+		}
+		if record.Stage.ID != id || !bytes.Equal(record.Destination, projection) {
+			t.Fatalf("non-authoritative record = %#v", record)
+		}
+	}
+	if count != workers || firsts != 1 {
+		t.Fatalf("count/firsts = %d/%d", count, firsts)
+	}
+}
+
+func TestCreateAndReplayReturnCanonicalAuthoritativeProjection(t *testing.T) {
+	s := openDomainStore(t)
+	in := createInput("canonical-projection", "body")
+	in.Content.Destination = json.RawMessage(`{ "kind": "O", "channelId": "channel-1" }`)
+	in.Content.Plan = json.RawMessage(`{ "steps": [ { "kind": "create_post" } ] }`)
+
+	created, err := s.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDestination := []byte(`{"kind":"O","channelId":"channel-1"}`)
+	wantPlan := []byte(`{"steps":[{"kind":"create_post"}]}`)
+	if !bytes.Equal(created.Destination, wantDestination) || !bytes.Equal(created.Plan, wantPlan) {
+		t.Fatalf("created projection = %s / %s", created.Destination, created.Plan)
+	}
+
+	replayed, err := s.Create(context.Background(), in)
+	if err != nil || !replayed.Replay {
+		t.Fatalf("replay = %#v / %v", replayed, err)
+	}
+	if !bytes.Equal(replayed.Destination, created.Destination) || !bytes.Equal(replayed.Plan, created.Plan) {
+		t.Fatalf("replay projection = %s / %s, want %s / %s", replayed.Destination, replayed.Plan, created.Destination, created.Plan)
+	}
+}
+
+func TestMigrationThreeTombstonesOnlyLegacyStageCreates(t *testing.T) {
+	path := testPath(t)
+	original := migrations
+	migrations = append([]migration(nil), original[:2]...)
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := createInput("legacy-create", "body")
+	if _, err = s.Create(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`INSERT INTO local_requests(server_url,user_id,request_id,request_schema,request_digest,result_json,created_at) VALUES(?,?,?,?,?,?,?)`, in.ServerURL, in.UserID, "revise-kept", "mm/v2/stage-revise-request", make([]byte, 32), `{}`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrations = original
+	t.Cleanup(func() { migrations = original })
+	s, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	var createSchema, reviseSchema string
+	if err = s.db.QueryRow(`SELECT request_schema FROM local_requests WHERE request_id='legacy-create'`).Scan(&createSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.QueryRow(`SELECT request_schema FROM local_requests WHERE request_id='revise-kept'`).Scan(&reviseSchema); err != nil {
+		t.Fatal(err)
+	}
+	if createSchema != "mm/v2/legacy-stage-request-conflict" || reviseSchema != "mm/v2/stage-revise-request" {
+		t.Fatalf("schemas = %s/%s", createSchema, reviseSchema)
+	}
+	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("legacy lookup = %v", err)
+	}
 }
 func reviseInput(stage StageSummary, request, body string) ReviseInput {
 	content := createInput("", body).Content

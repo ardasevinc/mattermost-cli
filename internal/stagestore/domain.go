@@ -90,9 +90,17 @@ type Composition struct {
 }
 type CreateInput struct {
 	RequestID                   string
+	RequestDigest               [32]byte
 	Operation                   Operation
 	ServerURL, ServerID, UserID string
 	Content                     RevisionContent
+}
+type CreateRecord struct {
+	MutationResult `json:"-"`
+	Result         MutationResult  `json:"result"`
+	RequestDigest  [32]byte        `json:"requestDigest"`
+	Destination    json.RawMessage `json:"destination"`
+	Plan           json.RawMessage `json:"plan"`
 }
 type ReviseInput struct {
 	StageID, RequestID string
@@ -137,56 +145,63 @@ type MutationResult struct {
 }
 type ListOptions struct{ Limit int }
 
-func (s *Store) Create(ctx context.Context, in CreateInput) (MutationResult, error) {
+func (s *Store) Create(ctx context.Context, in CreateInput) (CreateRecord, error) {
 	if err := ctx.Err(); err != nil {
-		return MutationResult{}, err
+		return CreateRecord{}, err
 	}
 	content, err := normalizeContent(in.Operation, in.Content)
 	if err != nil || !validOperation(in.Operation) || !canonicalServerURL(in.ServerURL) || !bounded(in.UserID, maxIdentityBytes) || (in.ServerID != "" && !bounded(in.ServerID, maxIdentityBytes)) || !validRequestID(in.RequestID) {
-		return MutationResult{}, ErrInvalid
+		return CreateRecord{}, ErrInvalid
+	}
+	if in.RequestDigest == ([32]byte{}) {
+		return CreateRecord{}, ErrInvalid
 	}
 	semantic := semanticDigest(in.Operation, in.ServerURL, in.ServerID, in.UserID, content)
-	requestDigest := digestValue(struct {
-		Operation Operation `json:"operation"`
-		Semantic  [32]byte  `json:"semanticDigest"`
-	}{in.Operation, semantic})
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return MutationResult{}, localError(err)
+		return CreateRecord{}, localError(err)
 	}
 	defer tx.Rollback()
 	if in.RequestID != "" {
-		if result, found, e := loadReplay(ctx, tx, in.ServerURL, in.UserID, in.RequestID, "mm/v2/stage-request", requestDigest); e != nil {
-			return MutationResult{}, e
+		if result, found, e := findCreate(ctx, tx, in.ServerURL, in.UserID, in.RequestID); e != nil {
+			return CreateRecord{}, e
 		} else if found {
+			if result.RequestDigest != in.RequestDigest {
+				return CreateRecord{}, ErrConflict
+			}
+			result.Replay, result.Result.Replay = true, true
 			return result, nil
 		}
 	}
 	id, err := newStageID()
 	if err != nil {
-		return MutationResult{}, errors.New("stage store: random identity unavailable")
+		return CreateRecord{}, errors.New("stage store: random identity unavailable")
 	}
 	now := time.Now().UTC()
 	stamp := formatTime(now)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO stages(id,created_at,updated_at,operation,server_url,server_id,user_id,lifecycle,recovery,current_revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, id, stamp, stamp, in.Operation, in.ServerURL, nullable(in.ServerID), in.UserID, LifecycleOpen, RecoveryNone); err != nil {
-		return MutationResult{}, localError(err)
+		return CreateRecord{}, localError(err)
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO stage_revisions(stage_id,revision,state,created_at,semantic_digest,body,destination_json,plan_json) VALUES(?,1,'current',?,?,?,?,?)`, id, stamp, semantic[:], nullableBytes(content.Body), string(content.Destination), string(content.Plan)); err != nil {
-		return MutationResult{}, localError(err)
+		return CreateRecord{}, localError(err)
 	}
 	if err = insertAttachments(ctx, tx, id, 1, content.Attachments); err != nil {
-		return MutationResult{}, err
+		return CreateRecord{}, err
 	}
 	summary := StageSummary{id, in.ServerURL, in.ServerID, in.UserID, in.Operation, LifecycleOpen, RecoveryNone, 1, semantic, now, now}
 	result := MutationResult{"mm/v2/stage-mutation-receipt", "create", summary, false, now, false}
-	if err = persistReplay(ctx, tx, in.ServerURL, in.UserID, in.RequestID, "mm/v2/stage-request", requestDigest, result, stamp); err != nil {
-		return MutationResult{}, err
+	record := CreateRecord{result, result, in.RequestDigest, bytes.Clone(in.Content.Destination), bytes.Clone(in.Content.Plan)}
+	if record.Destination, record.Plan, err = normalizeCreateProjection(record.Destination, record.Plan); err != nil {
+		return CreateRecord{}, localError(err)
+	}
+	if err = persistCreate(ctx, tx, in.ServerURL, in.UserID, in.RequestID, record, stamp); err != nil {
+		return CreateRecord{}, err
 	}
 	if err = tx.Commit(); err != nil {
-		return MutationResult{}, localError(err)
+		return CreateRecord{}, localError(err)
 	}
 	runCommitHook()
-	return result, nil
+	return record, nil
 }
 
 func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, error) {
@@ -638,6 +653,7 @@ func insertAttachments(ctx context.Context, tx *sql.Tx, stage string, revision i
 
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func readAttachments(ctx context.Context, q queryer, stage string, revision int64) ([]Attachment, error) {
@@ -684,6 +700,103 @@ func loadReplay(ctx context.Context, tx *sql.Tx, server, user, id, schema string
 	}
 	result.Replay = true
 	return result, true, nil
+}
+
+func (s *Store) FindCreate(ctx context.Context, server, user, id string) (CreateRecord, bool, error) {
+	if ctx == nil || !canonicalServerURL(server) || !bounded(user, maxIdentityBytes) || !validRequestID(id) {
+		return CreateRecord{}, false, ErrInvalid
+	}
+	record, found, err := findCreate(ctx, s.db, server, user, id)
+	if found {
+		record.Replay, record.Result.Replay = true, true
+	}
+	return record, found, err
+}
+
+func findCreate(ctx context.Context, q queryer, server, user, id string) (CreateRecord, bool, error) {
+	var schemaName, raw, requestCreated string
+	var digest []byte
+	err := q.QueryRowContext(ctx, `SELECT request_schema,request_digest,result_json,created_at FROM local_requests WHERE server_url=? AND user_id=? AND request_id=?`, server, user, id).Scan(&schemaName, &digest, &raw, &requestCreated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CreateRecord{}, false, nil
+	}
+	if err != nil {
+		return CreateRecord{}, false, localError(err)
+	}
+	if schemaName == "mm/v2/legacy-stage-request-conflict" || schemaName == "mm/v2/legacy-request-conflict" || schemaName == "mm/v2/stage-revise-request" || schemaName == "mm/v2/stage-cancel-request" {
+		return CreateRecord{}, false, ErrConflict
+	}
+	if schemaName != "mm/v2/stage-request" || len(digest) != 32 {
+		return CreateRecord{}, false, localError(errors.New("create receipt"))
+	}
+	var record CreateRecord
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	createdAt, createdErr := parseTime(requestCreated)
+	if decoder.Decode(&record) != nil || decoder.Decode(new(any)) != io.EOF || createdErr != nil || !record.Result.RecordedAt.Equal(createdAt) || !bytes.Equal(digest, record.RequestDigest[:]) || !validReplayResult(record.Result, "mm/v2/stage-request", server, user) {
+		return CreateRecord{}, false, localError(errors.New("create receipt"))
+	}
+	record.MutationResult = record.Result
+	stage := record.Stage
+	if stage.Revision != 1 || stage.Lifecycle != LifecycleOpen || stage.Recovery != RecoveryNone || record.Revived ||
+		!stage.CreatedAt.Equal(stage.UpdatedAt) || !stage.CreatedAt.Equal(record.RecordedAt) {
+		return CreateRecord{}, false, localError(errors.New("create receipt"))
+	}
+	var operation Operation
+	var stageServer, serverID, stageUser, stageCreated, revisionCreated string
+	var body []byte
+	var destination, plan string
+	var semantic []byte
+	err = q.QueryRowContext(ctx, `SELECT s.operation,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.body,r.destination_json,r.plan_json,r.semantic_digest FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=? WHERE s.id=?`, stage.Revision, stage.ID).Scan(&operation, &stageServer, &serverID, &stageUser, &stageCreated, &revisionCreated, &body, &destination, &plan, &semantic)
+	if err != nil {
+		return CreateRecord{}, false, localError(err)
+	}
+	attachments, err := readAttachments(ctx, q, stage.ID, stage.Revision)
+	if err != nil {
+		return CreateRecord{}, false, err
+	}
+	content, err := normalizeContent(operation, RevisionContent{body, json.RawMessage(destination), json.RawMessage(plan), attachments})
+	recordDestination, destinationErr := canonicalObject(record.Destination)
+	recordPlan, planErr := canonicalObject(record.Plan)
+	stageCreatedAt, stageCreatedErr := parseTime(stageCreated)
+	revisionCreatedAt, revisionCreatedErr := parseTime(revisionCreated)
+	if err != nil || destinationErr != nil || planErr != nil || stageCreatedErr != nil || revisionCreatedErr != nil || !stage.CreatedAt.Equal(stageCreatedAt) || !stage.CreatedAt.Equal(revisionCreatedAt) || len(semantic) != 32 || !bytes.Equal(semantic, stage.SemanticDigest[:]) || semanticDigest(operation, server, serverID, user, content) != stage.SemanticDigest ||
+		!bytes.Equal(content.Destination, recordDestination) || !bytes.Equal(content.Plan, recordPlan) || operation != stage.Operation || stageServer != server || stageUser != user || serverID != stage.ServerID {
+		return CreateRecord{}, false, localError(errors.New("create projection"))
+	}
+	record.Destination, record.Plan = bytes.Clone(record.Destination), bytes.Clone(record.Plan)
+	return record, true, nil
+}
+
+func normalizeCreateProjection(destination, plan json.RawMessage) (json.RawMessage, json.RawMessage, error) {
+	projection := struct {
+		Destination json.RawMessage `json:"destination"`
+		Plan        json.RawMessage `json:"plan"`
+	}{destination, plan}
+	raw, err := marshalCanonical(projection)
+	if err != nil {
+		return nil, nil, err
+	}
+	var normalized struct {
+		Destination json.RawMessage `json:"destination"`
+		Plan        json.RawMessage `json:"plan"`
+	}
+	if err = json.Unmarshal(raw, &normalized); err != nil {
+		return nil, nil, err
+	}
+	return normalized.Destination, normalized.Plan, nil
+}
+
+func persistCreate(ctx context.Context, tx *sql.Tx, server, user, id string, record CreateRecord, stamp string) error {
+	if id == "" {
+		return nil
+	}
+	raw, err := marshalCanonical(record)
+	if err != nil {
+		return localError(err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO local_requests(server_url,user_id,request_id,request_schema,request_digest,result_json,created_at) VALUES(?,?,?,?,?,?,?)`, server, user, id, "mm/v2/stage-request", record.RequestDigest[:], string(raw), stamp)
+	return localError(err)
 }
 func validReplayResult(result MutationResult, requestSchema, server, user string) bool {
 	action := map[string]string{"mm/v2/stage-request": "create", "mm/v2/stage-revise-request": "revise", "mm/v2/stage-cancel-request": "cancel"}[requestSchema]

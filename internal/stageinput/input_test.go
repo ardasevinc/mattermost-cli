@@ -109,6 +109,18 @@ func TestBindCanonicalizesMediaType(t *testing.T) {
 	}
 }
 
+func TestPreflightReturnsNormalizedIntentWithoutOpeningFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	intent, err := Preflight([]Attachment{{Path: missing, RemoteFilename: "Report.TXT", MediaType: `Text/Plain; Charset="UTF-8"`}})
+	if err != nil || len(intent) != 1 || intent[0].Path != filepath.Clean(missing) || intent[0].RemoteFilename != "Report.TXT" || intent[0].MediaType == nil || *intent[0].MediaType != "text/plain; charset=UTF-8" {
+		t.Fatalf("intent/error = %#v/%v", intent, err)
+	}
+	auto, err := Preflight([]Attachment{{Path: missing}})
+	if err != nil || auto[0].RemoteFilename != "missing.txt" || auto[0].MediaType != nil {
+		t.Fatalf("auto intent/error = %#v/%v", auto, err)
+	}
+}
+
 func TestBindScansOriginalMetadataBeforeCanonicalization(t *testing.T) {
 	path := filepath.Join(localTempDir(t), "file")
 	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {

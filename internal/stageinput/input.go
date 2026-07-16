@@ -44,6 +44,34 @@ type Attachment struct {
 	MediaType      string // empty detects MIME from the first 512 file bytes
 }
 
+type MetadataIntent struct {
+	Path           string  `json:"path"`
+	RemoteFilename string  `json:"remoteFilename"`
+	MediaType      *string `json:"mediaType"`
+}
+
+// Preflight validates and canonicalizes caller-supplied attachment metadata
+// without opening or reading the referenced files.
+func Preflight(inputs []Attachment) ([]MetadataIntent, error) {
+	if len(inputs) > MaxAttachments {
+		return nil, ErrTooMany
+	}
+	result := make([]MetadataIntent, 0, len(inputs))
+	for _, input := range inputs {
+		prepared, err := prepareMetadata(input)
+		if err != nil {
+			return nil, err
+		}
+		var mediaType *string
+		if input.MediaType != "" {
+			value := prepared.mediaType
+			mediaType = &value
+		}
+		result = append(result, MetadataIntent{prepared.canonical, prepared.filename, mediaType})
+	}
+	return result, nil
+}
+
 // Bind records a durable-at-rest snapshot only. A later apply must securely
 // reopen the canonical path, rescan credentials, rehash, and spool before any
 // upload; a changed path must conflict with this recorded identity and digest.

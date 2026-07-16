@@ -2,6 +2,7 @@ package staging
 
 import (
 	"bytes"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -33,6 +34,22 @@ func cloneCredentials(values [][]byte) [][]byte {
 	for i := range values {
 		out[i] = bytes.Clone(values[i])
 	}
+	return out
+}
+
+func credentialsByLength(values [][]byte) [][]byte {
+	out := make([][]byte, 0, len(values))
+	for _, value := range values {
+		if len(value) > 0 {
+			out = append(out, bytes.Clone(value))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i]) != len(out[j]) {
+			return len(out[i]) > len(out[j])
+		}
+		return bytes.Compare(out[i], out[j]) < 0
+	})
 	return out
 }
 

@@ -35,12 +35,19 @@ func (s *Service) resolveConversation(ctx context.Context, target Target) (Previ
 		return Preview{}, ErrCredential
 	}
 	current, err := s.users.Current(ctx)
-	if err != nil || !validResolvedUser(current) {
+	if err != nil {
+		return Preview{}, targetReadError(err)
+	}
+	if !validResolvedUser(current) {
 		return Preview{}, ErrTarget
 	}
 	if contaminated(s.credentials, current.ID, current.Username) {
 		return Preview{}, ErrCredential
 	}
+	return s.resolveConversationFor(ctx, target, current)
+}
+
+func (s *Service) resolveConversationFor(ctx context.Context, target Target, current mattermost.User) (Preview, error) {
 	channel, participants, err := s.resolveChannel(ctx, current, target)
 	if err != nil {
 		return Preview{}, err
@@ -75,14 +82,20 @@ func (s *Service) resolveChannel(ctx context.Context, current mattermost.User, t
 	switch target.Conversation {
 	case Direct:
 		peer, err := s.users.ByUsernameFresh(ctx, target.Value)
-		if err != nil || !validResolvedUser(peer) || !strings.EqualFold(peer.Username, target.Value) || peer.ID == current.ID {
+		if err != nil {
+			return mattermost.Channel{}, nil, targetReadError(err)
+		}
+		if !validResolvedUser(peer) || !strings.EqualFold(peer.Username, target.Value) || peer.ID == current.ID {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		if contaminated(s.credentials, peer.ID, peer.Username) {
 			return mattermost.Channel{}, nil, ErrCredential
 		}
 		channel, found, err := s.channels.ExistingDirect(ctx, current.ID, peer.ID)
-		if err != nil || !found || !validResolvedChannel(channel) || channel.Type != "D" {
+		if err != nil {
+			return mattermost.Channel{}, nil, targetReadError(err)
+		}
+		if !found || !validResolvedChannel(channel) || channel.Type != "D" {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		if contaminated(s.credentials, channel.ID, channel.Name) {
@@ -91,13 +104,20 @@ func (s *Service) resolveChannel(ctx context.Context, current mattermost.User, t
 		return channel, []string{peer.ID}, nil
 	case Group:
 		channel, err := s.channels.ByID(ctx, target.Value)
-		if err != nil || !validResolvedChannel(channel) || channel.Type != "G" {
+		if err != nil {
+			return mattermost.Channel{}, nil, targetReadError(err)
+		}
+		if !validResolvedChannel(channel) || channel.Type != "G" {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		if contaminated(s.credentials, channel.ID, channel.Name) {
 			return mattermost.Channel{}, nil, ErrCredential
 		}
-		if _, err = s.channels.Member(ctx, channel.ID, current.ID); err != nil {
+		member, memberErr := s.channels.Member(ctx, channel.ID, current.ID)
+		if memberErr != nil {
+			return mattermost.Channel{}, nil, targetReadError(memberErr)
+		}
+		if member.ChannelID != channel.ID || member.UserID != current.ID {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		return channel, []string{}, nil
@@ -113,13 +133,20 @@ func (s *Service) resolveChannel(ctx context.Context, current mattermost.User, t
 			}
 			channel, err = s.channels.ByName(ctx, team.ID, target.Value)
 		}
-		if err != nil || !validResolvedChannel(channel) || (channel.Type != "O" && channel.Type != "P") {
+		if err != nil {
+			return mattermost.Channel{}, nil, targetReadError(err)
+		}
+		if !validResolvedChannel(channel) || (channel.Type != "O" && channel.Type != "P") {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		if contaminated(s.credentials, channel.ID, channel.Name, channel.TeamID) {
 			return mattermost.Channel{}, nil, ErrCredential
 		}
-		if _, err = s.channels.Member(ctx, channel.ID, current.ID); err != nil {
+		member, memberErr := s.channels.Member(ctx, channel.ID, current.ID)
+		if memberErr != nil {
+			return mattermost.Channel{}, nil, targetReadError(memberErr)
+		}
+		if member.ChannelID != channel.ID || member.UserID != current.ID {
 			return mattermost.Channel{}, nil, ErrTarget
 		}
 		return channel, []string{}, nil
@@ -131,7 +158,7 @@ func (s *Service) resolveChannel(ctx context.Context, current mattermost.User, t
 func (s *Service) resolveTeam(ctx context.Context, userID string, selector TeamSelector) (mattermost.Team, error) {
 	membership, err := s.teams.List(ctx, userID)
 	if err != nil {
-		return mattermost.Team{}, ErrTarget
+		return mattermost.Team{}, targetReadError(err)
 	}
 	var match mattermost.Team
 	count := 0

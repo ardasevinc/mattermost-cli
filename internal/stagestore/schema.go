@@ -89,4 +89,8 @@ WHEN NEW.revision > 1 AND EXISTS(SELECT 1 FROM stage_revisions WHERE stage_id=NE
  AND (NEW.destination_json != (SELECT destination_json FROM stage_revisions WHERE stage_id=NEW.stage_id ORDER BY revision LIMIT 1)
    OR NEW.plan_json != (SELECT plan_json FROM stage_revisions WHERE stage_id=NEW.stage_id ORDER BY revision LIMIT 1))
 BEGIN SELECT RAISE(ABORT, 'stage destination and plan are immutable'); END;
+`}, {version: 3, name: "caller-intent-stage-create-replay", sql: `
+DROP TRIGGER local_requests_immutable_update;
+UPDATE local_requests SET request_schema='mm/v2/legacy-stage-request-conflict' WHERE request_schema='mm/v2/stage-request';
+CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
 `}}
