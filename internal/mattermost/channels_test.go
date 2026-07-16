@@ -138,6 +138,50 @@ func TestChannelListDoesNotRequireTeamsForDirectOnlyDiscovery(t *testing.T) {
 	}
 }
 
+func TestDirectListIgnoresUnrelatedTeamAndGroupBindings(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels": `[
+			{"type":"P"},
+			{"type":"G"},
+			{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}
+		]`,
+	}}
+	got, err := NewChannels(f).DirectList(context.Background(), "user")
+	if err != nil || len(got) != 1 || got[0].ID != "dm" {
+		t.Fatalf("channels = %#v, error = %v", got, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+		t.Fatalf("paths = %v", f.paths)
+	}
+}
+
+func TestDirectListRejectsMalformedOrUnboundDirectChannels(t *testing.T) {
+	tests := map[string]string{
+		"malformed direct identity": `[{"id":"dm","team_id":"","type":"D","display_name":""}]`,
+		"foreign direct identity":   `[{"id":"dm","team_id":"","type":"D","name":"alice__bob","display_name":""}]`,
+		"conflicting duplicate":     `[{"id":"dm","team_id":"","type":"D","name":"user__alice","display_name":""},{"id":"dm","team_id":"","type":"D","name":"user__bob","display_name":""}]`,
+		"missing discriminator":     `[{"id":"dm"}]`,
+		"unknown discriminator":     `[{"type":"X"}]`,
+	}
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			if _, err := NewChannels(f).DirectList(context.Background(), "user"); err == nil {
+				t.Fatal("expected direct-list validation error")
+			}
+		})
+	}
+}
+
+func TestDirectListDedupesExactDirectChannelDuplicates(t *testing.T) {
+	channel := `{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}`
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[` + channel + `,` + channel + `]`}}
+	got, err := NewChannels(f).DirectList(context.Background(), "user")
+	if err != nil || len(got) != 1 || got[0].ID != "dm" {
+		t.Fatalf("channels=%#v err=%v", got, err)
+	}
+}
+
 func TestChannelReadsAreRaceSafe(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
 		"/channels/x": `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General"}`,

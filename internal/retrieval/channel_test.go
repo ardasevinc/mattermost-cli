@@ -32,7 +32,7 @@ func TestChannelHistoryUsesLimitPlusOneAndDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requested.PerPage != 3 || result.Completeness != CompletenessTruncated || fmt.Sprint(ids(result.Posts)) != "[a b]" {
+	if requested.PerPage != 3 || result.Completeness != CompletenessUnknown || fmt.Sprint(ids(result.Posts)) != "[a b]" {
 		t.Fatalf("requested=%#v result=%#v", requested, result)
 	}
 }
@@ -48,7 +48,7 @@ func TestChannelHistoryCompletesEqualMillisecondTiesAndBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(ids(result.Posts)) != "[b c]" || result.Completeness != CompletenessTruncated {
+	if fmt.Sprint(ids(result.Posts)) != "[b c]" || result.Completeness != CompletenessUnknown {
 		t.Fatalf("result = %#v", result)
 	}
 }
@@ -161,6 +161,19 @@ func TestChannelHistoryStopsAtHardPageBoundAsUnknown(t *testing.T) {
 	}), "channel", ChannelHistoryOptions{Limit: 200, Boundary: &Boundary{CreateAt: 200, ID: "anchor"}})
 	if err != nil || calls != MaxChannelHistoryPages || result.Completeness != CompletenessUnknown || len(result.Posts) != 0 {
 		t.Fatalf("calls=%d result=%#v error=%v", calls, result, err)
+	}
+}
+
+func TestChannelHistoryBudgetExhaustionDominatesOverLimitSameTimestampCandidates(t *testing.T) {
+	budget := 1
+	result, err := ChannelHistory(context.Background(), pageSourceFunc(func(_ context.Context, _ string, options mattermost.ChannelPostsOptions) (mattermost.OrderedPostsPage, error) {
+		return mattermost.OrderedPostsPage{
+			Posts:    []mattermost.Post{testPost("a", 200), testPost("b", 200), testPost("c", 200)},
+			RawCount: options.PerPage,
+		}, nil
+	}), "channel", ChannelHistoryOptions{Limit: 2, RequestBudget: &budget})
+	if err != nil || result.Completeness != CompletenessUnknown || fmt.Sprint(ids(result.Posts)) != "[a b]" || budget != 0 {
+		t.Fatalf("budget=%d result=%#v err=%v", budget, result, err)
 	}
 }
 

@@ -235,3 +235,24 @@ func TestMentionsSchemaBindsSourceAndCompleteness(t *testing.T) {
 		}
 	}
 }
+
+func TestDMSSchemaBindsChannelSourceAndCompleteness(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := fs.ReadFile(publicschemas.FS, "v2/examples/dms.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, document := range map[string]string{
+		"wrong channel type":    strings.Replace(string(valid), `"type":"dm"`, `"type":"public"`, 1),
+		"wrong source":          strings.Replace(string(valid), `"source":"recent"`, `"source":"search"`, 1),
+		"complete is truncated": strings.Replace(string(valid), `"queryTruncated":false`, `"queryTruncated":true`, 1),
+		"complete is unknown":   strings.Replace(string(valid), `"queryTruncated":false`, `"queryTruncated":null`, 1),
+	} {
+		if err := registry.Validate("mm/v2/dms", strings.NewReader(document)); err == nil {
+			t.Errorf("accepted %s", name)
+		}
+	}
+}

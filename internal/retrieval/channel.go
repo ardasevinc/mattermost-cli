@@ -36,6 +36,7 @@ type ChannelHistoryOptions struct {
 	Since            *int64
 	Boundary         *Boundary
 	SafeBeforePostID string
+	RequestBudget    *int
 }
 
 type ChannelHistoryResult struct {
@@ -67,9 +68,19 @@ func ChannelHistory(ctx context.Context, source channelPageSource, channelID str
 	retriedWithoutAnchor := false
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return ChannelHistoryResult{}, err
+		}
 		if pageNumber >= MaxChannelHistoryPages {
 			uncertain = true
 			break
+		}
+		if options.RequestBudget != nil {
+			if *options.RequestBudget <= 0 {
+				uncertain = true
+				break
+			}
+			*options.RequestBudget = *options.RequestBudget - 1
 		}
 		page, err := source.ChannelPage(ctx, channelID, mattermost.ChannelPostsOptions{
 			PerPage: pageSize, Page: pageNumber, Before: activeBefore,
@@ -135,10 +146,10 @@ func ChannelHistory(ctx context.Context, source channelPageSource, channelID str
 
 	result := ChannelHistoryResult{Posts: mostRecent(byID, options.Limit), SafeBeforeValid: options.SafeBeforePostID == "" || !retriedWithoutAnchor}
 	switch {
-	case len(byID) > options.Limit:
-		result.Completeness = CompletenessTruncated
 	case uncertain || !exhausted:
 		result.Completeness = CompletenessUnknown
+	case len(byID) > options.Limit:
+		result.Completeness = CompletenessTruncated
 	default:
 		result.Completeness = CompletenessComplete
 	}

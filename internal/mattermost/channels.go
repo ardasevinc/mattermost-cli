@@ -111,6 +111,38 @@ func (l *channelList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type directChannelList []Channel
+
+func (l *directChannelList) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
+		return ErrInvalidChannelsResponse
+	}
+	direct := make([]Channel, 0)
+	for _, item := range raw {
+		var discriminator struct {
+			Type json.RawMessage `json:"type"`
+		}
+		if json.Unmarshal(item, &discriminator) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		typeCode, ok := requiredString(discriminator.Type)
+		if !ok || (typeCode != "O" && typeCode != "P" && typeCode != "D" && typeCode != "G") {
+			return ErrInvalidChannelsResponse
+		}
+		if typeCode != "D" {
+			continue
+		}
+		var channel Channel
+		if json.Unmarshal(item, &channel) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		direct = append(direct, channel)
+	}
+	*l = direct
+	return nil
+}
+
 func (s *Channels) ByID(ctx context.Context, channelID string) (Channel, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return Channel{}, ErrInvalidChannelRequest
@@ -203,6 +235,35 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 				return nil, err
 			}
 		}
+		result = append(result, channel)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
+// DirectList returns only current-user-bound D channels. It deliberately does
+// not resolve team membership or group membership for unrelated channel types.
+func (s *Channels) DirectList(ctx context.Context, userID string) ([]Channel, error) {
+	if strings.TrimSpace(userID) == "" || userID == "me" {
+		return nil, ErrInvalidChannelRequest
+	}
+	var decoded directChannelList
+	if err := s.client.Get(ctx, "/users/"+url.PathEscape(userID)+"/channels", &decoded); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]Channel)
+	result := make([]Channel, 0)
+	for _, channel := range []Channel(decoded) {
+		if !directChannelContains(channel.Name, userID) {
+			return nil, ErrInvalidChannelResponse
+		}
+		if previous, duplicate := seen[channel.ID]; duplicate {
+			if previous != channel {
+				return nil, ErrInvalidChannelsResponse
+			}
+			continue
+		}
+		seen[channel.ID] = channel
 		result = append(result, channel)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })

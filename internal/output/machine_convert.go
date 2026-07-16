@@ -110,6 +110,9 @@ func NewChannelEnvelope(value MessageOutput, completeness MachineCompleteness) (
 }
 
 func NewDMSEnvelope(values []MessageOutput, completeness MachineCompleteness) (DMSEnvelope, error) {
+	if len(values) == 0 && completeness != MachineComplete {
+		return DMSEnvelope{}, fmt.Errorf("empty direct-message output requires confirmed completeness")
+	}
 	histories, err := machineHistories(values, completeness, "recent", "dm", "unknown")
 	return DMSEnvelope{Schema: "mm/v2/dms", Channels: histories}, err
 }
