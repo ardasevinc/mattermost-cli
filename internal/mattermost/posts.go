@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const MaxPostsPage = 200
@@ -15,13 +18,19 @@ const MaxPostsPage = 200
 const (
 	maxPostIDLength     = 128
 	maxDateMilliseconds = int64(8_640_000_000_000_000)
+	maxPostTypeLength   = 26
+	maxPostFileIDs      = 100
+	maxPostReactions    = 10_000
+	maxEmojiNameLength  = 64
+	maxRemoteIDLength   = 256
 )
 
 var (
-	ErrInvalidPostResponse   = errors.New("Mattermost returned an invalid post response")
-	ErrInvalidPostsResponse  = errors.New("Mattermost returned an invalid posts response")
-	ErrInvalidSearchResponse = errors.New("Mattermost returned an invalid search response")
-	ErrInvalidPostsRequest   = errors.New("invalid Mattermost posts request")
+	ErrInvalidPostResponse      = errors.New("Mattermost returned an invalid post response")
+	ErrInvalidPostsResponse     = errors.New("Mattermost returned an invalid posts response")
+	ErrInvalidSearchResponse    = errors.New("Mattermost returned an invalid search response")
+	ErrInvalidPostsRequest      = errors.New("invalid Mattermost posts request")
+	ErrInvalidReactionsResponse = errors.New("Mattermost returned an invalid reactions response")
 )
 
 type postTransport interface {
@@ -582,38 +591,117 @@ func NewPosts(client postTransport) *Posts { return &Posts{client: client} }
 type canonicalSinglePost struct{ Post Post }
 
 func (p *canonicalSinglePost) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		ID        json.RawMessage `json:"id"`
-		ChannelID json.RawMessage `json:"channel_id"`
-		UserID    json.RawMessage `json:"user_id"`
-		Message   json.RawMessage `json:"message"`
-		CreateAt  json.RawMessage `json:"create_at"`
-		UpdateAt  json.RawMessage `json:"update_at"`
-		DeleteAt  json.RawMessage `json:"delete_at"`
-		RootID    json.RawMessage `json:"root_id"`
-	}
-	if json.Unmarshal(data, &raw) != nil {
+	raw, ok := uniqueJSONObject(data)
+	if !ok {
 		return ErrInvalidPostResponse
 	}
-	_, idOK := safePostID(raw.ID)
-	_, channelOK := safePostID(raw.ChannelID)
-	_, userOK := safePostID(raw.UserID)
-	_, messageOK := strictString(raw.Message)
-	createAt, createOK := nonnegativeInteger(raw.CreateAt)
-	updateAt, updateOK := nonnegativeInteger(raw.UpdateAt)
-	deleteAt, deleteOK := nonnegativeInteger(raw.DeleteAt)
-	rootID, rootOK := strictString(raw.RootID)
+	id, idOK := safePostID(raw["id"])
+	channelID, channelOK := safePostID(raw["channel_id"])
+	userID, userOK := safePostID(raw["user_id"])
+	message, messageOK := strictString(raw["message"])
+	createAt, createOK := nonnegativeInteger(raw["create_at"])
+	updateAt, updateOK := nonnegativeInteger(raw["update_at"])
+	deleteAt, deleteOK := nonnegativeInteger(raw["delete_at"])
+	rootID, rootOK := strictString(raw["root_id"])
 	rootShapeOK := rootOK && (rootID == "" || isSafePostID(rootID))
+	postType, typeOK := strictString(raw["type"])
+	fileIDs, fileIDsOK := canonicalPostIDs(raw["file_ids"], maxPostFileIDs)
 	if !idOK || !channelOK || !userOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds ||
-		!updateOK || updateAt == 0 || updateAt > maxDateMilliseconds || !deleteOK || deleteAt != 0 || !rootShapeOK {
+		!updateOK || updateAt == 0 || updateAt > maxDateMilliseconds || !deleteOK || deleteAt != 0 || !rootShapeOK ||
+		!typeOK || !safePresentationString(postType, maxPostTypeLength) || !fileIDsOK {
 		return ErrInvalidPostResponse
 	}
-	var post Post
-	if json.Unmarshal(data, &post) != nil {
-		return ErrInvalidPostResponse
+	p.Post = Post{
+		ID: id, ChannelID: channelID, UserID: userID, Message: message,
+		CreateAt: createAt, UpdateAt: updateAt, DeleteAt: deleteAt,
+		RootID: rootID, Type: postType, FileIDs: fileIDs,
 	}
-	p.Post = post
 	return nil
+}
+
+func uniqueJSONObject(data []byte) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err = decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok {
+			return nil, false
+		}
+		if _, duplicate := fields[name]; duplicate {
+			return nil, false
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return nil, false
+		}
+		fields[name] = value
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, false
+	}
+	var trailing any
+	if err = decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return fields, true
+}
+
+func canonicalPostIDs(raw json.RawMessage, maximum int) ([]string, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	if isJSONNull(raw) {
+		return []string{}, true
+	}
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) != nil || len(values) > maximum {
+		return nil, false
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, candidate := range values {
+		value, ok := safePostID(candidate)
+		if !ok {
+			return nil, false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return nil, false
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, true
+}
+
+func safePresentationString(value string, maximum int) bool {
+	if len(value) > maximum || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || r == '\u061c' || r == '\u200e' || r == '\u200f' ||
+			r >= '\u202a' && r <= '\u202e' || r >= '\u2066' && r <= '\u2069' {
+			return false
+		}
+	}
+	return true
+}
+
+func validEmojiName(value string) bool {
+	if len(value) == 0 || len(value) > maxEmojiNameLength {
+		return false
+	}
+	for i := range len(value) {
+		c := value[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '+') {
+			return false
+		}
+	}
+	return true
 }
 
 // ByID returns one exact, live post. The response must carry the canonical
@@ -631,6 +719,68 @@ func (s *Posts) ByID(ctx context.Context, postID string) (Post, error) {
 		return Post{}, ErrInvalidPostResponse
 	}
 	return post, nil
+}
+
+// ReactionState authoritatively reads the complete reaction set for one post.
+func (s *Posts) ReactionState(ctx context.Context, postID, channelID, userID, emoji string) (bool, error) {
+	if !isSafePostID(postID) || !isSafePostID(channelID) || !isSafePostID(userID) || !validEmojiName(emoji) {
+		return false, ErrInvalidPostsRequest
+	}
+	var decoded canonicalReactions
+	decoded.postID = postID
+	decoded.channelID = channelID
+	if err := s.client.Get(ctx, "/posts/"+url.PathEscape(postID)+"/reactions", &decoded); err != nil {
+		return false, err
+	}
+	for _, reaction := range decoded.values {
+		if reaction.UserID == userID && reaction.EmojiName == emoji {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+type canonicalReactions struct {
+	postID    string
+	channelID string
+	values    []PostReaction
+}
+
+func (r *canonicalReactions) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if !isJSONNull(data) && json.Unmarshal(data, &raw) != nil || len(raw) > maxPostReactions {
+		return ErrInvalidReactionsResponse
+	}
+	values := make([]PostReaction, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, candidate := range raw {
+		fields, ok := uniqueJSONObject(candidate)
+		if !ok {
+			return ErrInvalidReactionsResponse
+		}
+		userID, userOK := safePostID(fields["user_id"])
+		postID, postOK := safePostID(fields["post_id"])
+		channelID, channelOK := safePostID(fields["channel_id"])
+		emoji, emojiOK := strictString(fields["emoji_name"])
+		createAt, createOK := nonnegativeInteger(fields["create_at"])
+		updateAt, updateOK := nonnegativeInteger(fields["update_at"])
+		deleteAt, deleteOK := nonnegativeInteger(fields["delete_at"])
+		remoteID, remoteOK := optionalStringValue(fields["remote_id"])
+		remoteShapeOK := (remoteOK || isJSONNull(fields["remote_id"])) && safePresentationString(remoteID, maxRemoteIDLength)
+		if !userOK || !postOK || postID != r.postID || !channelOK || channelID != r.channelID ||
+			!emojiOK || !validEmojiName(emoji) || !createOK || createAt == 0 || createAt > maxDateMilliseconds ||
+			!updateOK || updateAt == 0 || updateAt > maxDateMilliseconds || !deleteOK || deleteAt != 0 || !remoteShapeOK {
+			return ErrInvalidReactionsResponse
+		}
+		key := userID + "\x00" + emoji
+		if _, duplicate := seen[key]; duplicate {
+			return ErrInvalidReactionsResponse
+		}
+		seen[key] = struct{}{}
+		values = append(values, PostReaction{UserID: userID, PostID: postID, EmojiName: emoji, CreateAt: createAt})
+	}
+	r.values = values
+	return nil
 }
 
 func (s *Posts) SearchPage(ctx context.Context, teamID string, options SearchPageOptions) (SearchPage, error) {

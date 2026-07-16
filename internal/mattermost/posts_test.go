@@ -12,6 +12,8 @@ import (
 
 type postTransportFunc func(context.Context, string, any) error
 
+const validReactionRow = `{"user_id":"user","post_id":"post","emoji_name":"Eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":null,"channel_id":"channel"}`
+
 func (f postTransportFunc) Get(ctx context.Context, path string, out any) error {
 	return f(ctx, path, out)
 }
@@ -33,10 +35,10 @@ func TestPostByIDBuildsExactGETAndRequiresCanonicalLivePost(t *testing.T) {
 	var gotPath string
 	api := NewPosts(postTransportFunc(func(_ context.Context, path string, out any) error {
 		gotPath = path
-		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`), out)
+		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":["file-a","file-b"]}`), out)
 	}))
 	post, err := api.ByID(context.Background(), "post")
-	if err != nil || post.ID != "post" || post.ChannelID != "channel" || post.UserID != "author" {
+	if err != nil || post.ID != "post" || post.ChannelID != "channel" || post.UserID != "author" || !reflect.DeepEqual(post.FileIDs, []string{"file-a", "file-b"}) {
 		t.Fatalf("post=%#v error=%v", post, err)
 	}
 	if gotPath != "/posts/post" {
@@ -64,6 +66,12 @@ func TestPostByIDRejectsInvalidRequestMismatchMalformedAndDeleted(t *testing.T) 
 		"wrong-type root":    `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":7}`,
 		"unsafe root":        `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"bad/root"}`,
 		"deleted":            `{"id":"post","channel_id":"channel","user_id":"author","message":"stale","create_at":1,"update_at":1,"delete_at":2,"root_id":""}`,
+		"missing type":       `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","file_ids":[]}`,
+		"unsafe type":        `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"bad\u001b","file_ids":[]}`,
+		"oversized type":     `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"123456789012345678901234567","file_ids":[]}`,
+		"missing files":      `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":""}`,
+		"duplicate files":    `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":["file","file"]}`,
+		"unsafe file":        `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":["bad/file"]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
@@ -73,6 +81,52 @@ func TestPostByIDRejectsInvalidRequestMismatchMalformedAndDeleted(t *testing.T) 
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+func TestPostByIDAcceptsExplicitNullFileIDsAsCanonicalEmpty(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":null}`), out)
+	}))
+	post, err := api.ByID(context.Background(), "post")
+	if err != nil || post.FileIDs == nil || len(post.FileIDs) != 0 {
+		t.Fatalf("post=%#v error=%v", post, err)
+	}
+}
+
+func TestPostByIDRejectsDuplicateJSONMembers(t *testing.T) {
+	base := `"channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]`
+	for name, payload := range map[string]string{
+		"conflicting":        `{"id":"post","id":"other",` + base + `}`,
+		"identical":          `{"id":"post","id":"post",` + base + `}`,
+		"escaped equivalent": `{"id":"post","\u0069d":"post",` + base + `}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+				return json.Unmarshal([]byte(payload), out)
+			}))
+			if _, err := api.ByID(context.Background(), "post"); !errors.Is(err, ErrInvalidPostResponse) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestPostByIDUsesOnlyExactCanonicalMemberNames(t *testing.T) {
+	base := `"channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]`
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"id":"post","ID":"other",`+base+`}`), out)
+	}))
+	post, err := api.ByID(context.Background(), "post")
+	if err != nil || post.ID != "post" || post.Message != "hello" {
+		t.Fatalf("post=%#v error=%v", post, err)
+	}
+
+	api = NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"ID":"post",`+base+`}`), out)
+	}))
+	if _, err := api.ByID(context.Background(), "post"); !errors.Is(err, ErrInvalidPostResponse) {
+		t.Fatalf("missing canonical id error=%v", err)
 	}
 }
 
@@ -92,7 +146,7 @@ func TestPostByIDPropagatesCancellationAndTransportErrors(t *testing.T) {
 
 func TestPostByIDAcceptsCanonicalReplyRoot(t *testing.T) {
 	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
-		return json.Unmarshal([]byte(`{"id":"reply","channel_id":"channel","user_id":"author","message":"hello","create_at":2,"update_at":2,"delete_at":0,"root_id":"root"}`), out)
+		return json.Unmarshal([]byte(`{"id":"reply","channel_id":"channel","user_id":"author","message":"hello","create_at":2,"update_at":2,"delete_at":0,"root_id":"root","type":"","file_ids":[]}`), out)
 	}))
 	post, err := api.ByID(context.Background(), "reply")
 	if err != nil || post.RootID != "root" {
@@ -102,7 +156,7 @@ func TestPostByIDAcceptsCanonicalReplyRoot(t *testing.T) {
 
 func TestPostByIDIsRaceSafe(t *testing.T) {
 	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
-		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`), out)
+		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]}`), out)
 	}))
 	var wg sync.WaitGroup
 	for range 40 {
@@ -110,6 +164,116 @@ func TestPostByIDIsRaceSafe(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = api.ByID(context.Background(), "post") }()
 	}
 	wg.Wait()
+}
+
+func TestReactionStateUsesExactFreshGETAndReturnsPresentOrAbsent(t *testing.T) {
+	for _, tt := range []struct {
+		name, payload string
+		want          bool
+	}{
+		{"present", `[` + validReactionRow + `]`, true},
+		{"absent", `[{"user_id":"other","post_id":"post","emoji_name":"Eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":"","channel_id":"channel"}]`, false},
+		{"empty array", `[]`, false},
+		{"real empty null", `null`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var path string
+			api := NewPosts(postTransportFunc(func(_ context.Context, got string, out any) error {
+				path = got
+				return json.Unmarshal([]byte(tt.payload), out)
+			}))
+			got, err := api.ReactionState(context.Background(), "post", "channel", "user", "Eyes")
+			if err != nil || got != tt.want || path != "/posts/post/reactions" {
+				t.Fatalf("state=%v path=%q error=%v", got, path, err)
+			}
+		})
+	}
+}
+
+func TestReactionStateRejectsInvalidInputsBeforeNetwork(t *testing.T) {
+	for _, args := range [][4]string{{"", "channel", "user", "eyes"}, {"bad/post", "channel", "user", "eyes"}, {"post", "bad/channel", "user", "eyes"}, {"post", "channel", "bad user", "eyes"}, {"post", "channel", "user", "bad:emoji"}} {
+		called := false
+		api := NewPosts(postTransportFunc(func(context.Context, string, any) error { called = true; return nil }))
+		if _, err := api.ReactionState(context.Background(), args[0], args[1], args[2], args[3]); !errors.Is(err, ErrInvalidPostsRequest) || called {
+			t.Fatalf("args=%q error=%v called=%v", args, err, called)
+		}
+	}
+}
+
+func TestReactionStateRejectsIncompleteAmbiguousOrHostileResponses(t *testing.T) {
+	prefix := strings.TrimSuffix(validReactionRow, "}")
+	for name, payload := range map[string]string{
+		"object":             `{}`,
+		"null item":          `[null]`,
+		"missing field":      `[{"user_id":"user","post_id":"post","emoji_name":"Eyes","create_at":1,"update_at":1,"delete_at":0,"channel_id":"channel"}]`,
+		"wrong type":         `[{"user_id":7,"post_id":"post","emoji_name":"Eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":null,"channel_id":"channel"}]`,
+		"foreign post":       strings.Replace(validReactionRow, `"post_id":"post"`, `"post_id":"other"`, 1),
+		"foreign channel":    strings.Replace(validReactionRow, `"channel_id":"channel"`, `"channel_id":"other"`, 1),
+		"hostile user":       strings.Replace(validReactionRow, `"user_id":"user"`, `"user_id":"bad/user"`, 1),
+		"bad emoji":          strings.Replace(validReactionRow, `"emoji_name":"Eyes"`, `"emoji_name":"bad:emoji"`, 1),
+		"zero update":        strings.Replace(validReactionRow, `"update_at":1`, `"update_at":0`, 1),
+		"deleted":            strings.Replace(validReactionRow, `"delete_at":0`, `"delete_at":2`, 1),
+		"hostile remote":     strings.Replace(validReactionRow, `"remote_id":null`, `"remote_id":"bad\u001b"`, 1),
+		"duplicate":          `[` + prefix + `},` + prefix + `}]`,
+		"conflicting member": `[` + strings.Replace(validReactionRow, `"user_id":"user"`, `"user_id":"user","user_id":"other"`, 1) + `]`,
+		"identical member":   `[` + strings.Replace(validReactionRow, `"user_id":"user"`, `"user_id":"user","user_id":"user"`, 1) + `]`,
+		"escaped member":     `[` + strings.Replace(validReactionRow, `"user_id":"user"`, `"user_id":"user","user_\u0069d":"user"`, 1) + `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal([]byte(payload), out) }))
+			if _, err := api.ReactionState(context.Background(), "post", "channel", "user", "Eyes"); !errors.Is(err, ErrInvalidReactionsResponse) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestReactionStateAllowsUnknownAdditiveFields(t *testing.T) {
+	payload := `[` + strings.TrimSuffix(validReactionRow, "}") + `,"future":{"value":true}}]`
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal([]byte(payload), out) }))
+	got, err := api.ReactionState(context.Background(), "post", "channel", "user", "Eyes")
+	if err != nil || !got {
+		t.Fatalf("state=%v error=%v", got, err)
+	}
+}
+
+func TestReactionStateBoundsCancellationAndRaceSafety(t *testing.T) {
+	tooMany := make([]PostReaction, maxPostReactions+1)
+	payload, err := json.Marshal(tooMany)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal(payload, out) }))
+	if _, err := api.ReactionState(context.Background(), "post", "channel", "user", "eyes"); !errors.Is(err, ErrInvalidReactionsResponse) {
+		t.Fatalf("bounds error=%v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	api = NewPosts(postTransportFunc(func(ctx context.Context, _ string, _ any) error { return ctx.Err() }))
+	if _, err := api.ReactionState(ctx, "post", "channel", "user", "eyes"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel error=%v", err)
+	}
+
+	api = NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal([]byte(`[]`), out) }))
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = api.ReactionState(context.Background(), "post", "channel", "user", "eyes")
+		}()
+	}
+	wg.Wait()
+}
+
+func FuzzReactionStateDecoder(f *testing.F) {
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`[` + validReactionRow + `]`))
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error { return json.Unmarshal(payload, out) }))
+		_, _ = api.ReactionState(context.Background(), "post", "channel", "user", "Eyes")
+	})
 }
 
 func TestOrderedPostsPageNormalizesAndSuppressesDeleted(t *testing.T) {
