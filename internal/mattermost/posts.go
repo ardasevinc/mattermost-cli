@@ -29,20 +29,25 @@ type postTransport interface {
 // Post retains only fields needed for history selection. Presentation-specific
 // fields belong in a later, wider model rather than leaking unchecked payloads.
 type Post struct {
-	ID        string
-	ChannelID string
-	Message   string
-	CreateAt  int64
-	DeleteAt  int64
+	ID               string
+	ChannelID        string
+	Message          string
+	CreateAt         int64
+	DeleteAt         int64
+	RootID           string
+	ReplyCount       int
+	ThreadShapeKnown bool
 }
 
 func (p *Post) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		ID        json.RawMessage `json:"id"`
-		ChannelID json.RawMessage `json:"channel_id"`
-		Message   json.RawMessage `json:"message"`
-		CreateAt  json.RawMessage `json:"create_at"`
-		DeleteAt  json.RawMessage `json:"delete_at"`
+		ID         json.RawMessage `json:"id"`
+		ChannelID  json.RawMessage `json:"channel_id"`
+		Message    json.RawMessage `json:"message"`
+		CreateAt   json.RawMessage `json:"create_at"`
+		DeleteAt   json.RawMessage `json:"delete_at"`
+		RootID     json.RawMessage `json:"root_id"`
+		ReplyCount json.RawMessage `json:"reply_count"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return ErrInvalidPostResponse
@@ -52,25 +57,60 @@ func (p *Post) UnmarshalJSON(data []byte) error {
 	message, messageOK := strictString(raw.Message)
 	createAt, createOK := nonnegativeInteger(raw.CreateAt)
 	deleteAt, deleteOK := nonnegativeInteger(raw.DeleteAt)
-	if !idOK || !channelOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds || !deleteOK || deleteAt > maxDateMilliseconds {
+	rootID, rootOK, rootKnown := optionalPostID(raw.RootID)
+	replyCount, replyOK, replyKnown := optionalNonnegativeInteger(raw.ReplyCount)
+	if !idOK || !channelOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds || !deleteOK || deleteAt > maxDateMilliseconds || !rootOK || !replyOK {
 		return ErrInvalidPostResponse
 	}
-	*p = Post{ID: id, ChannelID: channelID, Message: message, CreateAt: createAt, DeleteAt: deleteAt}
+	*p = Post{ID: id, ChannelID: channelID, Message: message, CreateAt: createAt, DeleteAt: deleteAt, RootID: rootID, ReplyCount: replyCount, ThreadShapeKnown: rootKnown && replyKnown}
 	return nil
+}
+
+func optionalPostID(raw json.RawMessage) (string, bool, bool) {
+	if len(raw) == 0 {
+		return "", true, false
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return "", false, true
+	}
+	if value == "" {
+		return "", true, true
+	}
+	value, ok := safePostID(raw)
+	return value, ok, true
+}
+
+func optionalNonnegativeInteger(raw json.RawMessage) (int, bool, bool) {
+	if len(raw) == 0 {
+		return 0, true, false
+	}
+	value, ok := nonnegativeInteger(raw)
+	if !ok || value > int64(^uint(0)>>1) {
+		return 0, false, true
+	}
+	return int(value), true, true
 }
 
 func safePostID(raw json.RawMessage) (string, bool) {
 	value, ok := requiredString(raw)
-	if !ok || len(value) > maxPostIDLength {
+	if !ok || !isSafePostID(value) {
 		return "", false
+	}
+	return value, true
+}
+
+func isSafePostID(value string) bool {
+	if len(value) == 0 || len(value) > maxPostIDLength {
+		return false
 	}
 	for i := range len(value) {
 		c := value[i]
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
-			return "", false
+			return false
 		}
 	}
-	return value, true
+	return true
 }
 
 func nonnegativeInteger(raw json.RawMessage) (int64, bool) {
@@ -89,12 +129,23 @@ type OrderedPostsPage struct {
 	HasNext                   *bool
 	FirstInaccessiblePostTime *int64
 	Incomplete                bool
+	Continuation              *ThreadCursor
+	ThreadRootID              string
+	ThreadChannelID           string
+	ContainsRequestedPost     bool
 	bindings                  []postBinding
 }
 
+type ThreadCursor struct {
+	PostID   string
+	CreateAt int64
+}
+
 type postBinding struct {
-	ID        string
-	ChannelID string
+	ID               string
+	ChannelID        string
+	RootID           string
+	ThreadShapeKnown bool
 }
 
 func (p *OrderedPostsPage) UnmarshalJSON(data []byte) error {
@@ -132,7 +183,8 @@ func (p *OrderedPostsPage) UnmarshalJSON(data []byte) error {
 			result.Incomplete = true
 			continue
 		}
-		result.bindings = append(result.bindings, postBinding{ID: post.ID, ChannelID: post.ChannelID})
+		result.bindings = append(result.bindings, postBinding{ID: post.ID, ChannelID: post.ChannelID, RootID: post.RootID, ThreadShapeKnown: post.ThreadShapeKnown})
+		result.Continuation = &ThreadCursor{PostID: post.ID, CreateAt: post.CreateAt}
 		if post.DeleteAt == 0 {
 			result.Posts = append(result.Posts, post)
 		}
@@ -163,6 +215,12 @@ type ChannelPostsOptions struct {
 	Before  string
 }
 
+type ThreadPageOptions struct {
+	PerPage      int
+	FromPost     string
+	FromCreateAt *int64
+}
+
 type Posts struct{ client postTransport }
 
 func NewPosts(client postTransport) *Posts { return &Posts{client: client} }
@@ -187,6 +245,53 @@ func (s *Posts) ChannelPage(ctx context.Context, channelID string, options Chann
 		if binding.ChannelID != channelID {
 			return OrderedPostsPage{}, ErrInvalidPostsResponse
 		}
+	}
+	return page, nil
+}
+
+func (s *Posts) ThreadPage(ctx context.Context, postID string, options ThreadPageOptions) (OrderedPostsPage, error) {
+	if !isSafePostID(postID) || options.PerPage <= 0 || options.PerPage > MaxPostsPage ||
+		(options.FromPost != "" && !isSafePostID(options.FromPost)) ||
+		(options.FromCreateAt != nil && (*options.FromCreateAt <= 0 || *options.FromCreateAt > maxDateMilliseconds)) {
+		return OrderedPostsPage{}, ErrInvalidPostsRequest
+	}
+	params := []string{"perPage=" + strconv.Itoa(options.PerPage), "direction=down"}
+	if options.FromPost != "" {
+		params = append(params, "fromPost="+url.QueryEscape(options.FromPost))
+	}
+	if options.FromCreateAt != nil {
+		params = append(params, "fromCreateAt="+strconv.FormatInt(*options.FromCreateAt, 10))
+	}
+	var page OrderedPostsPage
+	path := "/posts/" + url.PathEscape(postID) + "/thread?" + strings.Join(params, "&")
+	if err := s.client.Get(ctx, path, &page); err != nil {
+		return OrderedPostsPage{}, err
+	}
+	for _, binding := range page.bindings {
+		if page.ThreadChannelID == "" {
+			page.ThreadChannelID = binding.ChannelID
+		} else if page.ThreadChannelID != binding.ChannelID {
+			return OrderedPostsPage{}, ErrInvalidPostsResponse
+		}
+		if binding.ID == postID {
+			page.ContainsRequestedPost = true
+		}
+		if !binding.ThreadShapeKnown {
+			page.Incomplete = true
+			continue
+		}
+		candidateRoot := binding.RootID
+		if candidateRoot == "" {
+			candidateRoot = binding.ID
+		}
+		if page.ThreadRootID == "" {
+			page.ThreadRootID = candidateRoot
+		} else if page.ThreadRootID != candidateRoot {
+			return OrderedPostsPage{}, ErrInvalidPostsResponse
+		}
+	}
+	if page.ThreadRootID == postID {
+		page.ContainsRequestedPost = true
 	}
 	return page, nil
 }

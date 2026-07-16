@@ -105,6 +105,63 @@ func TestChannelPageRejectsDeletedCrossChannelPost(t *testing.T) {
 	}
 }
 
+func TestThreadPageBuildsMattermostCursorAndChecksDeletedBindings(t *testing.T) {
+	var gotPath string
+	api := NewPosts(postTransportFunc(func(_ context.Context, path string, out any) error {
+		gotPath = path
+		return json.Unmarshal([]byte(`{"order":["root","gone"],"posts":{"root":{"id":"root","channel_id":"chan","message":"root","create_at":1,"delete_at":0,"root_id":"","reply_count":1},"gone":{"id":"gone","channel_id":"chan","message":"stale","create_at":2,"delete_at":3,"root_id":"other","reply_count":0}},"has_next":true}`), out)
+	}))
+	fromAt := int64(7)
+	_, err := api.ThreadPage(context.Background(), "root", ThreadPageOptions{PerPage: 200, FromPost: "cursor", FromCreateAt: &fromAt})
+	if !errors.Is(err, ErrInvalidPostsResponse) {
+		t.Fatalf("error = %v", err)
+	}
+	for _, part := range []string{"/posts/root/thread?", "direction=down", "fromCreateAt=7", "fromPost=cursor", "perPage=200"} {
+		if !strings.Contains(gotPath, part) {
+			t.Fatalf("path %q missing %q", gotPath, part)
+		}
+	}
+}
+
+func TestThreadPageContinuationUsesLastValidOrderedDeletedPost(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"order":["root","gone"],"posts":{"root":{"id":"root","channel_id":"chan","message":"root","create_at":1,"delete_at":0,"root_id":"","reply_count":1},"gone":{"id":"gone","channel_id":"chan","message":"stale","create_at":2,"delete_at":3,"root_id":"root","reply_count":0}},"has_next":true}`), out)
+	}))
+	page, err := api.ThreadPage(context.Background(), "root", ThreadPageOptions{PerPage: 200})
+	if err != nil || len(page.Posts) != 1 || page.Continuation == nil || page.Continuation.PostID != "gone" || page.Continuation.CreateAt != 2 {
+		t.Fatalf("page=%#v error=%v", page, err)
+	}
+}
+
+func TestThreadPageAcceptsReplyIDAndInfersCanonicalIdentity(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"order":["root","reply"],"posts":{"root":{"id":"root","channel_id":"chan","message":"root","create_at":1,"delete_at":0,"root_id":"","reply_count":1},"reply":{"id":"reply","channel_id":"chan","message":"reply","create_at":2,"delete_at":0,"root_id":"root","reply_count":0}},"has_next":false}`), out)
+	}))
+	page, err := api.ThreadPage(context.Background(), "reply", ThreadPageOptions{PerPage: 200})
+	if err != nil || page.ThreadRootID != "root" || page.ThreadChannelID != "chan" || !page.ContainsRequestedPost {
+		t.Fatalf("page=%#v error=%v", page, err)
+	}
+}
+
+func TestThreadPageRejectsCrossChannelCandidates(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"order":["root","reply"],"posts":{"root":{"id":"root","channel_id":"one","message":"root","create_at":1,"delete_at":0,"root_id":"","reply_count":1},"reply":{"id":"reply","channel_id":"two","message":"reply","create_at":2,"delete_at":3,"root_id":"root","reply_count":0}}}`), out)
+	}))
+	if _, err := api.ThreadPage(context.Background(), "root", ThreadPageOptions{PerPage: 200}); !errors.Is(err, ErrInvalidPostsResponse) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestThreadPageMarksMissingThreadShapeIncomplete(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"order":["root"],"posts":{"root":{"id":"root","channel_id":"chan","message":"root","create_at":1,"delete_at":0}},"has_next":false}`), out)
+	}))
+	page, err := api.ThreadPage(context.Background(), "root", ThreadPageOptions{PerPage: 200})
+	if err != nil || !page.Incomplete || page.Posts[0].ThreadShapeKnown {
+		t.Fatalf("page=%#v error=%v", page, err)
+	}
+}
+
 func TestPostRejectsValuesOutsideDeterministicDomain(t *testing.T) {
 	for _, payload := range []string{
 		`{"id":"nonascii-é","channel_id":"channel","message":"x","create_at":1,"delete_at":0}`,
