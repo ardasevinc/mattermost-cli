@@ -27,6 +27,8 @@ type Channel struct {
 	DisplayName   string
 	LastPostAt    int64
 	TotalMsgCount int64
+
+	totalMsgCountPresent bool
 }
 
 func (c *Channel) UnmarshalJSON(data []byte) error {
@@ -68,7 +70,10 @@ func (c *Channel) UnmarshalJSON(data []byte) error {
 			return ErrInvalidChannelResponse
 		}
 	}
-	*c = Channel{ID: id, TeamID: teamID, Type: typeCode, Name: name, DisplayName: displayName, LastPostAt: lastPostAt, TotalMsgCount: totalCount}
+	*c = Channel{
+		ID: id, TeamID: teamID, Type: typeCode, Name: name, DisplayName: displayName,
+		LastPostAt: lastPostAt, TotalMsgCount: totalCount, totalMsgCountPresent: len(raw.TotalCount) != 0,
+	}
 	return nil
 }
 
@@ -110,6 +115,55 @@ func (m *ChannelMember) UnmarshalJSON(data []byte) error {
 		return ErrInvalidChannelResponse
 	}
 	*m = ChannelMember{ChannelID: channelID, UserID: userID}
+	return nil
+}
+
+type UnreadMember struct {
+	ChannelID    string
+	UserID       string
+	MsgCount     int64
+	MentionCount int64
+	LastViewedAt int64
+}
+
+func (m *UnreadMember) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ChannelID json.RawMessage `json:"channel_id"`
+		UserID    json.RawMessage `json:"user_id"`
+		MsgCount  json.RawMessage `json:"msg_count"`
+		Mentions  json.RawMessage `json:"mention_count"`
+		ViewedAt  json.RawMessage `json:"last_viewed_at"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return ErrInvalidChannelResponse
+	}
+	channelID, channelOK := requiredString(raw.ChannelID)
+	userID, userOK := requiredString(raw.UserID)
+	msgCount, msgOK := requiredNonNegativeInt64(raw.MsgCount)
+	mentionCount, mentionOK := requiredNonNegativeInt64(raw.Mentions)
+	lastViewedAt, viewedOK := requiredNonNegativeInt64(raw.ViewedAt)
+	if !channelOK || !userOK || !msgOK || !mentionOK || !viewedOK {
+		return ErrInvalidChannelResponse
+	}
+	*m = UnreadMember{ChannelID: channelID, UserID: userID, MsgCount: msgCount, MentionCount: mentionCount, LastViewedAt: lastViewedAt}
+	return nil
+}
+
+func requiredNonNegativeInt64(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	return optionalNonNegativeInt64(raw)
+}
+
+type unreadMemberList []UnreadMember
+
+func (l *unreadMemberList) UnmarshalJSON(data []byte) error {
+	var members []UnreadMember
+	if err := json.Unmarshal(data, &members); err != nil || members == nil {
+		return ErrInvalidChannelsResponse
+	}
+	*l = members
 	return nil
 }
 
@@ -237,6 +291,52 @@ func (s *Channels) Member(ctx context.Context, channelID, userID string) (Channe
 	return member, nil
 }
 
+func (s *Channels) UnreadMember(ctx context.Context, channelID, userID string) (UnreadMember, error) {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(userID) == "" || userID == "me" {
+		return UnreadMember{}, ErrInvalidChannelRequest
+	}
+	var member UnreadMember
+	path := "/channels/" + url.PathEscape(channelID) + "/members/" + url.PathEscape(userID)
+	if err := s.client.Get(ctx, path, &member); err != nil {
+		return UnreadMember{}, err
+	}
+	if member.ChannelID != channelID || member.UserID != userID {
+		return UnreadMember{}, ErrInvalidChannelResponse
+	}
+	return member, nil
+}
+
+// TeamMembers returns the bounded, complete membership snapshot used for team
+// unread metrics. The endpoint is authoritative for the requested team, while
+// every returned row is still bound to the requested canonical user ID.
+func (s *Channels) TeamMembers(ctx context.Context, userID, teamID string) ([]UnreadMember, error) {
+	if !canonicalChannelRequestID(userID) || !canonicalChannelRequestID(teamID) || userID == "me" {
+		return nil, ErrInvalidChannelRequest
+	}
+	var decoded unreadMemberList
+	path := "/users/" + url.PathEscape(userID) + "/teams/" + url.PathEscape(teamID) + "/channels/members"
+	if err := s.client.Get(ctx, path, &decoded); err != nil {
+		return nil, err
+	}
+	members := []UnreadMember(decoded)
+	seen := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		if member.UserID != userID || !canonicalChannelRequestID(member.ChannelID) {
+			return nil, ErrInvalidChannelsResponse
+		}
+		if _, duplicate := seen[member.ChannelID]; duplicate {
+			return nil, ErrInvalidChannelsResponse
+		}
+		seen[member.ChannelID] = struct{}{}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].ChannelID < members[j].ChannelID })
+	return members, nil
+}
+
+func canonicalChannelRequestID(value string) bool {
+	return value != "" && value == strings.TrimSpace(value)
+}
+
 // List returns the authenticated user's channels with every identity binding
 // checked before any result is released. Team membership is fetched through
 // the same transport so proof cannot be mixed across sessions or servers.
@@ -287,6 +387,21 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
+}
+
+// ListForUnread preserves List's bounded identity proof while refusing to
+// interpret an absent total_msg_count as a provably empty unread state.
+func (s *Channels) ListForUnread(ctx context.Context, userID string) ([]Channel, error) {
+	channels, err := s.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, channel := range channels {
+		if !channel.totalMsgCountPresent {
+			return nil, ErrInvalidChannelsResponse
+		}
+	}
+	return channels, nil
 }
 
 // DirectList returns only current-user-bound D channels. It deliberately does

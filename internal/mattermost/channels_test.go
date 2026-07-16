@@ -159,6 +159,128 @@ func TestChannelListAndMemberRejectAlias(t *testing.T) {
 	}
 }
 
+func TestChannelMemberIsProofOnlyAndIgnoresMetricFields(t *testing.T) {
+	responses := map[string]string{
+		"/channels/channel/members/user": `{"channel_id":"channel","user_id":"user"}`,
+	}
+	got, err := NewChannels(&fakeChannelTransport{responses: responses}).Member(context.Background(), "channel", "user")
+	if err != nil || got.ChannelID != "channel" || got.UserID != "user" {
+		t.Fatalf("member = %+v, error = %v", got, err)
+	}
+	payload := `{"channel_id":"channel","user_id":"user","msg_count":-1,"mention_count":-1,"last_viewed_at":-1}`
+	f := &fakeChannelTransport{responses: map[string]string{"/channels/channel/members/user": payload}}
+	if _, err := NewChannels(f).Member(context.Background(), "channel", "user"); err != nil {
+		t.Fatalf("sanitized proof-only member error = %v", err)
+	}
+}
+
+func TestUnreadMemberRequiresCompleteStrictMetrics(t *testing.T) {
+	valid := `{"channel_id":"channel","user_id":"user","msg_count":1,"mention_count":2,"last_viewed_at":3}`
+	f := &fakeChannelTransport{responses: map[string]string{"/channels/channel/members/user": valid}}
+	got, err := NewChannels(f).UnreadMember(context.Background(), "channel", "user")
+	if err != nil || got.MsgCount != 1 || got.MentionCount != 2 || got.LastViewedAt != 3 {
+		t.Fatalf("member = %+v, error = %v", got, err)
+	}
+	for name, payload := range map[string]string{
+		"missing":  `{"channel_id":"channel","user_id":"user"}`,
+		"partial":  `{"channel_id":"channel","user_id":"user","msg_count":1}`,
+		"negative": `{"channel_id":"channel","user_id":"user","msg_count":-1,"mention_count":0,"last_viewed_at":0}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/channels/channel/members/user": payload}}
+			if _, err := NewChannels(f).UnreadMember(context.Background(), "channel", "user"); !errors.Is(err, ErrInvalidChannelResponse) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTeamMembersReturnsExactBoundedSortedSnapshot(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user%2Fone/teams/team%2Fone/channels/members": `[
+			{"channel_id":"z","user_id":"user/one","msg_count":4,"mention_count":2,"last_viewed_at":9},
+			{"channel_id":"a","user_id":"user/one","msg_count":1,"mention_count":0,"last_viewed_at":3}
+		]`,
+	}}
+	got, err := NewChannels(f).TeamMembers(context.Background(), "user/one", "team/one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ChannelID != "a" || got[1].ChannelID != "z" || got[1].MentionCount != 2 {
+		t.Fatalf("members = %+v", got)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user%2Fone/teams/team%2Fone/channels/members"}) {
+		t.Fatalf("paths = %v", f.paths)
+	}
+}
+
+func TestTeamMembersAcceptsEmptyCompleteSnapshot(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/teams/team/channels/members": `[]`,
+	}}
+	got, err := NewChannels(f).TeamMembers(context.Background(), "user", "team")
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("members = %#v, error = %v", got, err)
+	}
+}
+
+func TestTeamMembersRequiresCompleteBoundSnapshot(t *testing.T) {
+	tests := map[string]string{
+		"null list":            `null`,
+		"object":               `{}`,
+		"missing metric":       `[{"channel_id":"a","user_id":"user","msg_count":1,"mention_count":0}]`,
+		"foreign user":         `[{"channel_id":"a","user_id":"other","msg_count":1,"mention_count":0,"last_viewed_at":0}]`,
+		"noncanonical channel": `[{"channel_id":" a","user_id":"user","msg_count":1,"mention_count":0,"last_viewed_at":0}]`,
+		"duplicate channel":    `[{"channel_id":"a","user_id":"user","msg_count":1,"mention_count":0,"last_viewed_at":0},{"channel_id":"a","user_id":"user","msg_count":1,"mention_count":0,"last_viewed_at":0}]`,
+	}
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/teams/team/channels/members": payload}}
+			_, err := NewChannels(f).TeamMembers(context.Background(), "user", "team")
+			if !errors.Is(err, ErrInvalidChannelsResponse) {
+				t.Fatalf("error = %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "other") {
+				t.Fatalf("error reflected remote data: %v", err)
+			}
+		})
+	}
+}
+
+func TestTeamMembersRejectsNoncanonicalRequestsAndCancellation(t *testing.T) {
+	channels := NewChannels(&fakeChannelTransport{})
+	for _, ids := range [][2]string{{"", "team"}, {"me", "team"}, {" user", "team"}, {"user", "team "}} {
+		if _, err := channels.TeamMembers(context.Background(), ids[0], ids[1]); !errors.Is(err, ErrInvalidChannelRequest) {
+			t.Fatalf("ids=%q: error = %v", ids, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/teams/team/channels/members": `[]`}}
+	if _, err := NewChannels(f).TeamMembers(ctx, "user", "team"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(f.paths) != 0 {
+		t.Fatalf("canceled read reached transport: %v", f.paths)
+	}
+}
+
+func TestTeamMembersIsRaceSafe(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/teams/team/channels/members": `[{"channel_id":"a","user_id":"user","msg_count":1,"mention_count":0,"last_viewed_at":0}]`,
+	}}
+	channels := NewChannels(f)
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = channels.TeamMembers(context.Background(), "user", "team")
+		}()
+	}
+	wg.Wait()
+}
+
 func TestChannelReadsPropagateCancellationWithoutFanout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -181,6 +303,36 @@ func TestChannelListDoesNotRequireTeamsForDirectOnlyDiscovery(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
 		t.Fatalf("paths = %v", f.paths)
+	}
+}
+
+func TestListForUnreadRequiresPresentTotalsWithoutFanout(t *testing.T) {
+	for name, payload := range map[string]string{
+		"missing": `[{"id":"remote-secret","team_id":"","type":"D","name":"user__other","display_name":""}]`,
+		"present": `[{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":"","total_msg_count":0}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			got, err := NewChannels(f).ListForUnread(context.Background(), "user")
+			if name == "missing" {
+				if !errors.Is(err, ErrInvalidChannelsResponse) || strings.Contains(err.Error(), "remote-secret") {
+					t.Fatalf("channels = %#v, error = %v", got, err)
+				}
+			} else if err != nil || len(got) != 1 || got[0].TotalMsgCount != 0 {
+				t.Fatalf("channels = %#v, error = %v", got, err)
+			}
+			if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+				t.Fatalf("paths = %v", f.paths)
+			}
+		})
+	}
+}
+
+func TestListForUnreadAcceptsEmptyCompleteSnapshot(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[]`}}
+	got, err := NewChannels(f).ListForUnread(context.Background(), "user")
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("channels = %#v, error = %v", got, err)
 	}
 }
 
