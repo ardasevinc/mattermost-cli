@@ -234,6 +234,8 @@ Stage creation is online when remote identity or target resolution is required. 
 
 Revising a stage creates a new revision and marks older revisions superseded. Apply requires `<stage-id>@<revision>` and transactionally compare-and-swaps that exact current revision plus its semantic digest into an applying claim. Structured apply requests also carry the expected digest. Human `stage show` prints the exact apply reference. A concurrent revise produces a local conflict rather than applying unreviewed content. Concurrent processes cannot both ordinarily apply one revision.
 
+Only operations with mutable composition may be revised. Top-level posts and replies may replace body and attachments; post edits may replace body only. Delete, react, unreact, and conversation-resolution stages reject revision instead of creating meaningless no-op revisions.
+
 `stage list` and ordinary receipts omit message bodies and attachment contents. `stage show` is an explicit content-revealing operation and may display the staged body. Human output warns accordingly; machine output includes content only for that explicit command.
 
 ## 10. Attachment binding
@@ -284,6 +286,14 @@ Stage creation captures enough current remote state to make later drift visible:
 - react/unreact bind post/channel/emoji and current-user reaction state;
 - group creation binds a deduplicated canonical participant-ID set;
 - channel sends bind channel ID, type, team identity where applicable, and membership/access.
+
+The closed destination binding carries explicit nullable `postState` and `reactionPresent` fields. `postState` is present only for edit/delete and contains the exact author ID, positive Mattermost `update_at` millisecond value, and a lowercase SHA-256 content digest. `reactionPresent` is present only for react/unreact and records whether the authenticated user already has that exact emoji reaction. Every other operation emits these fields as `null`; absence is not used to mean unknown.
+
+The post content digest is SHA-256 over canonical UTF-8 JSON with the fixed field order `message`, `fileIds`, `rootId`, `type`. File IDs preserve the server's validated order because attachment order is user-visible. The timestamp remains separately bound so a change that returns to identical visible content is still drift. Arbitrary props, presentation metadata, and reactions are excluded from this digest.
+
+Reply staging accepts a live accessible root or reply. It binds the selected post ID and the canonical root ID; targeting a reply requires a fresh root read proving a live root with an empty `root_id` in the same channel. Reply and reaction staging may target any otherwise valid live accessible post. Edit and delete additionally require an ordinary user post (`type` empty) authored by the authenticated user. An edit whose desired body already equals the freshly revalidated current body completes as already satisfied without a write. A target deleted after staging is drift, not already satisfied.
+
+Reaction state comes from the authoritative fresh post-reactions endpoint, not cached or embedded post metadata. The response must be complete, exact-post-bound, duplicate-free, and contain only canonical user/post/emoji identities. Both present and absent states are therefore positive facts. React and unreact use conditional plans and complete without a write when revalidation shows the desired state already holds.
 
 Apply re-fetches relevant state. Changed, deleted, re-authored, moved, inaccessible, or ambiguously resolved targets fail closed. Already-satisfied reaction state succeeds without a write and is reported as such.
 
