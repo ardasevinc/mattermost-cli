@@ -54,7 +54,7 @@ func TestSchemaList(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr = %q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "mm/v2/error\n"; got != want {
+	if got, want := stdout.String(), "mm/v2/channel\nmm/v2/dms\nmm/v2/error\nmm/v2/group-dms\nmm/v2/mentions\nmm/v2/search\nmm/v2/thread\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
