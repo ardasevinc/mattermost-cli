@@ -182,6 +182,37 @@ func TestDirectListDedupesExactDirectChannelDuplicates(t *testing.T) {
 	}
 }
 
+func TestGroupListUsesCanonicalListingAsBoundedMembershipProof(t *testing.T) {
+	group := `{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew"}`
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels": `[{"type":"P"},{"type":"D"},` + group + `,` + group + `]`,
+	}}
+	got, err := NewChannels(f).GroupList(context.Background(), "user")
+	if err != nil || len(got) != 1 || got[0].ID != "group" {
+		t.Fatalf("channels=%#v err=%v", got, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+		t.Fatalf("paths=%v", f.paths)
+	}
+}
+
+func TestGroupListRejectsMalformedFocusedChannelsAndMembership(t *testing.T) {
+	for name, payload := range map[string]string{
+		"malformed group":       `[{"id":"group","team_id":"","type":"G","display_name":"Crew"}]`,
+		"conflicting duplicate": `[{"id":"group","team_id":"","type":"G","name":"one","display_name":""},{"id":"group","team_id":"","type":"G","name":"two","display_name":""}]`,
+		"foreign team binding":  `[{"id":"group","team_id":"foreign","type":"G","name":"one","display_name":""}]`,
+		"missing discriminator": `[{"id":"ignored"}]`,
+		"unknown discriminator": `[{"type":"X"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			if _, err := NewChannels(f).GroupList(context.Background(), "user"); err == nil {
+				t.Fatal("expected group-list validation error")
+			}
+		})
+	}
+}
+
 func TestChannelReadsAreRaceSafe(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
 		"/channels/x": `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General"}`,

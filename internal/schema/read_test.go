@@ -87,6 +87,73 @@ func TestReadSchemaRejectsInvalidThreadTimestamps(t *testing.T) {
 	}
 }
 
+func TestGroupDMsSchemaEnforcesCommandSpecificBindings(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := fs.ReadFile(publicschemas.FS, "v2/examples/group-dms.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(t *testing.T) map[string]any {
+		t.Helper()
+		var document map[string]any
+		if err := json.Unmarshal(valid, &document); err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	validateInvalid := func(t *testing.T, document map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Validate("mm/v2/group-dms", strings.NewReader(string(raw))); err == nil {
+			t.Fatalf("invalid group-DM document accepted: %s", raw)
+		}
+	}
+	history := func(document map[string]any) map[string]any {
+		return document["channels"].([]any)[0].(map[string]any)
+	}
+
+	for name, mutate := range map[string]func(map[string]any){
+		"non-group channel": func(document map[string]any) {
+			history(document)["channel"].(map[string]any)["type"] = "dm"
+		},
+		"resolved unknown channel": func(document map[string]any) {
+			channel := history(document)["channel"].(map[string]any)
+			channel["type"], channel["metadataStatus"] = "unknown", "resolved"
+		},
+		"unavailable group channel": func(document map[string]any) {
+			history(document)["channel"].(map[string]any)["metadataStatus"] = "unavailable"
+		},
+		"non-recent source": func(document map[string]any) {
+			history(document)["metadata"].(map[string]any)["selection"].(map[string]any)["source"] = "search"
+		},
+		"complete with true truncation": func(document map[string]any) {
+			history(document)["metadata"].(map[string]any)["selection"].(map[string]any)["queryTruncated"] = true
+		},
+		"truncated with false truncation": func(document map[string]any) {
+			metadata := history(document)["metadata"].(map[string]any)
+			metadata["completeness"] = "truncated"
+			metadata["selection"].(map[string]any)["queryTruncated"] = false
+		},
+		"unknown with boolean truncation": func(document map[string]any) {
+			metadata := history(document)["metadata"].(map[string]any)
+			metadata["completeness"] = "unknown"
+			metadata["selection"].(map[string]any)["queryTruncated"] = false
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			document := decode(t)
+			mutate(document)
+			validateInvalid(t, document)
+		})
+	}
+}
+
 func TestThreadSchemaEnforcesRootAndUnboundShape(t *testing.T) {
 	registry, err := Load()
 	if err != nil {

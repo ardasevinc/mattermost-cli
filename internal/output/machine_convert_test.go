@@ -300,6 +300,9 @@ func TestHistoryEnvelopeRejectsCompletenessThatContradictsQueryTruncation(t *tes
 	if _, err := output.NewDMSEnvelope(nil, output.MachineUnknown); err == nil {
 		t.Fatal("unknown empty direct-message envelope was accepted without metadata")
 	}
+	if _, err := output.NewGroupDMSEnvelope(nil, output.MachineUnknown); err == nil {
+		t.Fatal("unknown empty group direct-message envelope was accepted without metadata")
+	}
 	value := validOutput()
 	value.Retrieval.Selection.Source = "search"
 	truncated := true

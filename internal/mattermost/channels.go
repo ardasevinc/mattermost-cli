@@ -143,6 +143,38 @@ func (l *directChannelList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type groupChannelList []Channel
+
+func (l *groupChannelList) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
+		return ErrInvalidChannelsResponse
+	}
+	groups := make([]Channel, 0)
+	for _, item := range raw {
+		var discriminator struct {
+			Type json.RawMessage `json:"type"`
+		}
+		if json.Unmarshal(item, &discriminator) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		typeCode, ok := requiredString(discriminator.Type)
+		if !ok || (typeCode != "O" && typeCode != "P" && typeCode != "D" && typeCode != "G") {
+			return ErrInvalidChannelsResponse
+		}
+		if typeCode != "G" {
+			continue
+		}
+		var channel Channel
+		if json.Unmarshal(item, &channel) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		groups = append(groups, channel)
+	}
+	*l = groups
+	return nil
+}
+
 func (s *Channels) ByID(ctx context.Context, channelID string) (Channel, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return Channel{}, ErrInvalidChannelRequest
@@ -257,6 +289,36 @@ func (s *Channels) DirectList(ctx context.Context, userID string) ([]Channel, er
 		if !directChannelContains(channel.Name, userID) {
 			return nil, ErrInvalidChannelResponse
 		}
+		if previous, duplicate := seen[channel.ID]; duplicate {
+			if previous != channel {
+				return nil, ErrInvalidChannelsResponse
+			}
+			continue
+		}
+		seen[channel.ID] = channel
+		result = append(result, channel)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
+// GroupList returns only G channels from the canonical current-user channel
+// listing. That authenticated, same-session endpoint is itself the membership
+// proof for discovered channels; per-channel Member calls would turn one
+// bounded discovery read into unbounded fan-out. Explicit channel selection
+// still requires Member. Unrelated payloads are ignored after their channel
+// discriminator is validated.
+func (s *Channels) GroupList(ctx context.Context, userID string) ([]Channel, error) {
+	if strings.TrimSpace(userID) == "" || userID == "me" {
+		return nil, ErrInvalidChannelRequest
+	}
+	var decoded groupChannelList
+	if err := s.client.Get(ctx, "/users/"+url.PathEscape(userID)+"/channels", &decoded); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]Channel)
+	result := make([]Channel, 0)
+	for _, channel := range []Channel(decoded) {
 		if previous, duplicate := seen[channel.ID]; duplicate {
 			if previous != channel {
 				return nil, ErrInvalidChannelsResponse

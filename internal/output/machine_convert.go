@@ -118,6 +118,9 @@ func NewDMSEnvelope(values []MessageOutput, completeness MachineCompleteness) (D
 }
 
 func NewGroupDMSEnvelope(values []MessageOutput, completeness MachineCompleteness) (GroupDMSEnvelope, error) {
+	if len(values) == 0 && completeness != MachineComplete {
+		return GroupDMSEnvelope{}, fmt.Errorf("empty group direct-message output requires confirmed completeness")
+	}
 	histories, err := machineHistories(values, completeness, "recent", "group", "unknown")
 	return GroupDMSEnvelope{Schema: "mm/v2/group-dms", Channels: histories}, err
 }
