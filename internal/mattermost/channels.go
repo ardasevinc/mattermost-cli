@@ -491,6 +491,44 @@ func (s *Channels) DirectList(ctx context.Context, userID string) ([]Channel, er
 	return result, nil
 }
 
+// ExistingDirect finds the unique existing D channel for the exact current
+// user and peer pair. DirectList is the canonical, read-only membership proof;
+// absence is distinct from an invalid or ambiguous response.
+func (s *Channels) ExistingDirect(ctx context.Context, currentUserID, peerID string) (Channel, bool, error) {
+	if !canonicalChannelRequestID(currentUserID) || !canonicalChannelRequestID(peerID) || currentUserID == "me" || peerID == "me" {
+		return Channel{}, false, ErrInvalidChannelRequest
+	}
+	var decoded directChannelList
+	if err := s.client.Get(ctx, "/users/"+url.PathEscape(currentUserID)+"/channels", &decoded); err != nil {
+		return Channel{}, false, err
+	}
+	wantedForward := currentUserID + "__" + peerID
+	wantedReverse := peerID + "__" + currentUserID
+	seen := make(map[string]Channel)
+	var match Channel
+	found := false
+	for _, channel := range []Channel(decoded) {
+		if !directChannelContains(channel.Name, currentUserID) {
+			return Channel{}, false, ErrInvalidChannelResponse
+		}
+		if previous, duplicate := seen[channel.ID]; duplicate && previous != channel {
+			return Channel{}, false, ErrInvalidChannelsResponse
+		}
+		seen[channel.ID] = channel
+		if channel.Name != wantedForward && channel.Name != wantedReverse {
+			continue
+		}
+		if !canonicalChannelRequestID(channel.ID) {
+			return Channel{}, false, ErrInvalidChannelsResponse
+		}
+		if found {
+			return Channel{}, false, ErrInvalidChannelsResponse
+		}
+		match, found = channel, true
+	}
+	return match, found, nil
+}
+
 // GroupList returns only G channels from the canonical current-user channel
 // listing. That authenticated, same-session endpoint is itself the membership
 // proof for discovered channels; per-channel Member calls would turn one

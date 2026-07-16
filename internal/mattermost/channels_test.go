@@ -435,6 +435,65 @@ func TestDirectListDedupesExactDirectChannelDuplicates(t *testing.T) {
 	}
 }
 
+func TestExistingDirectFindsExactPairInEitherOrder(t *testing.T) {
+	for _, name := range []string{"user__peer", "peer__user"} {
+		t.Run(name, func(t *testing.T) {
+			payload := `[{"id":"other","team_id":"","type":"D","name":"user__someone","display_name":""},{"id":"wanted","team_id":"","type":"D","name":"` + name + `","display_name":""}]`
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			got, found, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer")
+			if err != nil || !found || got.ID != "wanted" {
+				t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+			}
+			if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+				t.Fatalf("paths=%v", f.paths)
+			}
+		})
+	}
+}
+
+func TestExistingDirectReturnsCleanNone(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[{"id":"other","team_id":"","type":"D","name":"user__someone","display_name":""}]`}}
+	got, found, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer")
+	if err != nil || found || got != (Channel{}) {
+		t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+	}
+}
+
+func TestExistingDirectPreservesCanonicalSelfDM(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[{"id":"self","team_id":"","type":"D","name":"user__user","display_name":""}]`}}
+	got, found, err := NewChannels(f).ExistingDirect(context.Background(), "user", "user")
+	if err != nil || !found || got.ID != "self" {
+		t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+	}
+}
+
+func TestExistingDirectRejectsNonCanonicalMatchingChannelID(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[{"id":" bad ","team_id":"","type":"D","name":"user__peer","display_name":""}]`}}
+	if _, _, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer"); !errors.Is(err, ErrInvalidChannelsResponse) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExistingDirectRejectsSelfInvalidAndDuplicateMatches(t *testing.T) {
+	for _, ids := range [][2]string{{"me", "peer"}, {"user", "me"}, {" user", "peer"}, {"user", ""}} {
+		f := &fakeChannelTransport{responses: map[string]string{}}
+		if _, _, err := NewChannels(f).ExistingDirect(context.Background(), ids[0], ids[1]); !errors.Is(err, ErrInvalidChannelRequest) || len(f.paths) != 0 {
+			t.Fatalf("ids=%q error=%v paths=%v", ids, err, f.paths)
+		}
+	}
+	for name, payload := range map[string]string{
+		"identical row": `[{"id":"one","team_id":"","type":"D","name":"user__peer","display_name":""},{"id":"one","team_id":"","type":"D","name":"user__peer","display_name":""}]`,
+		"distinct IDs":  `[{"id":"one","team_id":"","type":"D","name":"user__peer","display_name":""},{"id":"two","team_id":"","type":"D","name":"peer__user","display_name":""}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			if _, _, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer"); !errors.Is(err, ErrInvalidChannelsResponse) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
 func TestGroupListUsesCanonicalListingAsBoundedMembershipProof(t *testing.T) {
 	group := `{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew","last_post_at":0,"total_msg_count":0}`
 	f := &fakeChannelTransport{responses: map[string]string{
@@ -468,13 +527,15 @@ func TestGroupListRejectsMalformedFocusedChannelsAndMembership(t *testing.T) {
 
 func TestChannelReadsAreRaceSafe(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
-		"/channels/x": `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":0,"total_msg_count":0}`,
+		"/channels/x":          `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":0,"total_msg_count":0}`,
+		"/users/user/channels": `[{"id":"dm","team_id":"","type":"D","name":"user__peer","display_name":""}]`,
 	}}
 	channels := NewChannels(f)
 	var wg sync.WaitGroup
 	for range 40 {
-		wg.Add(1)
+		wg.Add(2)
 		go func() { defer wg.Done(); _, _ = channels.ByID(context.Background(), "x") }()
+		go func() { defer wg.Done(); _, _, _ = channels.ExistingDirect(context.Background(), "user", "peer") }()
 	}
 	wg.Wait()
 }

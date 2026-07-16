@@ -579,6 +579,60 @@ type Posts struct{ client postTransport }
 
 func NewPosts(client postTransport) *Posts { return &Posts{client: client} }
 
+type canonicalSinglePost struct{ Post Post }
+
+func (p *canonicalSinglePost) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID        json.RawMessage `json:"id"`
+		ChannelID json.RawMessage `json:"channel_id"`
+		UserID    json.RawMessage `json:"user_id"`
+		Message   json.RawMessage `json:"message"`
+		CreateAt  json.RawMessage `json:"create_at"`
+		UpdateAt  json.RawMessage `json:"update_at"`
+		DeleteAt  json.RawMessage `json:"delete_at"`
+		RootID    json.RawMessage `json:"root_id"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return ErrInvalidPostResponse
+	}
+	_, idOK := safePostID(raw.ID)
+	_, channelOK := safePostID(raw.ChannelID)
+	_, userOK := safePostID(raw.UserID)
+	_, messageOK := strictString(raw.Message)
+	createAt, createOK := nonnegativeInteger(raw.CreateAt)
+	updateAt, updateOK := nonnegativeInteger(raw.UpdateAt)
+	deleteAt, deleteOK := nonnegativeInteger(raw.DeleteAt)
+	rootID, rootOK := strictString(raw.RootID)
+	rootShapeOK := rootOK && (rootID == "" || isSafePostID(rootID))
+	if !idOK || !channelOK || !userOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds ||
+		!updateOK || updateAt == 0 || updateAt > maxDateMilliseconds || !deleteOK || deleteAt != 0 || !rootShapeOK {
+		return ErrInvalidPostResponse
+	}
+	var post Post
+	if json.Unmarshal(data, &post) != nil {
+		return ErrInvalidPostResponse
+	}
+	p.Post = post
+	return nil
+}
+
+// ByID returns one exact, live post. The response must carry the canonical
+// identity fields needed to bind later operations to the requested post.
+func (s *Posts) ByID(ctx context.Context, postID string) (Post, error) {
+	if !isSafePostID(postID) {
+		return Post{}, ErrInvalidPostsRequest
+	}
+	var decoded canonicalSinglePost
+	if err := s.client.Get(ctx, "/posts/"+url.PathEscape(postID), &decoded); err != nil {
+		return Post{}, err
+	}
+	post := decoded.Post
+	if post.ID != postID {
+		return Post{}, ErrInvalidPostResponse
+	}
+	return post, nil
+}
+
 func (s *Posts) SearchPage(ctx context.Context, teamID string, options SearchPageOptions) (SearchPage, error) {
 	if strings.TrimSpace(teamID) == "" || strings.TrimSpace(options.Terms) == "" || options.Page < 0 || options.PerPage <= 0 || options.PerPage > MaxSearchPage {
 		return SearchPage{}, ErrInvalidPostsRequest

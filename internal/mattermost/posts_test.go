@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -26,6 +27,89 @@ func (f searchTransportFunc) Get(context.Context, string, any) error {
 }
 func (f searchTransportFunc) PostRead(ctx context.Context, path string, body, out any) error {
 	return f(ctx, path, body, out)
+}
+
+func TestPostByIDBuildsExactGETAndRequiresCanonicalLivePost(t *testing.T) {
+	var gotPath string
+	api := NewPosts(postTransportFunc(func(_ context.Context, path string, out any) error {
+		gotPath = path
+		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`), out)
+	}))
+	post, err := api.ByID(context.Background(), "post")
+	if err != nil || post.ID != "post" || post.ChannelID != "channel" || post.UserID != "author" {
+		t.Fatalf("post=%#v error=%v", post, err)
+	}
+	if gotPath != "/posts/post" {
+		t.Fatalf("path=%q", gotPath)
+	}
+}
+
+func TestPostByIDRejectsInvalidRequestMismatchMalformedAndDeleted(t *testing.T) {
+	for _, id := range []string{"", " post", "post ", "slash/id", "nonascii-é"} {
+		called := false
+		api := NewPosts(postTransportFunc(func(context.Context, string, any) error { called = true; return nil }))
+		if _, err := api.ByID(context.Background(), id); !errors.Is(err, ErrInvalidPostsRequest) || called {
+			t.Fatalf("id=%q error=%v called=%v", id, err, called)
+		}
+	}
+	for name, payload := range map[string]string{
+		"mismatch":           `{"id":"other","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`,
+		"malformed":          `{"id":"post","channel_id":"channel","user_id":"author","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`,
+		"missing author":     `{"id":"post","channel_id":"channel","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`,
+		"missing update":     `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"delete_at":0,"root_id":""}`,
+		"oversized update":   `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":8640000000000001,"delete_at":0,"root_id":""}`,
+		"whitespace channel": `{"id":"post","channel_id":" channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`,
+		"whitespace author":  `{"id":"post","channel_id":"channel","user_id":"author ","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`,
+		"missing root":       `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0}`,
+		"wrong-type root":    `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":7}`,
+		"unsafe root":        `{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"bad/root"}`,
+		"deleted":            `{"id":"post","channel_id":"channel","user_id":"author","message":"stale","create_at":1,"update_at":1,"delete_at":2,"root_id":""}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+				return json.Unmarshal([]byte(payload), out)
+			}))
+			if _, err := api.ByID(context.Background(), "post"); !errors.Is(err, ErrInvalidPostResponse) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestPostByIDPropagatesCancellationAndTransportErrors(t *testing.T) {
+	sentinel := errors.New("transport failed")
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, _ any) error { return sentinel }))
+	if _, err := api.ByID(context.Background(), "post"); !errors.Is(err, sentinel) {
+		t.Fatalf("error=%v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	api = NewPosts(postTransportFunc(func(ctx context.Context, _ string, _ any) error { return ctx.Err() }))
+	if _, err := api.ByID(ctx, "post"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestPostByIDAcceptsCanonicalReplyRoot(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"id":"reply","channel_id":"channel","user_id":"author","message":"hello","create_at":2,"update_at":2,"delete_at":0,"root_id":"root"}`), out)
+	}))
+	post, err := api.ByID(context.Background(), "reply")
+	if err != nil || post.RootID != "root" {
+		t.Fatalf("post=%#v error=%v", post, err)
+	}
+}
+
+func TestPostByIDIsRaceSafe(t *testing.T) {
+	api := NewPosts(postTransportFunc(func(_ context.Context, _ string, out any) error {
+		return json.Unmarshal([]byte(`{"id":"post","channel_id":"channel","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":""}`), out)
+	}))
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = api.ByID(context.Background(), "post") }()
+	}
+	wg.Wait()
 }
 
 func TestOrderedPostsPageNormalizesAndSuppressesDeleted(t *testing.T) {
