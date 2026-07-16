@@ -20,11 +20,13 @@ type channelTransport interface {
 }
 
 type Channel struct {
-	ID          string
-	TeamID      string
-	Type        string
-	Name        string
-	DisplayName string
+	ID            string
+	TeamID        string
+	Type          string
+	Name          string
+	DisplayName   string
+	LastPostAt    int64
+	TotalMsgCount int64
 }
 
 func (c *Channel) UnmarshalJSON(data []byte) error {
@@ -34,6 +36,8 @@ func (c *Channel) UnmarshalJSON(data []byte) error {
 		Type        json.RawMessage `json:"type"`
 		Name        json.RawMessage `json:"name"`
 		DisplayName json.RawMessage `json:"display_name"`
+		LastPostAt  json.RawMessage `json:"last_post_at"`
+		TotalCount  json.RawMessage `json:"total_msg_count"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return ErrInvalidChannelResponse
@@ -43,7 +47,9 @@ func (c *Channel) UnmarshalJSON(data []byte) error {
 	name, nameOK := requiredString(raw.Name)
 	teamID, teamOK := strictString(raw.TeamID)
 	displayName, displayOK := strictString(raw.DisplayName)
-	if !idOK || !typeOK || !nameOK || !teamOK || !displayOK {
+	lastPostAt, lastPostOK := optionalNonNegativeInt64(raw.LastPostAt)
+	totalCount, totalCountOK := optionalNonNegativeInt64(raw.TotalCount)
+	if !idOK || !typeOK || !nameOK || !teamOK || !displayOK || !lastPostOK || !totalCountOK {
 		return ErrInvalidChannelResponse
 	}
 	if typeCode != "O" && typeCode != "P" && typeCode != "D" && typeCode != "G" {
@@ -62,8 +68,19 @@ func (c *Channel) UnmarshalJSON(data []byte) error {
 			return ErrInvalidChannelResponse
 		}
 	}
-	*c = Channel{ID: id, TeamID: teamID, Type: typeCode, Name: name, DisplayName: displayName}
+	*c = Channel{ID: id, TeamID: teamID, Type: typeCode, Name: name, DisplayName: displayName, LastPostAt: lastPostAt, TotalMsgCount: totalCount}
 	return nil
+}
+
+func optionalNonNegativeInt64(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 {
+		return 0, true
+	}
+	var value int64
+	if string(raw) == "null" || json.Unmarshal(raw, &value) != nil || value < 0 {
+		return 0, false
+	}
+	return value, true
 }
 
 func strictString(raw json.RawMessage) (string, bool) {
@@ -253,6 +270,9 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 			continue
 		}
 		seen[channel.ID] = channel
+		// The canonical current-user listing is the bounded membership proof
+		// for discovered G channels, as it is in GroupList. Explicit group
+		// reads continue to prove membership through Member.
 		switch channel.Type {
 		case "O", "P":
 			if !membership.contains(channel.TeamID) {
@@ -261,10 +281,6 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 		case "D":
 			if !directChannelContains(channel.Name, userID) {
 				return nil, ErrInvalidChannelResponse
-			}
-		case "G":
-			if _, err := s.Member(ctx, channel.ID, userID); err != nil {
-				return nil, err
 			}
 		}
 		result = append(result, channel)

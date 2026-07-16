@@ -60,12 +60,11 @@ func (t *Team) UnmarshalJSON(data []byte) error {
 	}
 	id, idOK := requiredString(raw.ID)
 	name, nameOK := requiredString(raw.Name)
-	displayName, displayOK := strictString(raw.DisplayName)
 	typeCode, typeOK := requiredString(raw.Type)
-	if !idOK || !nameOK || !displayOK || !typeOK || (typeCode != "O" && typeCode != "I") {
+	if !idOK || !nameOK || !typeOK || (typeCode != "O" && typeCode != "I") {
 		return ErrInvalidTeamResponse
 	}
-	*t = Team{ID: id, Name: name, DisplayName: displayName, Type: typeCode}
+	*t = Team{ID: id, Name: name, DisplayName: optionalString(raw.DisplayName), Type: typeCode}
 	return nil
 }
 

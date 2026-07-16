@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -15,7 +16,10 @@ type fakeChannelTransport struct {
 	paths     []string
 }
 
-func (f *fakeChannelTransport) Get(_ context.Context, path string, out any) error {
+func (f *fakeChannelTransport) Get(ctx context.Context, path string, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.paths = append(f.paths, path)
@@ -26,10 +30,42 @@ func (f *fakeChannelTransport) Get(_ context.Context, path string, out any) erro
 	return json.Unmarshal([]byte(payload), out)
 }
 
+func TestChannelMetadataRequiresExactBoundedJSONIntegers(t *testing.T) {
+	valid := `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":9223372036854775807,"total_msg_count":0}`
+	got, err := NewChannels(&fakeChannelTransport{responses: map[string]string{"/channels/x": valid}}).ByID(context.Background(), "x")
+	if err != nil || got.LastPostAt != int64(9223372036854775807) || got.TotalMsgCount != 0 {
+		t.Fatalf("channel = %+v, error = %v", got, err)
+	}
+
+	badValues := []string{`null`, `"1"`, `1.5`, `1e3`, `-1`, `9223372036854775808`}
+	for _, field := range []string{"last_post_at", "total_msg_count"} {
+		for _, value := range badValues {
+			payload := `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":0,"total_msg_count":0}`
+			if field == "last_post_at" {
+				payload = strings.Replace(payload, `"last_post_at":0`, `"last_post_at":`+value, 1)
+			} else {
+				payload = strings.Replace(payload, `"total_msg_count":0`, `"total_msg_count":`+value, 1)
+			}
+			f := &fakeChannelTransport{responses: map[string]string{"/channels/x": payload}}
+			if _, err := NewChannels(f).ByID(context.Background(), "x"); !errors.Is(err, ErrInvalidChannelResponse) {
+				t.Fatalf("%s=%s: error = %v", field, value, err)
+			}
+		}
+	}
+}
+
+func TestChannelMetadataDefaultsOnlyWhenAbsent(t *testing.T) {
+	payload := `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General"}`
+	got, err := NewChannels(&fakeChannelTransport{responses: map[string]string{"/channels/x": payload}}).ByID(context.Background(), "x")
+	if err != nil || got.LastPostAt != 0 || got.TotalMsgCount != 0 {
+		t.Fatalf("channel = %+v, error = %v", got, err)
+	}
+}
+
 func TestChannelLookupsEncodeAndRequireExactIdentity(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
-		"/channels/channel%2Fone":                        `{"id":"channel/one","team_id":"team/one","type":"P","name":"release/name","display_name":"Release"}`,
-		"/teams/team%2Fone/channels/name/release%2Fname": `{"id":"channel/one","team_id":"team/one","type":"P","name":"release/name","display_name":"Release"}`,
+		"/channels/channel%2Fone":                        `{"id":"channel/one","team_id":"team/one","type":"P","name":"release/name","display_name":"Release","last_post_at":7,"total_msg_count":8}`,
+		"/teams/team%2Fone/channels/name/release%2Fname": `{"id":"channel/one","team_id":"team/one","type":"P","name":"release/name","display_name":"Release","last_post_at":7,"total_msg_count":8}`,
 	}}
 	channels := NewChannels(f)
 	if _, err := channels.ByID(context.Background(), "channel/one"); err != nil {
@@ -45,12 +81,12 @@ func TestChannelLookupsEncodeAndRequireExactIdentity(t *testing.T) {
 
 func TestChannelDecodingFailsClosedForRequiredShape(t *testing.T) {
 	bad := []string{
-		`null`, `{}`, `{"id":"remote-secret","team_id":"","type":"X","name":"x","display_name":""}`,
-		`{"id":"x","team_id":"","type":"O","name":"x","display_name":""}`,
-		`{"id":"x","team_id":"team","type":"G","name":"x","display_name":""}`,
-		`{"id":"x","team_id":" ","type":"G","name":"x","display_name":""}`,
-		`{"id":"x","team_id":" ","type":"D","name":"a__b","display_name":""}`,
-		`{"id":"x","team_id":"","type":"D","name":"alice","display_name":""}`,
+		`null`, `{}`, `{"id":"remote-secret","team_id":"","type":"X","name":"x","display_name":"","last_post_at":0,"total_msg_count":0}`,
+		`{"id":"x","team_id":"","type":"O","name":"x","display_name":"","last_post_at":0,"total_msg_count":0}`,
+		`{"id":"x","team_id":"team","type":"G","name":"x","display_name":"","last_post_at":0,"total_msg_count":0}`,
+		`{"id":"x","team_id":" ","type":"G","name":"x","display_name":"","last_post_at":0,"total_msg_count":0}`,
+		`{"id":"x","team_id":" ","type":"D","name":"a__b","display_name":"","last_post_at":0,"total_msg_count":0}`,
+		`{"id":"x","team_id":"","type":"D","name":"alice","display_name":"","last_post_at":0,"total_msg_count":0}`,
 	}
 	for _, payload := range bad {
 		f := &fakeChannelTransport{responses: map[string]string{"/channels/x": payload}}
@@ -68,12 +104,11 @@ func TestChannelListBindsTeamsAndDirectAndGroupParticipants(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
 		"/users/user/teams": `[{"id":"team","name":"core","display_name":"Core","type":"O"}]`,
 		"/users/user/channels": `[
-			{"id":"public","team_id":"team","type":"O","name":"general","display_name":"General"},
-			{"id":"dm","team_id":"","type":"D","name":"user__alice","display_name":""},
-			{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew"},
-			{"id":"public","team_id":"team","type":"O","name":"general","display_name":"General"}
+			{"id":"public","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":11,"total_msg_count":12},
+			{"id":"dm","team_id":"","type":"D","name":"user__alice","display_name":"","last_post_at":0,"total_msg_count":0},
+			{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew","last_post_at":1,"total_msg_count":2},
+			{"id":"public","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":11,"total_msg_count":12}
 		]`,
-		"/channels/group/members/user": `{"channel_id":"group","user_id":"user","roles":"channel_user"}`,
 	}}
 	got, err := NewChannels(f).List(context.Background(), "user")
 	if err != nil {
@@ -81,6 +116,12 @@ func TestChannelListBindsTeamsAndDirectAndGroupParticipants(t *testing.T) {
 	}
 	if ids := []string{got[0].ID, got[1].ID, got[2].ID}; !reflect.DeepEqual(ids, []string{"dm", "group", "public"}) {
 		t.Fatalf("IDs = %v", ids)
+	}
+	if got[2].LastPostAt != 11 || got[2].TotalMsgCount != 12 {
+		t.Fatalf("channel metadata was not preserved: %+v", got[2])
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels", "/users/user/teams"}) {
+		t.Fatalf("account-wide discovery fanned out: %v", f.paths)
 	}
 	for _, path := range f.paths {
 		if path == "/channels/direct" {
@@ -91,9 +132,9 @@ func TestChannelListBindsTeamsAndDirectAndGroupParticipants(t *testing.T) {
 
 func TestChannelListRejectsIncompleteBindings(t *testing.T) {
 	for name, payload := range map[string]string{
-		"foreign team":               `[{"id":"x","team_id":"other","type":"P","name":"private","display_name":""}]`,
-		"foreign direct participant": `[{"id":"x","team_id":"","type":"D","name":"alice__bob","display_name":""}]`,
-		"conflicting duplicate":      `[{"id":"x","team_id":"team","type":"O","name":"one","display_name":""},{"id":"x","team_id":"team","type":"O","name":"two","display_name":""}]`,
+		"foreign team":               `[{"id":"x","team_id":"other","type":"P","name":"private","display_name":"","last_post_at":0,"total_msg_count":0}]`,
+		"foreign direct participant": `[{"id":"x","team_id":"","type":"D","name":"alice__bob","display_name":"","last_post_at":0,"total_msg_count":0}]`,
+		"conflicting duplicate":      `[{"id":"x","team_id":"team","type":"O","name":"one","display_name":"","last_post_at":0,"total_msg_count":0},{"id":"x","team_id":"team","type":"O","name":"two","display_name":"","last_post_at":0,"total_msg_count":0}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeChannelTransport{responses: map[string]string{
@@ -105,13 +146,6 @@ func TestChannelListRejectsIncompleteBindings(t *testing.T) {
 				t.Fatal("expected binding error")
 			}
 		})
-	}
-	f := &fakeChannelTransport{responses: map[string]string{
-		"/users/user/channels":         `[{"id":"group","team_id":"","type":"G","name":"opaque","display_name":""}]`,
-		"/channels/group/members/user": `{"channel_id":"other","user_id":"user"}`,
-	}}
-	if _, err := NewChannels(f).List(context.Background(), "user"); !errors.Is(err, ErrInvalidChannelResponse) {
-		t.Fatalf("group binding error = %v", err)
 	}
 }
 
@@ -125,9 +159,21 @@ func TestChannelListAndMemberRejectAlias(t *testing.T) {
 	}
 }
 
+func TestChannelReadsPropagateCancellationWithoutFanout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[]`}}
+	if _, err := NewChannels(f).List(ctx, "user"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("List error = %v", err)
+	}
+	if len(f.paths) != 0 {
+		t.Fatalf("canceled read reached transport paths: %v", f.paths)
+	}
+}
+
 func TestChannelListDoesNotRequireTeamsForDirectOnlyDiscovery(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
-		"/users/user/channels": `[{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}]`,
+		"/users/user/channels": `[{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":"","last_post_at":0,"total_msg_count":0}]`,
 	}}
 	got, err := NewChannels(f).List(context.Background(), "user")
 	if err != nil || len(got) != 1 || got[0].ID != "dm" {
@@ -143,7 +189,7 @@ func TestDirectListIgnoresUnrelatedTeamAndGroupBindings(t *testing.T) {
 		"/users/user/channels": `[
 			{"type":"P"},
 			{"type":"G"},
-			{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}
+			{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":"","last_post_at":0,"total_msg_count":0}
 		]`,
 	}}
 	got, err := NewChannels(f).DirectList(context.Background(), "user")
@@ -158,8 +204,8 @@ func TestDirectListIgnoresUnrelatedTeamAndGroupBindings(t *testing.T) {
 func TestDirectListRejectsMalformedOrUnboundDirectChannels(t *testing.T) {
 	tests := map[string]string{
 		"malformed direct identity": `[{"id":"dm","team_id":"","type":"D","display_name":""}]`,
-		"foreign direct identity":   `[{"id":"dm","team_id":"","type":"D","name":"alice__bob","display_name":""}]`,
-		"conflicting duplicate":     `[{"id":"dm","team_id":"","type":"D","name":"user__alice","display_name":""},{"id":"dm","team_id":"","type":"D","name":"user__bob","display_name":""}]`,
+		"foreign direct identity":   `[{"id":"dm","team_id":"","type":"D","name":"alice__bob","display_name":"","last_post_at":0,"total_msg_count":0}]`,
+		"conflicting duplicate":     `[{"id":"dm","team_id":"","type":"D","name":"user__alice","display_name":"","last_post_at":0,"total_msg_count":0},{"id":"dm","team_id":"","type":"D","name":"user__bob","display_name":"","last_post_at":0,"total_msg_count":0}]`,
 		"missing discriminator":     `[{"id":"dm"}]`,
 		"unknown discriminator":     `[{"type":"X"}]`,
 	}
@@ -174,7 +220,7 @@ func TestDirectListRejectsMalformedOrUnboundDirectChannels(t *testing.T) {
 }
 
 func TestDirectListDedupesExactDirectChannelDuplicates(t *testing.T) {
-	channel := `{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}`
+	channel := `{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":"","last_post_at":0,"total_msg_count":0}`
 	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[` + channel + `,` + channel + `]`}}
 	got, err := NewChannels(f).DirectList(context.Background(), "user")
 	if err != nil || len(got) != 1 || got[0].ID != "dm" {
@@ -183,7 +229,7 @@ func TestDirectListDedupesExactDirectChannelDuplicates(t *testing.T) {
 }
 
 func TestGroupListUsesCanonicalListingAsBoundedMembershipProof(t *testing.T) {
-	group := `{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew"}`
+	group := `{"id":"group","team_id":"","type":"G","name":"opaque","display_name":"Crew","last_post_at":0,"total_msg_count":0}`
 	f := &fakeChannelTransport{responses: map[string]string{
 		"/users/user/channels": `[{"type":"P"},{"type":"D"},` + group + `,` + group + `]`,
 	}}
@@ -199,8 +245,8 @@ func TestGroupListUsesCanonicalListingAsBoundedMembershipProof(t *testing.T) {
 func TestGroupListRejectsMalformedFocusedChannelsAndMembership(t *testing.T) {
 	for name, payload := range map[string]string{
 		"malformed group":       `[{"id":"group","team_id":"","type":"G","display_name":"Crew"}]`,
-		"conflicting duplicate": `[{"id":"group","team_id":"","type":"G","name":"one","display_name":""},{"id":"group","team_id":"","type":"G","name":"two","display_name":""}]`,
-		"foreign team binding":  `[{"id":"group","team_id":"foreign","type":"G","name":"one","display_name":""}]`,
+		"conflicting duplicate": `[{"id":"group","team_id":"","type":"G","name":"one","display_name":"","last_post_at":0,"total_msg_count":0},{"id":"group","team_id":"","type":"G","name":"two","display_name":"","last_post_at":0,"total_msg_count":0}]`,
+		"foreign team binding":  `[{"id":"group","team_id":"foreign","type":"G","name":"one","display_name":"","last_post_at":0,"total_msg_count":0}]`,
 		"missing discriminator": `[{"id":"ignored"}]`,
 		"unknown discriminator": `[{"type":"X"}]`,
 	} {
@@ -215,7 +261,7 @@ func TestGroupListRejectsMalformedFocusedChannelsAndMembership(t *testing.T) {
 
 func TestChannelReadsAreRaceSafe(t *testing.T) {
 	f := &fakeChannelTransport{responses: map[string]string{
-		"/channels/x": `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General"}`,
+		"/channels/x": `{"id":"x","team_id":"team","type":"O","name":"general","display_name":"General","last_post_at":0,"total_msg_count":0}`,
 	}}
 	channels := NewChannels(f)
 	var wg sync.WaitGroup

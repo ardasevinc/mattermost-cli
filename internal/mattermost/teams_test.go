@@ -15,7 +15,10 @@ type fakeTeamTransport struct {
 	paths   []string
 }
 
-func (f *fakeTeamTransport) Get(_ context.Context, path string, out any) error {
+func (f *fakeTeamTransport) Get(ctx context.Context, path string, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.paths = append(f.paths, path)
@@ -42,7 +45,7 @@ func TestTeamsListValidatesEncodesSortsAndNarrows(t *testing.T) {
 }
 
 func TestTeamsFailClosedWithoutReflectingRemoteValues(t *testing.T) {
-	for _, payload := range []string{`null`, `{}`, `[{"id":"remote-secret","name":"x","display_name":"X","type":"X"}]`, `[{"id":"a","name":"x","display_name":7,"type":"O"}]`, `[{"id":"a","name":"x","display_name":"X","type":"O"},{"id":"a","name":"y","display_name":"Y","type":"I"}]`} {
+	for _, payload := range []string{`null`, `{}`, `[{"id":"remote-secret","name":"x","display_name":"X","type":"X"}]`, `[{"id":"a","name":"x","display_name":"X","type":"O"},{"id":"a","name":"y","display_name":"Y","type":"I"}]`} {
 		_, err := NewTeams(&fakeTeamTransport{payload: payload}).List(context.Background(), "user")
 		if !errors.Is(err, ErrInvalidTeamResponse) && !errors.Is(err, ErrInvalidTeamsResponse) {
 			t.Fatalf("payload %s: error = %v", payload, err)
@@ -50,6 +53,31 @@ func TestTeamsFailClosedWithoutReflectingRemoteValues(t *testing.T) {
 		if err != nil && contains(err.Error(), "remote-secret") {
 			t.Fatalf("error reflected remote data: %v", err)
 		}
+	}
+}
+
+func TestTeamsTreatDisplayNameAsOptionalPresentationData(t *testing.T) {
+	f := &fakeTeamTransport{payload: `[{"id":"a","name":"core","type":"O"},{"id":"b","name":"eng","display_name":null,"type":"I"},{"id":"c","name":"ops","display_name":7,"type":"O"}]`}
+	got, err := NewTeams(f).List(context.Background(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, team := range got.Items() {
+		if team.DisplayName != "" {
+			t.Fatalf("display name retained malformed optional data: %+v", team)
+		}
+	}
+}
+
+func TestTeamsPropagateCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeTeamTransport{payload: `[]`}
+	if _, err := NewTeams(f).List(ctx, "user"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(f.paths) != 0 {
+		t.Fatalf("canceled read reached transport paths: %v", f.paths)
 	}
 }
 
