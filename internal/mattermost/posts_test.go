@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,19 @@ type postTransportFunc func(context.Context, string, any) error
 
 func (f postTransportFunc) Get(ctx context.Context, path string, out any) error {
 	return f(ctx, path, out)
+}
+
+func (f postTransportFunc) PostRead(ctx context.Context, path string, _ any, out any) error {
+	return f(ctx, path, out)
+}
+
+type searchTransportFunc func(context.Context, string, any, any) error
+
+func (f searchTransportFunc) Get(context.Context, string, any) error {
+	return errors.New("unexpected GET")
+}
+func (f searchTransportFunc) PostRead(ctx context.Context, path string, body, out any) error {
+	return f(ctx, path, body, out)
 }
 
 func TestOrderedPostsPageNormalizesAndSuppressesDeleted(t *testing.T) {
@@ -62,6 +76,40 @@ func TestOrderedPostsPageTreatsExplicitNullHasNextAsIncomplete(t *testing.T) {
 	}
 	if !page.Incomplete || page.HasNext != nil {
 		t.Fatalf("page = %#v", page)
+	}
+}
+
+func TestSearchPageBuildsExactReadPOSTAndNormalizesEnvelope(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	api := NewPosts(searchTransportFunc(func(_ context.Context, path string, body, out any) error {
+		gotPath = path
+		gotBody, _ = json.Marshal(body)
+		return json.Unmarshal([]byte(`{"order":["live","live","missing","gone"],"posts":{"live":{"id":"live","channel_id":"chan","message":"ok","create_at":2,"delete_at":0},"gone":{"id":"gone","channel_id":"chan","message":"stale","create_at":1,"delete_at":3}},"matches":{"live":["needle",7]},"has_next":true}`), out)
+	}))
+	page, err := api.SearchPage(context.Background(), "team/id", SearchPageOptions{Terms: "needle", Page: 2, PerPage: 17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/teams/team%2Fid/posts/search" || string(gotBody) != `{"terms":"needle","is_or_search":false,"page":2,"per_page":17}` {
+		t.Fatalf("path=%q body=%s", gotPath, gotBody)
+	}
+	if page.RawCount != 4 || len(page.OrderedIDs) != 3 || len(page.Posts) != 1 || page.Posts[0].ID != "live" || !page.Incomplete || !reflect.DeepEqual(page.Matches["live"], []string{"needle"}) {
+		t.Fatalf("page=%#v", page)
+	}
+}
+
+func TestSearchPageRejectsMalformedEnvelopeAndInvalidRequest(t *testing.T) {
+	api := NewPosts(searchTransportFunc(func(_ context.Context, _ string, _ any, out any) error {
+		return json.Unmarshal([]byte(`null`), out)
+	}))
+	if _, err := api.SearchPage(context.Background(), "team", SearchPageOptions{Terms: "x", PerPage: 1}); !errors.Is(err, ErrInvalidSearchResponse) {
+		t.Fatalf("malformed error=%v", err)
+	}
+	for _, options := range []SearchPageOptions{{Terms: "", PerPage: 1}, {Terms: "x", PerPage: 0}, {Terms: "x", PerPage: 101}, {Terms: "x", Page: -1, PerPage: 1}} {
+		if _, err := api.SearchPage(context.Background(), "team", options); !errors.Is(err, ErrInvalidPostsRequest) {
+			t.Fatalf("options=%#v error=%v", options, err)
+		}
 	}
 }
 

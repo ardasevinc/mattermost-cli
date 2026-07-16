@@ -17,13 +17,15 @@ const (
 )
 
 var (
-	ErrInvalidPostResponse  = errors.New("Mattermost returned an invalid post response")
-	ErrInvalidPostsResponse = errors.New("Mattermost returned an invalid posts response")
-	ErrInvalidPostsRequest  = errors.New("invalid Mattermost posts request")
+	ErrInvalidPostResponse   = errors.New("Mattermost returned an invalid post response")
+	ErrInvalidPostsResponse  = errors.New("Mattermost returned an invalid posts response")
+	ErrInvalidSearchResponse = errors.New("Mattermost returned an invalid search response")
+	ErrInvalidPostsRequest   = errors.New("invalid Mattermost posts request")
 )
 
 type postTransport interface {
 	Get(context.Context, string, any) error
+	PostRead(context.Context, string, any, any) error
 }
 
 // Post retains only fields needed for history selection. Presentation-specific
@@ -221,9 +223,124 @@ type ThreadPageOptions struct {
 	FromCreateAt *int64
 }
 
+const MaxSearchPage = 100
+
+type SearchPageOptions struct {
+	Terms   string
+	Page    int
+	PerPage int
+}
+
+type SearchPage struct {
+	Posts                     []Post
+	OrderedIDs                []string
+	Matches                   map[string][]string
+	RawCount                  int
+	HasNext                   *bool
+	FirstInaccessiblePostTime *int64
+	Incomplete                bool
+}
+
+func (p *SearchPage) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Order                     json.RawMessage            `json:"order"`
+		Posts                     map[string]json.RawMessage `json:"posts"`
+		Matches                   map[string]json.RawMessage `json:"matches"`
+		HasNext                   json.RawMessage            `json:"has_next"`
+		FirstInaccessiblePostTime json.RawMessage            `json:"first_inaccessible_post_time"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ErrInvalidSearchResponse
+	}
+	var order []json.RawMessage
+	if len(raw.Order) == 0 || json.Unmarshal(raw.Order, &order) != nil || order == nil {
+		return ErrInvalidSearchResponse
+	}
+	result := SearchPage{RawCount: len(order), Matches: make(map[string][]string)}
+	seen := make(map[string]struct{})
+	if raw.Posts == nil && len(order) > 0 {
+		result.Incomplete = true
+	}
+	for _, rawID := range order {
+		var id string
+		if json.Unmarshal(rawID, &id) != nil || !isSafePostID(id) {
+			result.Incomplete = true
+			continue
+		}
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		result.OrderedIDs = append(result.OrderedIDs, id)
+		candidate, ok := raw.Posts[id]
+		if !ok {
+			result.Incomplete = true
+			continue
+		}
+		var post Post
+		if json.Unmarshal(candidate, &post) != nil || post.ID != id {
+			result.Incomplete = true
+			continue
+		}
+		if post.DeleteAt != 0 {
+			continue
+		}
+		result.Posts = append(result.Posts, post)
+		if value, exists := raw.Matches[id]; exists {
+			var rawMatches []json.RawMessage
+			if json.Unmarshal(value, &rawMatches) == nil && rawMatches != nil {
+				matches := make([]string, 0, len(rawMatches))
+				for _, rawMatch := range rawMatches {
+					var match string
+					if json.Unmarshal(rawMatch, &match) == nil {
+						matches = append(matches, match)
+					}
+				}
+				result.Matches[id] = matches
+			}
+		}
+	}
+	if len(raw.HasNext) > 0 {
+		var hasNext bool
+		if string(raw.HasNext) == "null" || json.Unmarshal(raw.HasNext, &hasNext) != nil {
+			result.Incomplete = true
+		} else {
+			result.HasNext = &hasNext
+		}
+	}
+	if len(raw.FirstInaccessiblePostTime) > 0 && string(raw.FirstInaccessiblePostTime) != "null" {
+		value, ok := nonnegativeInteger(raw.FirstInaccessiblePostTime)
+		if !ok {
+			result.Incomplete = true
+		} else if value > 0 {
+			result.FirstInaccessiblePostTime = &value
+		}
+	}
+	*p = result
+	return nil
+}
+
 type Posts struct{ client postTransport }
 
 func NewPosts(client postTransport) *Posts { return &Posts{client: client} }
+
+func (s *Posts) SearchPage(ctx context.Context, teamID string, options SearchPageOptions) (SearchPage, error) {
+	if strings.TrimSpace(teamID) == "" || strings.TrimSpace(options.Terms) == "" || options.Page < 0 || options.PerPage <= 0 || options.PerPage > MaxSearchPage {
+		return SearchPage{}, ErrInvalidPostsRequest
+	}
+	body := struct {
+		Terms      string `json:"terms"`
+		IsOrSearch bool   `json:"is_or_search"`
+		Page       int    `json:"page"`
+		PerPage    int    `json:"per_page"`
+	}{options.Terms, false, options.Page, options.PerPage}
+	var page SearchPage
+	path := "/teams/" + url.PathEscape(teamID) + "/posts/search"
+	if err := s.client.PostRead(ctx, path, body, &page); err != nil {
+		return SearchPage{}, err
+	}
+	return page, nil
+}
 
 func (s *Posts) ChannelPage(ctx context.Context, channelID string, options ChannelPostsOptions) (OrderedPostsPage, error) {
 	if strings.TrimSpace(channelID) == "" || options.PerPage <= 0 || options.PerPage > MaxPostsPage || options.Page < 0 {
