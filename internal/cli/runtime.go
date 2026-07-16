@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ type dependencies struct {
 	homeDir   func() (string, error)
 	newClient clientFactory
 	stdoutTTY func() bool
+	watch     func(context.Context, mattermost.WatchOptions) error
 }
 
 func defaultDependencies(out any) dependencies {
@@ -37,6 +39,7 @@ func defaultDependencies(out any) dependencies {
 			info, err := file.Stat()
 			return err == nil && info.Mode()&os.ModeCharDevice != 0
 		},
+		watch: mattermost.Watch,
 	}
 }
 
@@ -68,7 +71,7 @@ type rootState struct {
 	warned            bool
 	releases          []func()
 	credentials       []string
-	pendingWarnings   []string
+	pendingWarnings   []machineWarning
 	semanticExit      int
 	disableHeuristics bool
 }
@@ -143,7 +146,7 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 	if warning := file.Warning(); warning != "" && !s.warned {
 		warning = presentation.SanitizeLabel(presentation.Preprocess(warning, s.credentials).Text)
 		if s.flags.json {
-			s.pendingWarnings = append(s.pendingWarnings, "warning: "+warning+"\n")
+			s.pendingWarnings = append(s.pendingWarnings, machineWarning{code: "configuration_warning", message: "warning: " + warning})
 		} else {
 			if err := writeAll(s.streams.err, []byte("warning: "+warning+"\n")); err != nil {
 				s.runtimeErr = err
@@ -204,19 +207,39 @@ func (s *rootState) redactOption(cmd *cobra.Command) (*bool, error) {
 
 func (s *rootState) flushMachineWarnings() error {
 	s.mu.Lock()
-	warnings := strings.Join(s.pendingWarnings, "")
+	items := s.pendingWarnings
 	s.pendingWarnings = nil
 	s.mu.Unlock()
-	if warnings == "" {
+	if len(items) == 0 {
 		return nil
 	}
-	return writeAll(s.streams.err, []byte(warnings))
+	var warnings strings.Builder
+	for _, item := range items {
+		warnings.WriteString(item.message)
+		warnings.WriteByte('\n')
+	}
+	return writeAll(s.streams.err, []byte(warnings.String()))
 }
 
 func (s *rootState) queueMachineWarning(message string) {
 	s.mu.Lock()
-	s.pendingWarnings = append(s.pendingWarnings, message)
+	s.pendingWarnings = append(s.pendingWarnings, machineWarning{code: "configuration_warning", message: strings.TrimSuffix(message, "\n")})
 	s.mu.Unlock()
+}
+
+type machineWarning struct{ code, message string }
+
+func (s *rootState) queueTypedMachineWarning(code, message string) {
+	s.mu.Lock()
+	s.pendingWarnings = append(s.pendingWarnings, machineWarning{code, message})
+	s.mu.Unlock()
+}
+func (s *rootState) takeMachineWarnings() []machineWarning {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := append([]machineWarning(nil), s.pendingWarnings...)
+	s.pendingWarnings = nil
+	return items
 }
 
 func (s *rootState) setSemanticExit(code int) {

@@ -40,12 +40,12 @@ type Sequence struct {
 	Number       int64
 }
 type WatchDiagnostic struct {
-	Type, Message, PreviousID, CurrentID string
-	Timestamp                            time.Time
-	Backfill, Fatal                      bool
-	Expected, Received                   *int64
-	Attempt                              *int
-	Delay                                *time.Duration
+	Type, Code, Recovery, Message, PreviousID, CurrentID string
+	Timestamp                                            time.Time
+	Backfill, Fatal                                      bool
+	Expected, Received                                   *int64
+	Attempt                                              *int
+	Delay                                                *time.Duration
 }
 type WatchSink interface {
 	Post(WatchPost, Sequence) error

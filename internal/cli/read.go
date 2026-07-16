@@ -281,7 +281,7 @@ func emitRedactionWarning(s *rootState, runtime *Runtime, machine bool) error {
 	}
 	warning := "warning: secret redaction is disabled; output may contain secrets\n"
 	if machine {
-		s.queueMachineWarning(warning)
+		s.queueTypedMachineWarning("redaction_disabled", strings.TrimSuffix(warning, "\n"))
 		return nil
 	}
 	return writeAll(s.streams.err, []byte(warning))

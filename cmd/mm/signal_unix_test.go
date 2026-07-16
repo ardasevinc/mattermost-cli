@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ardasevinc/mattermost-cli/internal/cli"
 )
@@ -61,5 +63,33 @@ func TestBrokenPipeHandlerIsNotInheritedByChild(t *testing.T) {
 	}
 	if strings.Contains(string(output), "survived") {
 		t.Fatalf("child inherited handled SIGPIPE: %q", output)
+	}
+}
+
+func TestCommandContextStopsWithParent(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	ctx, stop := commandContext(parent)
+	cancel()
+	defer stop()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("command context did not stop")
+	}
+}
+
+func TestCommandContextRecordsSignalCause(t *testing.T) {
+	ctx, stop := commandContext(context.Background())
+	defer stop()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+		if !errors.Is(context.Cause(ctx), cli.ErrSignalCancellation) {
+			t.Fatalf("cause=%v", context.Cause(ctx))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("signal did not cancel command context")
 	}
 }

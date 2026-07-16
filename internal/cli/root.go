@@ -37,6 +37,14 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	cmd := newRootWithState(state)
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
+		var corrupted watchOutputFailure
+		if errors.As(err, &corrupted) {
+			return 3
+		}
+		var terminal watchTerminalFailure
+		if errors.As(err, &terminal) {
+			return 3
+		}
 		message := presentation.SanitizeLabel(presentation.Preprocess(err.Error(), state.credentials).Text)
 		code := exitCode(err)
 		if state.flags.json && trackedOut.BytesWritten() > 0 {
@@ -129,6 +137,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.AddCommand(newSearchCommand(state))
 	cmd.AddCommand(newMentionsCommand(state))
 	cmd.AddCommand(newUnreadCommand(state))
+	cmd.AddCommand(newWatchCommand(state))
 	return cmd
 }
 

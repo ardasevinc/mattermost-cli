@@ -98,6 +98,42 @@ func TestWatchSequenceSafeIntegerBoundary(t *testing.T) {
 	}
 }
 
+func TestFormatWatchHumanLineMatchesJSWhitespaceAndColor(t *testing.T) {
+	stamp := time.Date(2026, 1, 1, 3, 4, 0, 0, time.UTC)
+	plain := FormatWatchHumanLine(stamp, "😀", "a\tb\u00a0c\ufeffd\n e", false)
+	if plain != "[03:04] 😀: a b c d e" {
+		t.Fatalf("plain=%q", plain)
+	}
+	colored := FormatWatchHumanLine(stamp, "😀", "x", true)
+	if colored != "\x1b[2m[03:04]\x1b[0m \x1b[32m😀\x1b[0m: x" {
+		t.Fatalf("color=%q", colored)
+	}
+}
+
+func TestWatchWarningAndTerminalConstructorsAreClosed(t *testing.T) {
+	now := time.UnixMilli(1)
+	for _, value := range []mattermost.WatchDiagnostic{{Type: "warning", Code: "configuration_warning", Recovery: "none", Timestamp: now, Message: "warning"}, {Type: "terminal", Code: "authentication", Recovery: "check_token", Timestamp: now, Message: "failed", Fatal: true}} {
+		if _, err := NewWatchDiagnostic(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, value := range []mattermost.WatchDiagnostic{{Type: "warning", Code: "authentication", Recovery: "none", Timestamp: now, Message: "bad"}, {Type: "terminal", Code: "authentication", Recovery: "none", Timestamp: now, Message: "bad", Fatal: true}, {Type: "terminal", Code: "redaction_disabled", Recovery: "none", Timestamp: now, Message: "bad", Fatal: true}} {
+		if _, err := NewWatchDiagnostic(value); !errors.Is(err, ErrInvalidWatchDocument) {
+			t.Fatalf("accepted %#v", value)
+		}
+	}
+	attempt := 1
+	delay := time.Second
+	for _, value := range []mattermost.WatchDiagnostic{
+		{Type: "reconnect", Code: "watch_failed", Timestamp: now, Message: "retry", Attempt: &attempt, Delay: &delay},
+		{Type: "reconnect", Recovery: "none", Timestamp: now, Message: "retry", Attempt: &attempt, Delay: &delay},
+	} {
+		if _, err := NewWatchDiagnostic(value); !errors.Is(err, ErrInvalidWatchDocument) {
+			t.Fatalf("accepted ordinary diagnostic metadata %#v", value)
+		}
+	}
+}
+
 func TestWatchLabelRedactionPositionsMatchEmittedText(t *testing.T) {
 	credential := "credential-position-secret"
 	release := presentation.ActiveCredentials.Register(credential)

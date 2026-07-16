@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
@@ -45,6 +46,8 @@ type watchEvent struct {
 type watchDiagnostic struct {
 	Schema     string                   `json:"schema"`
 	Type       string                   `json:"type"`
+	Code       string                   `json:"code,omitempty"`
+	Recovery   string                   `json:"recovery,omitempty"`
 	Timestamp  MillisTime               `json:"timestamp"`
 	Message    string                   `json:"message"`
 	Backfill   bool                     `json:"backfill"`
@@ -77,16 +80,20 @@ func (value watchDiagnostic) valid() bool {
 		return false
 	}
 	switch value.Type {
+	case "warning":
+		return !value.Fatal && (value.Code == "configuration_warning" || value.Code == "redaction_disabled") && value.Recovery == "none" && value.Attempt == nil && value.DelayMS == nil && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
 	case "reconnect":
-		return !value.Fatal && value.Attempt != nil && *value.Attempt > 0 && value.DelayMS != nil && *value.DelayMS >= 0 && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
+		return value.Code == "" && value.Recovery == "" && !value.Fatal && value.Attempt != nil && *value.Attempt > 0 && value.DelayMS != nil && *value.DelayMS >= 0 && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
 	case "sequence_gap":
-		return !value.Fatal && value.Expected != nil && *value.Expected >= 0 && *value.Expected <= mattermost.MaxSafeSequence && value.Received != nil && *value.Received >= 0 && *value.Received <= mattermost.MaxSafeSequence && value.Attempt == nil && value.DelayMS == nil && value.PreviousID == nil && value.CurrentID == nil
+		return value.Code == "" && value.Recovery == "" && !value.Fatal && value.Expected != nil && *value.Expected >= 0 && *value.Expected <= mattermost.MaxSafeSequence && value.Received != nil && *value.Received >= 0 && *value.Received <= mattermost.MaxSafeSequence && value.Attempt == nil && value.DelayMS == nil && value.PreviousID == nil && value.CurrentID == nil
 	case "connection_changed":
-		return !value.Fatal && value.Expected != nil && *value.Expected >= 0 && *value.Expected <= mattermost.MaxSafeSequence && value.Received != nil && *value.Received >= 0 && *value.Received <= mattermost.MaxSafeSequence && value.PreviousID != nil && *value.PreviousID != "" && value.CurrentID != nil && *value.CurrentID != "" && value.Attempt == nil && value.DelayMS == nil
+		return value.Code == "" && value.Recovery == "" && !value.Fatal && value.Expected != nil && *value.Expected >= 0 && *value.Expected <= mattermost.MaxSafeSequence && value.Received != nil && *value.Received >= 0 && *value.Received <= mattermost.MaxSafeSequence && value.PreviousID != nil && *value.PreviousID != "" && value.CurrentID != nil && *value.CurrentID != "" && value.Attempt == nil && value.DelayMS == nil
 	case "malformed", "disconnected":
-		return !value.Fatal && value.Attempt == nil && value.DelayMS == nil && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
+		return value.Code == "" && value.Recovery == "" && !value.Fatal && value.Attempt == nil && value.DelayMS == nil && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
 	case "terminal":
-		return value.Fatal && value.Attempt == nil && value.DelayMS == nil && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
+		validCode := value.Code == "authentication" || value.Code == "reconnect_exhausted" || value.Code == "canceled" || value.Code == "invalid_options" || value.Code == "watch_failed"
+		validRecovery := (value.Code == "authentication" && value.Recovery == "check_token") || (value.Code == "reconnect_exhausted" && value.Recovery == "retry_later") || ((value.Code == "canceled" || value.Code == "invalid_options" || value.Code == "watch_failed") && value.Recovery == "none")
+		return value.Fatal && validCode && validRecovery && value.Attempt == nil && value.DelayMS == nil && value.Expected == nil && value.Received == nil && value.PreviousID == nil && value.CurrentID == nil
 	default:
 		return false
 	}
@@ -157,7 +164,7 @@ func NewWatchDiagnostic(value mattermost.WatchDiagnostic) (WatchDocument, error)
 		return result.Text, result.Redactions
 	}
 	message, redactions := clean(value.Message, "watch.diagnostic.message")
-	document := watchDiagnostic{Schema: "mm/v2/watch-diagnostic", Type: value.Type, Timestamp: MillisTime{Time: value.Timestamp.UTC()}, Message: message, Backfill: false, Fatal: value.Fatal, Redactions: redactions, Attempt: value.Attempt, Expected: value.Expected, Received: value.Received, seal: true}
+	document := watchDiagnostic{Schema: "mm/v2/watch-diagnostic", Type: value.Type, Code: value.Code, Recovery: value.Recovery, Timestamp: MillisTime{Time: value.Timestamp.UTC()}, Message: message, Backfill: false, Fatal: value.Fatal, Redactions: redactions, Attempt: value.Attempt, Expected: value.Expected, Received: value.Received, seal: true}
 	if value.Delay != nil {
 		ms := value.Delay.Milliseconds()
 		document.DelayMS = &ms
@@ -233,6 +240,18 @@ func rawWatchSize(post mattermost.WatchPost, sequence mattermost.Sequence) int {
 type JSONLWatchSink struct {
 	Events, Diagnostics io.Writer
 	DisableHeuristics   bool
+}
+
+func FormatWatchHumanLine(timestamp time.Time, sender, message string, color bool) string {
+	message = strings.Join(strings.Fields(strings.ReplaceAll(message, "\ufeff", " ")), " ")
+	if message == "" {
+		message = "[empty message]"
+	}
+	stamp := "[" + timestamp.Format("15:04") + "]"
+	if color {
+		return dim(stamp) + " " + userColor(sender) + ": " + message
+	}
+	return stamp + " " + sender + ": " + message
 }
 
 func (sink JSONLWatchSink) Post(post mattermost.WatchPost, sequence mattermost.Sequence) error {
