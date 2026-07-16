@@ -150,6 +150,8 @@ Every row requires a named Go regression test and, where applicable, a language-
 | terminal/control/bidi hazards are visible or removed safely | oracle |
 | overlapping redaction matches never re-append plaintext | oracle |
 | truncated private-key blocks fail closed without plaintext leakage | oracle |
+| public redaction positions remain UTF-16 offsets; v2 heuristic mask previews use whole Unicode scalar values | intentionally_changed |
+| request JSON has no trailing newline and preserves JSON.stringify HTML/U+2028/U+2029 wire behavior | oracle |
 | invalid UTF-8, whitespace-only, oversized, and unintended TTY input fail before work | oracle |
 | watch validates events/sequences and bounds reconnect | oracle |
 | watch auth failure stops reconnect and releases credentials/timers | oracle |

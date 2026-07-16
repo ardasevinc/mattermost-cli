@@ -415,7 +415,8 @@ The v1 security boundary survives the rewrite:
 - Original secret values and unredacted originals never appear in redaction provenance.
 - Canonical unsanitized IDs drive identity, ordering, grouping, and deduplication; sanitized copies are presentation-only.
 - Go RE2 incompatibilities are implemented with candidate matching plus explicit boundary validation, not weaker regex substitutions.
-- Byte, rune, and structured-redaction offsets are defined explicitly and tested across non-ASCII text.
+- Regex and literal-match spans use UTF-8 byte offsets internally so Go slicing remains exact. Public structured-redaction `position` values are UTF-16 code-unit offsets into the final sanitized emitted text, preserving the v1 oracle contract across non-BMP text. Partial heuristic masks compute visible prefix/suffix lengths in Unicode scalar values so v2 never splits a code point; this is an intentional presentation-only change from JavaScript UTF-16 slicing.
+- JSON request bodies contain no encoder-added trailing newline, disable HTML escaping, and preserve literal U+2028/U+2029 like `JSON.stringify`; string content that literally contains `\\u2028` or `\\u2029` remains escaped data.
 - Files, config, database, editor temp handling, and subprocess invocation resist symlink and permission attacks within the documented local-user threat model.
 
 ## 17. Test and conformance contract
