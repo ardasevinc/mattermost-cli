@@ -139,22 +139,25 @@ func (c *Client) Close() {
 }
 
 func (c *Client) Get(ctx context.Context, path string, out any) error {
-	return c.request(ctx, http.MethodGet, path, nil, out, false)
+	return c.request(ctx, http.MethodGet, path, nil, out, false, true)
+}
+func (c *Client) GetPublic(ctx context.Context, path string, out any) error {
+	return c.request(ctx, http.MethodGet, path, nil, out, false, false)
 }
 func (c *Client) Post(ctx context.Context, path string, body, out any) error {
-	return c.request(ctx, http.MethodPost, path, body, out, true)
+	return c.request(ctx, http.MethodPost, path, body, out, true, true)
 }
 func (c *Client) PostRead(ctx context.Context, path string, body, out any) error {
-	return c.request(ctx, http.MethodPost, path, body, out, false)
+	return c.request(ctx, http.MethodPost, path, body, out, false, true)
 }
 func (c *Client) Put(ctx context.Context, path string, body, out any) error {
-	return c.request(ctx, http.MethodPut, path, body, out, true)
+	return c.request(ctx, http.MethodPut, path, body, out, true, true)
 }
 func (c *Client) Delete(ctx context.Context, path string, out any) error {
-	return c.request(ctx, http.MethodDelete, path, nil, out, true)
+	return c.request(ctx, http.MethodDelete, path, nil, out, true, true)
 }
 
-func (c *Client) request(ctx context.Context, method, path string, body, out any, mutation bool) error {
+func (c *Client) request(ctx context.Context, method, path string, body, out any, mutation, authenticated bool) error {
 	c.lifecycle.RLock()
 	defer c.lifecycle.RUnlock()
 	if c.closed {
@@ -172,7 +175,7 @@ func (c *Client) request(ctx context.Context, method, path string, body, out any
 		if ctx.Err() != nil {
 			return classifyContext(ctx)
 		}
-		status, headers, data, failure := c.attempt(ctx, method, endpoint, payload, mutation)
+		status, headers, data, failure := c.attempt(ctx, method, endpoint, payload, mutation, authenticated)
 		if failure != nil {
 			if mutation {
 				return &OutcomeUnknownError{}
@@ -225,7 +228,7 @@ type attemptFailure struct{ kind string }
 
 func (e *attemptFailure) Error() string { return e.kind }
 
-func (c *Client) attempt(parent context.Context, method string, endpoint *url.URL, payload []byte, mutation bool) (int, http.Header, []byte, error) {
+func (c *Client) attempt(parent context.Context, method string, endpoint *url.URL, payload []byte, mutation, authenticated bool) (int, http.Header, []byte, error) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 	if mutation {
@@ -235,7 +238,9 @@ func (c *Client) attempt(parent context.Context, method string, endpoint *url.UR
 	if err != nil {
 		return 0, nil, nil, &attemptFailure{kind: "transport"}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if authenticated {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {

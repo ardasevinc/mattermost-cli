@@ -337,6 +337,20 @@ func TestContentTypeIsPresentWithoutRequestBody(t *testing.T) {
 	}
 }
 
+func TestPublicReadNeverSendsAuthorization(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization = %q", got)
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	c := newTestClient(t, server.URL)
+	if err := c.GetPublic(context.Background(), "/system/ping?get_server_status=true", &struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCloseWaitsForInFlightRequestBeforeReleasingCredential(t *testing.T) {
 	presentation.ActiveCredentials.Clear()
 	started := make(chan struct{})
