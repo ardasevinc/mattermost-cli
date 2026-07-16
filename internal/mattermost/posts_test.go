@@ -79,6 +79,16 @@ func TestOrderedPostsPageTreatsExplicitNullHasNextAsIncomplete(t *testing.T) {
 	}
 }
 
+func TestOrderedPostsPageRejectsNullDeleteTimestampWithoutEmittingStalePost(t *testing.T) {
+	var page OrderedPostsPage
+	if err := json.Unmarshal([]byte(`{"order":["stale"],"posts":{"stale":{"id":"stale","channel_id":"channel","message":"secret stale text","create_at":1,"delete_at":null}}}`), &page); err != nil {
+		t.Fatal(err)
+	}
+	if !page.Incomplete || page.RawCount != 1 || len(page.Posts) != 0 || page.Continuation != nil {
+		t.Fatalf("page = %#v", page)
+	}
+}
+
 func TestSearchPageBuildsExactReadPOSTAndNormalizesEnvelope(t *testing.T) {
 	var gotPath string
 	var gotBody []byte

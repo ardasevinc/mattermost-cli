@@ -1,6 +1,7 @@
 package mattermost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,44 +29,294 @@ type postTransport interface {
 	PostRead(context.Context, string, any, any) error
 }
 
-// Post retains only fields needed for history selection. Presentation-specific
-// fields belong in a later, wider model rather than leaking unchecked payloads.
 type Post struct {
 	ID               string
 	ChannelID        string
+	UserID           string
 	Message          string
 	CreateAt         int64
+	UpdateAt         int64
+	EditAt           int64
 	DeleteAt         int64
 	RootID           string
 	ReplyCount       int
 	ThreadShapeKnown bool
+	Type             string
+	IsPinned         bool
+	OverrideUsername string
+	FileIDs          []string
+	Files            []PostFile
+	Attachments      []PostAttachment
+	Reactions        []PostReaction
+}
+
+type PostFile struct {
+	ID        string
+	Name      string
+	MIMEType  string
+	Size      *int64
+	Extension string
+}
+
+type PostAttachmentField struct {
+	Title string
+	Value string
+	Short *bool
+}
+
+type PostAttachment struct {
+	Fallback   string
+	Pretext    string
+	Title      string
+	TitleLink  string
+	Text       string
+	Fields     []PostAttachmentField
+	Footer     string
+	FooterIcon string
+	AuthorName string
+	AuthorLink string
+	AuthorIcon string
+	Color      string
+	ImageURL   string
+	ThumbURL   string
+	Timestamp  string
+}
+
+type PostReaction struct {
+	UserID    string
+	PostID    string
+	EmojiName string
+	CreateAt  int64
 }
 
 func (p *Post) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ID         json.RawMessage `json:"id"`
 		ChannelID  json.RawMessage `json:"channel_id"`
+		UserID     json.RawMessage `json:"user_id"`
 		Message    json.RawMessage `json:"message"`
 		CreateAt   json.RawMessage `json:"create_at"`
+		UpdateAt   json.RawMessage `json:"update_at"`
+		EditAt     json.RawMessage `json:"edit_at"`
 		DeleteAt   json.RawMessage `json:"delete_at"`
 		RootID     json.RawMessage `json:"root_id"`
 		ReplyCount json.RawMessage `json:"reply_count"`
+		Type       json.RawMessage `json:"type"`
+		IsPinned   json.RawMessage `json:"is_pinned"`
+		Override   json.RawMessage `json:"override_username"`
+		FileIDs    json.RawMessage `json:"file_ids"`
+		Props      json.RawMessage `json:"props"`
+		Metadata   json.RawMessage `json:"metadata"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return ErrInvalidPostResponse
 	}
 	id, idOK := safePostID(raw.ID)
 	channelID, channelOK := requiredString(raw.ChannelID)
-	message, messageOK := strictString(raw.Message)
 	createAt, createOK := nonnegativeInteger(raw.CreateAt)
 	deleteAt, deleteOK := nonnegativeInteger(raw.DeleteAt)
 	rootID, rootOK, rootKnown := optionalPostID(raw.RootID)
 	replyCount, replyOK, replyKnown := optionalNonnegativeInteger(raw.ReplyCount)
-	if !idOK || !channelOK || !messageOK || !createOK || createAt == 0 || createAt > maxDateMilliseconds || !deleteOK || deleteAt > maxDateMilliseconds || !rootOK || !replyOK {
+	message, messageOK := strictString(raw.Message)
+	if !idOK || !channelOK || (!messageOK && deleteAt == 0) || !createOK || createAt == 0 || createAt > maxDateMilliseconds || !deleteOK || deleteAt > maxDateMilliseconds || !rootOK || !replyOK {
 		return ErrInvalidPostResponse
 	}
-	*p = Post{ID: id, ChannelID: channelID, Message: message, CreateAt: createAt, DeleteAt: deleteAt, RootID: rootID, ReplyCount: replyCount, ThreadShapeKnown: rootKnown && replyKnown}
+	post := Post{
+		ID: id, ChannelID: channelID, UserID: postOptionalString(raw.UserID),
+		CreateAt: createAt, UpdateAt: optionalTimestamp(raw.UpdateAt, createAt), EditAt: optionalTimestamp(raw.EditAt, 0), DeleteAt: deleteAt,
+		RootID: rootID, ReplyCount: replyCount, ThreadShapeKnown: rootKnown && replyKnown,
+	}
+	if deleteAt == 0 {
+		post.Message = message
+		post.Type = postOptionalString(raw.Type)
+		post.IsPinned = optionalBool(raw.IsPinned)
+		directOverride, directOverrideKnown := optionalStringValue(raw.Override)
+		if directOverrideKnown {
+			post.OverrideUsername = directOverride
+		}
+		post.FileIDs = stringArray(raw.FileIDs)
+		post.Files, post.Reactions = parsePostMetadata(raw.Metadata)
+		post.Attachments, post.OverrideUsername = parsePostProps(raw.Props, post.OverrideUsername, directOverrideKnown)
+	}
+	*p = post
 	return nil
+}
+
+func postOptionalString(raw json.RawMessage) string {
+	value, ok := optionalStringValue(raw)
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+func optionalStringValue(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return "", false
+	}
+	return strictString(raw)
+}
+
+func optionalBool(raw json.RawMessage) bool {
+	var value bool
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	return value
+}
+
+func optionalTimestamp(raw json.RawMessage, fallback int64) int64 {
+	value, ok := nonnegativeInteger(raw)
+	if !ok || value > maxDateMilliseconds {
+		return fallback
+	}
+	return value
+}
+
+func stringArray(raw json.RawMessage) []string {
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, candidate := range values {
+		if value := postOptionalString(candidate); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func parsePostMetadata(raw json.RawMessage) ([]PostFile, []PostReaction) {
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(raw, &metadata) != nil {
+		return nil, nil
+	}
+	var rawFiles []json.RawMessage
+	_ = json.Unmarshal(metadata["files"], &rawFiles)
+	files := make([]PostFile, 0, len(rawFiles))
+	for _, candidate := range rawFiles {
+		var file struct {
+			ID        json.RawMessage `json:"id"`
+			Name      json.RawMessage `json:"name"`
+			MIMEType  json.RawMessage `json:"mime_type"`
+			Size      json.RawMessage `json:"size"`
+			Extension json.RawMessage `json:"extension"`
+		}
+		if json.Unmarshal(candidate, &file) != nil || postOptionalString(file.ID) == "" {
+			continue
+		}
+		value := PostFile{ID: postOptionalString(file.ID), Name: postOptionalString(file.Name), MIMEType: postOptionalString(file.MIMEType), Extension: postOptionalString(file.Extension)}
+		if size, ok := nonnegativeInteger(file.Size); ok {
+			value.Size = &size
+		}
+		files = append(files, value)
+	}
+	var rawReactions []json.RawMessage
+	_ = json.Unmarshal(metadata["reactions"], &rawReactions)
+	reactions := make([]PostReaction, 0, len(rawReactions))
+	for _, candidate := range rawReactions {
+		var reaction struct {
+			UserID    json.RawMessage `json:"user_id"`
+			PostID    json.RawMessage `json:"post_id"`
+			EmojiName json.RawMessage `json:"emoji_name"`
+			CreateAt  json.RawMessage `json:"create_at"`
+		}
+		if json.Unmarshal(candidate, &reaction) != nil {
+			continue
+		}
+		value := PostReaction{UserID: postOptionalString(reaction.UserID), PostID: postOptionalString(reaction.PostID), EmojiName: postOptionalString(reaction.EmojiName), CreateAt: optionalTimestamp(reaction.CreateAt, 0)}
+		if value.UserID != "" && value.EmojiName != "" {
+			reactions = append(reactions, value)
+		}
+	}
+	return files, reactions
+}
+
+func parsePostProps(raw json.RawMessage, override string, overrideKnown bool) ([]PostAttachment, string) {
+	var props map[string]json.RawMessage
+	if json.Unmarshal(raw, &props) != nil {
+		return nil, override
+	}
+	if !overrideKnown {
+		if propsOverride, ok := optionalStringValue(props["override_username"]); ok {
+			override = propsOverride
+		}
+	}
+	var rawAttachments []json.RawMessage
+	_ = json.Unmarshal(props["attachments"], &rawAttachments)
+	attachments := make([]PostAttachment, 0, len(rawAttachments))
+	for _, candidate := range rawAttachments {
+		var source map[string]json.RawMessage
+		if json.Unmarshal(candidate, &source) != nil || source == nil {
+			continue
+		}
+		attachment := PostAttachment{
+			Fallback: postOptionalString(source["fallback"]), Pretext: postOptionalString(source["pretext"]), Title: postOptionalString(source["title"]),
+			TitleLink: postOptionalString(source["title_link"]), Text: postOptionalString(source["text"]), Footer: postOptionalString(source["footer"]),
+			FooterIcon: postOptionalString(source["footer_icon"]), AuthorName: postOptionalString(source["author_name"]), AuthorLink: postOptionalString(source["author_link"]),
+			AuthorIcon: postOptionalString(source["author_icon"]), Color: postOptionalString(source["color"]), ImageURL: postOptionalString(source["image_url"]),
+			ThumbURL: postOptionalString(source["thumb_url"]), Timestamp: stringOrNumber(source["ts"]),
+		}
+		var fields []json.RawMessage
+		if json.Unmarshal(source["fields"], &fields) == nil {
+			for _, rawField := range fields {
+				var fieldSource map[string]json.RawMessage
+				if json.Unmarshal(rawField, &fieldSource) != nil || fieldSource == nil {
+					continue
+				}
+				field := PostAttachmentField{Title: stringOrNumber(fieldSource["title"]), Value: stringOrNumber(fieldSource["value"])}
+				var short bool
+				if rawShort := fieldSource["short"]; len(rawShort) > 0 && !isJSONNull(rawShort) && json.Unmarshal(rawShort, &short) == nil {
+					field.Short = &short
+				}
+				if field.Title != "" || field.Value != "" || field.Short != nil {
+					attachment.Fields = append(attachment.Fields, field)
+				}
+			}
+		}
+		if postAttachmentHasContent(attachment) {
+			attachments = append(attachments, attachment)
+		}
+	}
+	return attachments, override
+}
+
+func postAttachmentHasContent(value PostAttachment) bool {
+	return value.Fallback != "" || value.Pretext != "" || value.Title != "" || value.TitleLink != "" || value.Text != "" ||
+		len(value.Fields) > 0 || value.Footer != "" || value.FooterIcon != "" || value.AuthorName != "" || value.AuthorLink != "" ||
+		value.AuthorIcon != "" || value.Color != "" || value.ImageURL != "" || value.ThumbURL != "" || value.Timestamp != ""
+}
+
+func stringOrNumber(raw json.RawMessage) string {
+	if value := postOptionalString(raw); value != "" {
+		return value
+	}
+	var number float64
+	if len(raw) > 0 && !isJSONNull(raw) && json.Unmarshal(raw, &number) == nil {
+		return ecmaScriptNumberString(number)
+	}
+	return ""
+}
+
+func ecmaScriptNumberString(value float64) string {
+	if value == 0 {
+		return "0"
+	}
+	abs := value
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs >= 1e-6 && abs < 1e21 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	formatted := strconv.FormatFloat(value, 'e', -1, 64)
+	parts := strings.SplitN(formatted, "e", 2)
+	exponent, _ := strconv.Atoi(parts[1])
+	if exponent >= 0 {
+		return parts[0] + "e+" + strconv.Itoa(exponent)
+	}
+	return parts[0] + "e" + strconv.Itoa(exponent)
 }
 
 func optionalPostID(raw json.RawMessage) (string, bool, bool) {
@@ -117,10 +368,14 @@ func isSafePostID(value string) bool {
 
 func nonnegativeInteger(raw json.RawMessage) (int64, bool) {
 	var value int64
-	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil || value < 0 {
+	if len(raw) == 0 || isJSONNull(raw) || json.Unmarshal(raw, &value) != nil || value < 0 {
 		return 0, false
 	}
 	return value, true
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
 }
 
 // OrderedPostsPage preserves the server's order and raw fullness separately
