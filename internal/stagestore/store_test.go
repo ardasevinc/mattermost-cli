@@ -98,7 +98,7 @@ func TestOpenInitializesAndReopens(t *testing.T) {
 	}
 	defer s.Close()
 	var count int
-	if err := s.db.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 1 {
+	if err := s.db.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != len(migrations) {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
@@ -549,7 +549,7 @@ func TestMigrationFailureIsAtomicAndUnknownIsRejected(t *testing.T) {
 	s.Close()
 	original := migrations
 	t.Cleanup(func() { migrations = original })
-	migrations = append(append([]migration{}, migrations...), migration{version: 2, name: "broken", sql: "CREATE TABLE should_rollback(x); SELECT no_such_function();"})
+	migrations = append(append([]migration{}, migrations...), migration{version: len(migrations) + 1, name: "broken", sql: "CREATE TABLE should_rollback(x); SELECT no_such_function();"})
 	if _, err := Open(ctx, path); !errors.Is(err, ErrMigration) {
 		t.Fatalf("failure=%v", err)
 	}
@@ -567,7 +567,7 @@ func TestMigrationFailureIsAtomicAndUnknownIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec("INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(2,'future','x','x')")
+	_, err = s.db.Exec("INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,'future','x','x')", len(migrations)+1)
 	if err != nil {
 		t.Fatal(err)
 	}

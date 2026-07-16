@@ -69,4 +69,24 @@ CREATE TABLE request_replays (
   PRIMARY KEY (server_url, user_id, request_id),
   FOREIGN KEY (stage_id, revision) REFERENCES stage_revisions(stage_id, revision)
 ) STRICT;
+`}, {version: 2, name: "immutable-local-request-receipts", sql: `
+CREATE TABLE local_requests (
+  server_url TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  request_schema TEXT NOT NULL,
+  request_digest BLOB NOT NULL CHECK (length(request_digest) = 32),
+  result_json TEXT NOT NULL CHECK (json_valid(result_json)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (server_url, user_id, request_id)
+) STRICT;
+INSERT INTO local_requests(server_url,user_id,request_id,request_schema,request_digest,result_json,created_at)
+SELECT server_url,user_id,request_id,'mm/v2/legacy-request-conflict',semantic_digest,'{}',created_at FROM request_replays;
+CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
+CREATE TRIGGER local_requests_immutable_delete BEFORE DELETE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
+CREATE TRIGGER stage_revision_binding_immutable BEFORE INSERT ON stage_revisions
+WHEN NEW.revision > 1 AND EXISTS(SELECT 1 FROM stage_revisions WHERE stage_id=NEW.stage_id)
+ AND (NEW.destination_json != (SELECT destination_json FROM stage_revisions WHERE stage_id=NEW.stage_id ORDER BY revision LIMIT 1)
+   OR NEW.plan_json != (SELECT plan_json FROM stage_revisions WHERE stage_id=NEW.stage_id ORDER BY revision LIMIT 1))
+BEGIN SELECT RAISE(ABORT, 'stage destination and plan are immutable'); END;
 `}}
