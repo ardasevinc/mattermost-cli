@@ -176,6 +176,7 @@ func (WhoAmIEnvelope) machineDocument()   {}
 func (TeamsEnvelope) machineDocument()    {}
 func (UsersEnvelope) machineDocument()    {}
 func (ChannelsEnvelope) machineDocument() {}
+func (UnreadEnvelope) machineDocument()   {}
 
 type wireMessage struct {
 	ID          string           `json:"id"`
@@ -296,6 +297,8 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 	case DoctorEnvelope:
 		return value, nil
 	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
+		return value, nil
+	case UnreadEnvelope:
 		return value, nil
 	default:
 		return nil, fmt.Errorf("unsupported machine document type %T", document)
@@ -467,7 +470,7 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope, WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope, WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope, UnreadEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
 	}
@@ -479,6 +482,11 @@ func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
 	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
 		if err := validateIdentityDocument(document); err != nil {
+			return err
+		}
+	}
+	if unread, ok := document.(UnreadEnvelope); ok {
+		if err := validateUnreadEnvelope(unread); err != nil {
 			return err
 		}
 	}
@@ -636,6 +644,9 @@ func consumeMachineBudget(value reflect.Value, contentBudget *int64, valueBudget
 		}
 	case reflect.Struct:
 		for index := 0; index < value.NumField(); index++ {
+			if value.Type().Field(index).PkgPath != "" {
+				continue
+			}
 			if err := consumeMachineBudget(value.Field(index), contentBudget, valueBudget, stack, depth+1); err != nil {
 				return err
 			}
