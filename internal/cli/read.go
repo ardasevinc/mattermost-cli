@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf16"
 
+	"github.com/ardasevinc/mattermost-cli/internal/api"
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
 	"github.com/ardasevinc/mattermost-cli/internal/normalization"
 	"github.com/ardasevinc/mattermost-cli/internal/output"
@@ -83,10 +86,76 @@ func processedChannel(raw mattermost.Channel, runtime *Runtime) (output.Channel,
 		return result.Text
 	}
 	typeName := map[string]string{"O": "public", "P": "private", "D": "dm", "G": "group"}[raw.Type]
+	if raw.Type == "G" {
+		name := raw.DisplayName
+		if name == "" {
+			name = raw.Name
+		}
+		return output.Channel{ID: clean(raw.ID, "channel.id"), Type: "group", Name: clean(name, "channel.displayName"), MetadataStatus: "resolved"}, redactions
+	}
 	return output.Channel{
 		ID: clean(raw.ID, "channel.id"), Type: typeName, Name: clean(raw.Name, "channel.name"),
 		DisplayName: clean(raw.DisplayName, "channel.displayName"), MetadataStatus: "resolved",
 	}, redactions
+}
+
+func resolvedReadChannel(ctx context.Context, runtime *Runtime, channelID, myUserID string) (output.Channel, []output.Redaction, bool, error) {
+	if channelID == "" {
+		channel, redactions := unavailableChannel(channelID, runtime)
+		return channel, redactions, true, nil
+	}
+	raw, err := runtime.Channels.ByID(ctx, channelID)
+	if err != nil {
+		var remote *api.APIError
+		if errors.As(err, &remote) && remote.Status == 401 {
+			return output.Channel{}, nil, false, err
+		}
+		channel, redactions := unavailableChannel(channelID, runtime)
+		return channel, redactions, true, nil
+	}
+	if raw.Type != "D" {
+		channel, redactions := processedChannel(raw, runtime)
+		return channel, redactions, false, nil
+	}
+	parts := strings.Split(raw.Name, "__")
+	if len(parts) != 2 || (parts[0] != myUserID && parts[1] != myUserID) {
+		channel, redactions := unavailableChannel(channelID, runtime)
+		return channel, redactions, true, nil
+	}
+	otherID := parts[0]
+	if otherID == myUserID {
+		otherID = parts[1]
+	}
+	other, err := runtime.Users.ByID(ctx, otherID)
+	if err != nil {
+		var remote *api.APIError
+		if errors.As(err, &remote) && remote.Status == 401 {
+			return output.Channel{}, nil, false, err
+		}
+		channel, redactions := unavailableChannel(channelID, runtime)
+		return channel, redactions, true, nil
+	}
+	id, redactions := processLabel(raw.ID, "channel.id", runtime)
+	name, nameRedactions := processLabel(other.Username, "channel.dmUsername", runtime)
+	channel := output.Channel{ID: id, Type: "dm", Name: "@" + name, MetadataStatus: "resolved"}
+	redactions = append(redactions, nameRedactions...)
+	return channel, redactions, false, nil
+}
+
+func unavailableChannel(channelID string, runtime *Runtime) (output.Channel, []output.Redaction) {
+	id, redactions := processLabel(channelID, "channel.id", runtime)
+	return output.Channel{ID: id, Type: "unknown", Name: "unknown", MetadataStatus: "unavailable"}, redactions
+}
+
+func processLabel(value, field string, runtime *Runtime) (string, []output.Redaction) {
+	result := presentation.PreprocessWithOptions(value, presentation.Options{
+		Credentials: []string{runtime.Config.Token}, DisableHeuristics: !runtime.Config.Redact,
+	})
+	remapLabelPositions(result.Text, result.Redactions)
+	for index := range result.Redactions {
+		result.Redactions[index].Field = field
+	}
+	return presentation.SanitizeLabel(result.Text), result.Redactions
 }
 
 func remapLabelPositions(text string, redactions []presentation.Redaction) {
@@ -170,11 +239,16 @@ func (s *rootState) renderRead(outputs []output.MessageOutput, document output.M
 	return writeAll(s.streams.out, []byte(formatted+"\n"))
 }
 
-func warnRedactionDisabled(s *rootState, runtime *Runtime) error {
+func emitRedactionWarning(s *rootState, runtime *Runtime, machine bool) error {
 	if runtime.Config.Redact {
 		return nil
 	}
-	return writeAll(s.streams.err, []byte("warning: secret redaction is disabled; output may contain secrets\n"))
+	warning := "warning: secret redaction is disabled; output may contain secrets\n"
+	if machine {
+		s.queueMachineWarning(warning)
+		return nil
+	}
+	return writeAll(s.streams.err, []byte(warning))
 }
 
 func readError(message string) error { return readFailure(fmt.Errorf("%s", message)) }

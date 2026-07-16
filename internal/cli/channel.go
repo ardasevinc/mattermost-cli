@@ -63,10 +63,8 @@ func runChannel(cmd *cobra.Command, state *rootState, name string, flags channel
 	if err != nil {
 		return err
 	}
-	if !display.json {
-		if err := warnRedactionDisabled(state, runtime); err != nil {
-			return err
-		}
+	if err := emitRedactionWarning(state, runtime, display.json); err != nil {
+		return err
 	}
 	me, err := runtime.Users.Current(cmd.Context())
 	if err != nil {

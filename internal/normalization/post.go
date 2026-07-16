@@ -92,6 +92,8 @@ func NormalizePosts(posts []mattermost.Post, users map[string]mattermost.User, m
 			Files: files, FileDetails: details, Attachments: attachments, Reactions: reactions,
 			CanonicalID: post.ID, CanonicalRootID: post.RootID,
 		}
+		shapeKnown := post.ThreadShapeKnown
+		message.CanonicalThreadShapeKnown = &shapeKnown
 		if post.EditAt > 0 {
 			value := time.UnixMilli(post.EditAt).UTC()
 			message.EditedAt = &value

@@ -202,6 +202,12 @@ func (s *rootState) flushMachineWarnings() error {
 	return writeAll(s.streams.err, []byte(warnings))
 }
 
+func (s *rootState) queueMachineWarning(message string) {
+	s.mu.Lock()
+	s.pendingWarnings = append(s.pendingWarnings, message)
+	s.mu.Unlock()
+}
+
 type errorClass uint8
 
 const (

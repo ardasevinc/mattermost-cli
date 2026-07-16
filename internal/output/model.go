@@ -34,8 +34,9 @@ type Message struct {
 
 	// Canonical identities are unsanitized internal values. They drive
 	// ordering and grouping but are never serialized.
-	CanonicalID     string `json:"-"`
-	CanonicalRootID string `json:"-"`
+	CanonicalID               string `json:"-"`
+	CanonicalRootID           string `json:"-"`
+	CanonicalThreadShapeKnown *bool  `json:"-"`
 }
 
 type File struct {

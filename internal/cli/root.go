@@ -117,6 +117,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&state.flags.noThreads, "no-threads", false, "return selected seed posts only")
 	cmd.AddCommand(newSchemaCommand(state))
 	cmd.AddCommand(newChannelCommand(state))
+	cmd.AddCommand(newThreadCommand(state))
 	return cmd
 }
 

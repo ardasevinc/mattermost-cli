@@ -65,7 +65,7 @@ func TestReadSchemasAreRegisteredAndStrict(t *testing.T) {
 	}
 }
 
-func TestReadSchemaRejectsNullThreadRootAndInvalidTimestamps(t *testing.T) {
+func TestReadSchemaRejectsInvalidThreadTimestamps(t *testing.T) {
 	registry, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -75,22 +75,123 @@ func TestReadSchemaRejectsNullThreadRootAndInvalidTimestamps(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, replacement := range map[string]string{
-		"null root":       `"root":null`,
 		"impossible date": `"timestamp":"2026-02-30T01:02:03.456Z"`,
 		"short year":      `"timestamp":"026-07-16T01:02:03.456Z"`,
 		"year zero":       `"timestamp":"0000-07-16T01:02:03.456Z"`,
 	} {
 		document := string(valid)
-		switch name {
-		case "null root":
-			start := strings.Index(document, `"root":{`)
-			end := strings.Index(document[start:], `,"redactions":[]`)
-			document = document[:start] + replacement + document[start+end:]
-		default:
-			document = strings.Replace(document, `"timestamp":"2026-07-16T01:02:03.456Z"`, replacement, 1)
-		}
+		document = strings.Replace(document, `"timestamp":"2026-07-16T01:02:03.456Z"`, replacement, 1)
 		if err := registry.Validate("mm/v2/thread", strings.NewReader(document)); err == nil {
 			t.Errorf("accepted %s", name)
 		}
 	}
+}
+
+func TestThreadSchemaEnforcesRootAndUnboundShape(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := fs.ReadFile(publicschemas.FS, "v2/examples/thread.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decode := func(t *testing.T) map[string]any {
+		t.Helper()
+		var document map[string]any
+		if err := json.Unmarshal(valid, &document); err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	validate := func(t *testing.T, document map[string]any, wantValid bool) {
+		t.Helper()
+		raw, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = registry.Validate("mm/v2/thread", strings.NewReader(string(raw)))
+		if wantValid && err != nil {
+			t.Fatalf("valid thread document rejected: %v", err)
+		}
+		if !wantValid && err == nil {
+			t.Fatalf("invalid thread document accepted: %s", raw)
+		}
+	}
+	data := func(document map[string]any) map[string]any {
+		return document["data"].(map[string]any)
+	}
+
+	t.Run("root must be canonical root", func(t *testing.T) {
+		document := decode(t)
+		data(document)["root"].(map[string]any)["rootId"] = "other"
+		validate(t, document, false)
+	})
+
+	t.Run("unbound post cannot contain nested replies", func(t *testing.T) {
+		document := decode(t)
+		thread := data(document)
+		unbound := thread["root"].(map[string]any)
+		nested := data(decode(t))["root"].(map[string]any)
+		unbound["rootId"] = "missing-root"
+		unbound["replies"] = []any{nested}
+		thread["root"] = nil
+		thread["unboundPosts"] = []any{unbound}
+		metadata := thread["metadata"].(map[string]any)
+		metadata["completeness"] = "unknown"
+		metadata["visibleThreads"].(map[string]any)["status"] = "partial"
+		validate(t, document, false)
+	})
+
+	t.Run("unbound post requires partial hydration", func(t *testing.T) {
+		document := decode(t)
+		thread := data(document)
+		unbound := thread["root"].(map[string]any)
+		unbound["rootId"] = "missing-root"
+		thread["root"] = nil
+		thread["unboundPosts"] = []any{unbound}
+		thread["metadata"].(map[string]any)["completeness"] = "unknown"
+		validate(t, document, false)
+	})
+
+	t.Run("rootless partial output is valid", func(t *testing.T) {
+		document := decode(t)
+		thread := data(document)
+		unbound := thread["root"].(map[string]any)
+		unbound["rootId"] = "missing-root"
+		thread["root"] = nil
+		thread["unboundPosts"] = []any{unbound}
+		metadata := thread["metadata"].(map[string]any)
+		metadata["completeness"] = "unknown"
+		metadata["selection"].(map[string]any)["queryTruncated"] = nil
+		visible := metadata["visibleThreads"].(map[string]any)
+		visible["status"] = "partial"
+		visible["hydratedRootCount"] = float64(0)
+		visible["failedRootIds"] = []any{"missing-root"}
+		validate(t, document, true)
+	})
+
+	t.Run("complete retrieval cannot report partial hydration", func(t *testing.T) {
+		document := decode(t)
+		visible := data(document)["metadata"].(map[string]any)["visibleThreads"].(map[string]any)
+		visible["status"] = "partial"
+		visible["hydratedRootCount"] = float64(0)
+		visible["failedRootIds"] = []any{"p1"}
+		validate(t, document, false)
+	})
+
+	t.Run("truncated retrieval cannot report complete hydration", func(t *testing.T) {
+		document := decode(t)
+		metadata := data(document)["metadata"].(map[string]any)
+		metadata["completeness"] = "truncated"
+		metadata["selection"].(map[string]any)["queryTruncated"] = true
+		validate(t, document, false)
+	})
+
+	t.Run("query truncation must match completeness", func(t *testing.T) {
+		document := decode(t)
+		data(document)["metadata"].(map[string]any)["selection"].(map[string]any)["queryTruncated"] = true
+		validate(t, document, false)
+	})
 }

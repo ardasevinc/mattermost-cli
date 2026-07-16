@@ -10,7 +10,7 @@ func GroupIntoThreads(messages []Message) []Message {
 	rootIndexes := make(map[string]int, len(sorted))
 	orphans := make([]Message, 0)
 	for _, message := range sorted {
-		if canonicalRootID(message) != "" {
+		if canonicalRootID(message) != "" || !threadShapeKnown(message) {
 			continue
 		}
 		root := message
@@ -20,7 +20,7 @@ func GroupIntoThreads(messages []Message) []Message {
 	}
 	for _, message := range sorted {
 		rootID := canonicalRootID(message)
-		if rootID == "" {
+		if rootID == "" && threadShapeKnown(message) {
 			continue
 		}
 		if index, ok := rootIndexes[rootID]; ok {
@@ -32,6 +32,10 @@ func GroupIntoThreads(messages []Message) []Message {
 	result := append(roots, orphans...)
 	slices.SortStableFunc(result, compareMessages)
 	return result
+}
+
+func threadShapeKnown(message Message) bool {
+	return message.CanonicalThreadShapeKnown != nil && *message.CanonicalThreadShapeKnown
 }
 
 func compareMessages(a, b Message) int {

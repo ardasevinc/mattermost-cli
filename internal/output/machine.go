@@ -97,10 +97,11 @@ type ChannelEnvelope struct {
 	Data   MachineHistory `json:"data"`
 }
 type ThreadData struct {
-	Channel    MachineChannel  `json:"channel"`
-	Root       MachineMessage  `json:"root"`
-	Redactions []Redaction     `json:"redactions"`
-	Metadata   MachineMetadata `json:"metadata"`
+	Channel      MachineChannel   `json:"channel"`
+	Root         *MachineMessage  `json:"root"`
+	UnboundPosts []MachineMessage `json:"unboundPosts"`
+	Redactions   []Redaction      `json:"redactions"`
+	Metadata     MachineMetadata  `json:"metadata"`
 }
 type ThreadEnvelope struct {
 	Schema string     `json:"schema"`
@@ -221,17 +222,19 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 		return struct {
 			Schema string `json:"schema"`
 			Data   struct {
-				Channel    MachineChannel `json:"channel"`
-				Root       wireMessage    `json:"root"`
-				Redactions []Redaction    `json:"redactions"`
-				Metadata   wireMetadata   `json:"metadata"`
+				Channel      MachineChannel `json:"channel"`
+				Root         *wireMessage   `json:"root"`
+				UnboundPosts []wireMessage  `json:"unboundPosts"`
+				Redactions   []Redaction    `json:"redactions"`
+				Metadata     wireMetadata   `json:"metadata"`
 			} `json:"data"`
 		}{value.Schema, struct {
-			Channel    MachineChannel `json:"channel"`
-			Root       wireMessage    `json:"root"`
-			Redactions []Redaction    `json:"redactions"`
-			Metadata   wireMetadata   `json:"metadata"`
-		}{value.Data.Channel, canonicalMessage(value.Data.Root), cloneSlice(value.Data.Redactions), canonicalMetadata(value.Data.Metadata)}}, nil
+			Channel      MachineChannel `json:"channel"`
+			Root         *wireMessage   `json:"root"`
+			UnboundPosts []wireMessage  `json:"unboundPosts"`
+			Redactions   []Redaction    `json:"redactions"`
+			Metadata     wireMetadata   `json:"metadata"`
+		}{value.Data.Channel, canonicalMessagePointer(value.Data.Root), canonicalMessages(value.Data.UnboundPosts), cloneSlice(value.Data.Redactions), canonicalMetadata(value.Data.Metadata)}}, nil
 	case SearchEnvelope:
 		return struct {
 			Schema  string        `json:"schema"`
@@ -253,6 +256,22 @@ func canonicalHistories(values []MachineHistory) []wireHistory {
 	result := make([]wireHistory, len(values))
 	for index := range values {
 		result[index] = canonicalHistory(values[index])
+	}
+	return result
+}
+
+func canonicalMessagePointer(value *MachineMessage) *wireMessage {
+	if value == nil {
+		return nil
+	}
+	result := canonicalMessage(*value)
+	return &result
+}
+
+func canonicalMessages(values []MachineMessage) []wireMessage {
+	result := make([]wireMessage, len(values))
+	for index := range values {
+		result[index] = canonicalMessage(values[index])
 	}
 	return result
 }

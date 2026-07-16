@@ -123,6 +123,8 @@ Examples:
 
 Checked-in JSON Schemas and golden examples are part of the release contract. Unknown fields may be added only where the schema explicitly permits them. Field removal, meaning changes, or type changes require a new schema identifier.
 
+Thread envelopes never invent a root from zero-value or incomplete remote shape. `data.root` is the proven canonical root or `null`; rootless and otherwise unbound partial posts are retained in `data.unboundPosts`, with non-complete retrieval and partial visible-thread metadata.
+
 `--json`, `--from-json`, and JSONL watch mode imply machine mode. Machine mode never prompts, launches an editor, emits ANSI, or mixes diagnostics into stdout. For a one-shot command that fails before any successful envelope emission, stdout is empty and one schema-valid `mm/v2/error` object is written to stderr. Watch diagnostics are JSONL error/diagnostic envelopes on stderr after any prior events. A low-level partial stream write can make byte-perfect recovery impossible; it is classified honestly and never followed by another object pretending the stream remained valid. Human and machine surfaces use the same underlying operations and validation.
 
 Exit classes are stable:

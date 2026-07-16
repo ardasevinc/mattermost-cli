@@ -106,55 +106,124 @@ func NewMentionsEnvelope(values []MessageOutput, completeness MachineCompletenes
 	return MentionsEnvelope{Schema: "mm/v2/mentions", Results: histories}, err
 }
 
-// NewThreadEnvelope requires the grouped thread representation: exactly one
-// top-level root, with every reply represented only through root.Replies.
+// NewThreadEnvelope preserves a proven root when available and carries
+// rootless partial posts separately. It never promotes unknown shape to root.
 func NewThreadEnvelope(value MessageOutput, completeness MachineCompleteness) (ThreadEnvelope, error) {
 	if err := validateSource(value.Retrieval.Selection.Source, "thread"); err != nil {
+		return ThreadEnvelope{}, err
+	}
+	if err := validateThreadRetrieval(value.Retrieval, completeness); err != nil {
 		return ThreadEnvelope{}, err
 	}
 	history, err := MachineHistoryFromOutput(value, completeness)
 	if err != nil {
 		return ThreadEnvelope{}, err
 	}
-	if len(value.Messages) != 1 {
-		return ThreadEnvelope{}, fmt.Errorf("thread output must contain exactly one top-level root, got %d", len(value.Messages))
+	rootIndex := -1
+	unboundIndexes := make([]int, 0)
+	for index, message := range value.Messages {
+		if threadShapeKnown(message) && message.RootID == "" && message.CanonicalRootID == "" {
+			if rootIndex >= 0 {
+				return ThreadEnvelope{}, fmt.Errorf("thread output contains multiple proven roots")
+			}
+			rootIndex = index
+		} else {
+			unboundIndexes = append(unboundIndexes, index)
+		}
 	}
-	root := value.Messages[0]
-	if root.RootID != "" || root.CanonicalRootID != "" {
-		return ThreadEnvelope{}, fmt.Errorf("thread output top-level message is a reply, not a root")
+	if completeness == MachineComplete && (rootIndex < 0 || len(unboundIndexes) != 0) {
+		return ThreadEnvelope{}, fmt.Errorf("complete thread output requires one root and no unbound posts")
 	}
-	rootIdentity := root.CanonicalID
-	if rootIdentity == "" {
-		rootIdentity = root.ID
+	if rootIndex < 0 && value.Retrieval.VisibleThreads.Status != "partial" {
+		return ThreadEnvelope{}, fmt.Errorf("rootless thread output must report partial hydration")
 	}
-	if rootIdentity == "" || root.ID == "" {
-		return ThreadEnvelope{}, fmt.Errorf("thread root must have presented and canonical identity")
+	var machineRoot *MachineMessage
+	rootIdentity := ""
+	seenTopLevel := make(map[string]bool)
+	if rootIndex >= 0 {
+		root := value.Messages[rootIndex]
+		rootIdentity = messageIdentity(root)
+		if rootIdentity == "" || root.ID == "" {
+			return ThreadEnvelope{}, fmt.Errorf("thread root must have presented and canonical identity")
+		}
+		seen := map[string]bool{rootIdentity: true, root.ID: true}
+		seenTopLevel[rootIdentity], seenTopLevel[root.ID] = true, true
+		for index, reply := range root.Replies {
+			if len(reply.Replies) != 0 {
+				return ThreadEnvelope{}, fmt.Errorf("thread reply %d contains nested replies", index)
+			}
+			replyRootIdentity := reply.CanonicalRootID
+			if replyRootIdentity == "" {
+				replyRootIdentity = reply.RootID
+			}
+			if reply.RootID != root.ID || replyRootIdentity != rootIdentity {
+				return ThreadEnvelope{}, fmt.Errorf("thread reply %d does not reference root", index)
+			}
+			replyIdentity := messageIdentity(reply)
+			if replyIdentity == "" || reply.ID == "" || seen[replyIdentity] || seen[reply.ID] {
+				return ThreadEnvelope{}, fmt.Errorf("thread reply %d has missing or duplicate identity", index)
+			}
+			seen[replyIdentity], seen[reply.ID] = true, true
+			seenTopLevel[replyIdentity], seenTopLevel[reply.ID] = true, true
+		}
+		converted := history.Messages[rootIndex]
+		machineRoot = &converted
 	}
-	seen := map[string]bool{rootIdentity: true, root.ID: true}
-	for index, reply := range root.Replies {
-		if len(reply.Replies) != 0 {
-			return ThreadEnvelope{}, fmt.Errorf("thread reply %d contains nested replies", index)
+	unbound := make([]MachineMessage, len(unboundIndexes))
+	for outputIndex, messageIndex := range unboundIndexes {
+		post := value.Messages[messageIndex]
+		if len(post.Replies) != 0 {
+			return ThreadEnvelope{}, fmt.Errorf("unbound post %d contains nested replies", outputIndex)
 		}
-		replyRootIdentity := reply.CanonicalRootID
-		if replyRootIdentity == "" {
-			replyRootIdentity = reply.RootID
+		identity := messageIdentity(post)
+		if identity == "" || post.ID == "" || seenTopLevel[identity] || seenTopLevel[post.ID] {
+			return ThreadEnvelope{}, fmt.Errorf("unbound post %d has missing or duplicate identity", outputIndex)
 		}
-		if reply.RootID != root.ID || replyRootIdentity != rootIdentity {
-			return ThreadEnvelope{}, fmt.Errorf("thread reply %d does not reference root", index)
+		if rootIdentity != "" {
+			postRoot := post.CanonicalRootID
+			if postRoot == "" {
+				postRoot = post.RootID
+			}
+			if postRoot == rootIdentity {
+				return ThreadEnvelope{}, fmt.Errorf("unbound post %d should be grouped under the proven root", outputIndex)
+			}
 		}
-		replyIdentity := reply.CanonicalID
-		if replyIdentity == "" {
-			replyIdentity = reply.ID
-		}
-		if replyIdentity == "" || reply.ID == "" || seen[replyIdentity] || seen[reply.ID] {
-			return ThreadEnvelope{}, fmt.Errorf("thread reply %d has missing or duplicate identity", index)
-		}
-		seen[replyIdentity], seen[reply.ID] = true, true
+		seenTopLevel[identity], seenTopLevel[post.ID] = true, true
+		unbound[outputIndex] = history.Messages[messageIndex]
 	}
 	return ThreadEnvelope{Schema: "mm/v2/thread", Data: ThreadData{
-		Channel: history.Channel, Root: history.Messages[0],
+		Channel: history.Channel, Root: machineRoot, UnboundPosts: unbound,
 		Redactions: history.Redactions, Metadata: history.Metadata,
 	}}, nil
+}
+
+func validateThreadRetrieval(value Retrieval, completeness MachineCompleteness) error {
+	queryTruncated := value.Selection.QueryTruncated
+	visible := value.VisibleThreads
+	switch completeness {
+	case MachineComplete:
+		if queryTruncated == nil || *queryTruncated || visible.Status != "complete" || visible.HydratedRootCount != 1 || len(visible.FailedRootIDs) != 0 {
+			return fmt.Errorf("complete thread retrieval requires confirmed complete query and hydration metadata")
+		}
+	case MachineTruncated:
+		if queryTruncated == nil || !*queryTruncated || visible.Status != "partial" || visible.HydratedRootCount != 0 || len(visible.FailedRootIDs) == 0 {
+			return fmt.Errorf("truncated thread retrieval requires confirmed truncation and partial hydration metadata")
+		}
+	case MachineUnknown:
+		if queryTruncated != nil || visible.Status != "partial" || visible.HydratedRootCount != 0 || len(visible.FailedRootIDs) == 0 {
+			return fmt.Errorf("unknown thread retrieval requires unknown query and partial hydration metadata")
+		}
+	default:
+		return fmt.Errorf("invalid machine completeness %q", completeness)
+	}
+	return nil
+}
+
+func messageIdentity(message Message) string {
+	if message.CanonicalID != "" {
+		return message.CanonicalID
+	}
+	return message.ID
 }
 
 func machineHistories(values []MessageOutput, completeness MachineCompleteness, source string, channelTypes ...string) ([]MachineHistory, error) {

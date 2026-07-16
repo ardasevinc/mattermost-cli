@@ -237,13 +237,67 @@ func TestMachineConversionRejectsInvalidVocabularyAndAmbiguousThreads(t *testing
 	}
 }
 
+func TestThreadEnvelopeKeepsUnknownShapeUnboundInsteadOfInventingRoot(t *testing.T) {
+	value := validOutput()
+	value.Retrieval.Selection.Source = "thread"
+	value.Retrieval.Selection.QueryTruncated = nil
+	value.Retrieval.VisibleThreads = output.VisibleThreads{Status: "partial", FailedRootIDs: []string{"requested"}}
+	known := false
+	value.Messages[0].CanonicalThreadShapeKnown = &known
+	value.Messages[0].Replies = nil
+	envelope, err := output.NewThreadEnvelope(value, output.MachineUnknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Root != nil || len(envelope.Data.UnboundPosts) != 1 || envelope.Data.UnboundPosts[0].ID != value.Messages[0].ID {
+		t.Fatalf("unexpected rootless envelope: %#v", envelope.Data)
+	}
+}
+
+func TestThreadEnvelopeRejectsContradictoryRetrievalMetadata(t *testing.T) {
+	for name, corrupt := range map[string]func(*output.MessageOutput, *output.MachineCompleteness){
+		"complete with partial hydration": func(value *output.MessageOutput, _ *output.MachineCompleteness) {
+			value.Retrieval.VisibleThreads = output.VisibleThreads{Status: "partial", FailedRootIDs: []string{"root"}}
+		},
+		"truncated with complete hydration": func(value *output.MessageOutput, completeness *output.MachineCompleteness) {
+			*completeness = output.MachineTruncated
+			truncated := true
+			value.Retrieval.Selection.QueryTruncated = &truncated
+		},
+		"unknown with known query status": func(value *output.MessageOutput, completeness *output.MachineCompleteness) {
+			*completeness = output.MachineUnknown
+			value.Retrieval.VisibleThreads = output.VisibleThreads{Status: "partial", FailedRootIDs: []string{"root"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := validOutput()
+			value.Retrieval.Selection.Source = "thread"
+			completeness := output.MachineComplete
+			corrupt(&value, &completeness)
+			if _, err := output.NewThreadEnvelope(value, completeness); err == nil {
+				t.Fatal("contradictory thread retrieval metadata accepted")
+			}
+		})
+	}
+
+	value := validOutput()
+	value.Retrieval.Selection.Source = "thread"
+	truncated := true
+	value.Retrieval.Selection.QueryTruncated = &truncated
+	value.Retrieval.VisibleThreads = output.VisibleThreads{Status: "partial", FailedRootIDs: []string{"root"}}
+	if _, err := output.NewThreadEnvelope(value, output.MachineTruncated); err != nil {
+		t.Fatalf("consistent truncated thread rejected: %v", err)
+	}
+}
+
 func validOutput() output.MessageOutput {
 	zone := time.FixedZone("source", 3*60*60)
 	stamp := time.Date(2026, 7, 16, 13, 14, 15, 987654321, zone)
 	limit, truncated := 10, false
+	known := true
 	return output.MessageOutput{
 		Channel:    output.Channel{ID: "c1", Type: "public", Name: "town-square", DisplayName: "Town Square", MetadataStatus: "resolved"},
-		Messages:   []output.Message{{ID: "root", CanonicalID: "root", User: "arda", UserID: "u1", Text: "root", Timestamp: stamp, UpdatedAt: stamp, Replies: []output.Message{{ID: "reply", CanonicalID: "reply", RootID: "root", CanonicalRootID: "root", User: "bob", UserID: "u2", Text: "reply", Timestamp: stamp, UpdatedAt: stamp}}}},
+		Messages:   []output.Message{{ID: "root", CanonicalID: "root", CanonicalThreadShapeKnown: &known, User: "arda", UserID: "u1", Text: "root", Timestamp: stamp, UpdatedAt: stamp, Replies: []output.Message{{ID: "reply", CanonicalID: "reply", RootID: "root", CanonicalRootID: "root", CanonicalThreadShapeKnown: &known, User: "bob", UserID: "u2", Text: "reply", Timestamp: stamp, UpdatedAt: stamp}}}},
 		Redactions: []output.Redaction{{Type: "token", Masked: "abc***xyz", Position: 0}},
 		Retrieval: output.Retrieval{
 			Selection:      output.Selection{Source: "recent", SelectedCount: 2, RequestedLimit: &limit, QueryTruncated: &truncated},
