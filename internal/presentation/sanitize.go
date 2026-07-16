@@ -22,8 +22,9 @@ type Result struct {
 }
 
 type span struct {
-	start int
-	end   int
+	start   int
+	end     int
+	secrets []DetectedSecret
 }
 
 func SanitizeControls(text string) string {
@@ -45,7 +46,21 @@ func SanitizeLabel(text string) string {
 }
 
 func Preprocess(text string, credentials []string) Result {
-	spans := credentialSpans(text, credentials)
+	return PreprocessWithOptions(text, Options{Credentials: credentials})
+}
+
+type Options struct {
+	Credentials       []string
+	DisableHeuristics bool
+}
+
+func PreprocessWithOptions(text string, options Options) Result {
+	secrets := make([]DetectedSecret, 0)
+	if !options.DisableHeuristics {
+		secrets = append(secrets, DetectSecrets(text)...)
+	}
+	secrets = append(secrets, exactCredentialSecrets(text, options.Credentials)...)
+	spans := groupOverlappingSecrets(secrets)
 	if len(spans) == 0 {
 		return Result{Text: SanitizeControls(text), Redactions: []Redaction{}}
 	}
@@ -57,8 +72,12 @@ func Preprocess(text string, credentials []string) Result {
 	for _, current := range spans {
 		raw.WriteString(text[cursor:current.start])
 		positions = append(positions, raw.Len())
-		raw.WriteString(credentialMask)
-		redactions = append(redactions, Redaction{Type: "mattermost_credential", Masked: credentialMask})
+		kind, types := dominantSecretTypes(current.secrets)
+		masked := MaskSecret(text[current.start:current.end], kind)
+		raw.WriteString(masked)
+		redactions = append(redactions, Redaction{
+			Type: strings.Join(types, "+"), Masked: SanitizeControls(masked),
+		})
 		cursor = current.end
 	}
 	raw.WriteString(text[cursor:])
@@ -73,8 +92,8 @@ func PreprocessActive(text string) Result {
 	return Preprocess(text, ActiveCredentials.Values())
 }
 
-func credentialSpans(text string, credentials []string) []span {
-	var spans []span
+func exactCredentialSecrets(text string, credentials []string) []DetectedSecret {
+	var secrets []DetectedSecret
 	seenCredential := make(map[string]struct{}, len(credentials))
 	for _, credential := range credentials {
 		if credential == "" {
@@ -90,27 +109,63 @@ func credentialSpans(text string, credentials []string) []span {
 				break
 			}
 			start := offset + index
-			spans = append(spans, span{start: start, end: start + len(credential)})
+			secrets = append(secrets, DetectedSecret{
+				Type: "mattermost_credential", Value: credential, Start: start, End: start + len(credential),
+			})
 			offset = start + len(credential)
 		}
 	}
-	sort.Slice(spans, func(i, j int) bool {
-		if spans[i].start != spans[j].start {
-			return spans[i].start < spans[j].start
+	return secrets
+}
+
+func groupOverlappingSecrets(secrets []DetectedSecret) []span {
+	sort.SliceStable(secrets, func(i, j int) bool {
+		if secrets[i].Start != secrets[j].Start {
+			return secrets[i].Start < secrets[j].Start
 		}
-		return spans[i].end > spans[j].end
+		return secrets[i].End > secrets[j].End
 	})
-	merged := make([]span, 0, len(spans))
-	for _, current := range spans {
-		if len(merged) == 0 || current.start >= merged[len(merged)-1].end {
-			merged = append(merged, current)
+	groups := make([]span, 0, len(secrets))
+	for _, secret := range secrets {
+		if len(groups) == 0 || secret.Start >= groups[len(groups)-1].end {
+			groups = append(groups, span{start: secret.Start, end: secret.End, secrets: []DetectedSecret{secret}})
 			continue
 		}
-		if current.end > merged[len(merged)-1].end {
-			merged[len(merged)-1].end = current.end
+		current := &groups[len(groups)-1]
+		if secret.End > current.end {
+			current.end = secret.End
+		}
+		current.secrets = append(current.secrets, secret)
+	}
+	return groups
+}
+
+func dominantSecretTypes(secrets []DetectedSecret) (string, []string) {
+	types := make([]string, 0, len(secrets))
+	seen := make(map[string]struct{}, len(secrets))
+	dominant := "secret"
+	for _, secret := range secrets {
+		if _, exists := seen[secret.Type]; !exists {
+			seen[secret.Type] = struct{}{}
+			types = append(types, secret.Type)
+		}
+		if secret.Type == "mattermost_credential" {
+			dominant = secret.Type
 		}
 	}
-	return merged
+	if dominant == "secret" && len(types) > 0 {
+		dominant = types[0]
+	}
+	if dominant == "mattermost_credential" && len(types) > 0 && types[0] != dominant {
+		for index, kind := range types {
+			if kind == dominant {
+				types = append(types[:index], types[index+1:]...)
+				break
+			}
+		}
+		types = append([]string{dominant}, types...)
+	}
+	return dominant, types
 }
 
 func unsafeControl(character rune) bool {

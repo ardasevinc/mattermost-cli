@@ -97,3 +97,44 @@ func TestPreprocessSanitizesPrefixBeforeComputingPosition(t *testing.T) {
 		t.Fatalf("Position = %d, want %d", got, want)
 	}
 }
+
+func TestPreprocessHeuristicRedactionCanBeDisabledWithoutDisablingCredentialMasking(t *testing.T) {
+	token := "ghp_" + strings.Repeat("a", 36)
+	active := "active-token"
+	withPatterns := Preprocess(token, nil)
+	if withPatterns.Text == token || len(withPatterns.Redactions) != 1 {
+		t.Fatalf("heuristic redaction missing: %+v", withPatterns)
+	}
+	withoutPatterns := PreprocessWithOptions(token+" "+active, Options{
+		Credentials: []string{active}, DisableHeuristics: true,
+	})
+	if got, want := withoutPatterns.Text, token+" "+credentialMask; got != want {
+		t.Fatalf("disabled heuristic result = %q, want %q", got, want)
+	}
+}
+
+func TestPreprocessNeverReappendsOverlappingPlaintext(t *testing.T) {
+	text := "postgres://api_key=ABCDEFGHIJKLMNOPQRSTUVWXYZ123456:supersecret@db.internal/prod"
+	result := Preprocess(text, nil)
+	if len(result.Redactions) != 1 || result.Redactions[0].Type != "connection_string+api_key" {
+		t.Fatalf("redactions = %+v", result.Redactions)
+	}
+	for _, secret := range []string{"ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", "supersecret", "db.internal"} {
+		if strings.Contains(result.Text, secret) {
+			t.Fatalf("redacted text leaked %q: %q", secret, result.Text)
+		}
+	}
+}
+
+func TestPreprocessSanitizesRedactionProvenanceMasks(t *testing.T) {
+	result := Preprocess("password=\x1bAAAAAAAAX", nil)
+	if len(result.Redactions) != 1 {
+		t.Fatalf("redactions = %+v", result.Redactions)
+	}
+	if strings.ContainsRune(result.Redactions[0].Masked, '\x1b') {
+		t.Fatalf("provenance retained live escape: %+v", result.Redactions[0])
+	}
+	if !strings.Contains(result.Redactions[0].Masked, `\u001b`) {
+		t.Fatalf("provenance did not make escape visible: %+v", result.Redactions[0])
+	}
+}
