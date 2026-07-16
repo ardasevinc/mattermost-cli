@@ -172,6 +172,10 @@ func (MentionsEnvelope) machineDocument() {}
 func (ErrorEnvelope) machineDocument()    {}
 func (ConfigEnvelope) machineDocument()   {}
 func (DoctorEnvelope) machineDocument()   {}
+func (WhoAmIEnvelope) machineDocument()   {}
+func (TeamsEnvelope) machineDocument()    {}
+func (UsersEnvelope) machineDocument()    {}
+func (ChannelsEnvelope) machineDocument() {}
 
 type wireMessage struct {
 	ID          string           `json:"id"`
@@ -290,6 +294,8 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 	case ConfigEnvelope:
 		return value, nil
 	case DoctorEnvelope:
+		return value, nil
+	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
 		return value, nil
 	default:
 		return nil, fmt.Errorf("unsupported machine document type %T", document)
@@ -461,12 +467,18 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope, WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
 	}
 	if doctorDocument, ok := document.(DoctorEnvelope); ok {
 		if err := validateDoctorEnvelope(doctorDocument); err != nil {
+			return err
+		}
+	}
+	switch document.(type) {
+	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
+		if err := validateIdentityDocument(document); err != nil {
 			return err
 		}
 	}
