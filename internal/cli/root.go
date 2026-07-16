@@ -28,7 +28,9 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		message := presentation.SanitizeLabel(presentation.PreprocessActive(err.Error()).Text)
-		_, _ = fmt.Fprintf(errOut, "error: %s\n", message)
+		if writeErr := writeAll(errOut, []byte(fmt.Sprintf("error: %s\n", message))); writeErr != nil {
+			return 3
+		}
 		var outputFailure outputError
 		if errors.As(err, &outputFailure) {
 			return 3

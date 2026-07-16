@@ -125,6 +125,14 @@ func TestSchemaShowTreatsShortWriteAsReadFailure(t *testing.T) {
 	}
 }
 
+func TestErrorOutputShortWriteReturnsOutputFailure(t *testing.T) {
+	var stdout bytes.Buffer
+	code := Execute(context.Background(), []string{"unknown"}, strings.NewReader(""), &stdout, shortWriter{})
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+}
+
 type shortWriter struct{}
 
 func (shortWriter) Write(data []byte) (int, error) {
