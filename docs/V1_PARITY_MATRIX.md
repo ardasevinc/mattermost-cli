@@ -17,40 +17,40 @@ This is the removal gate for the TypeScript implementation. A row may become `ve
 
 | Surface | v1 behavior | v2 disposition | Status |
 | --- | --- | --- | --- |
-| binary | `mm` | same public name at cutover | oracle |
-| `--help` | Commander help | Cobra help, artifact-smoked | oracle |
-| `--version` | package version | Go build metadata, artifact-smoked | oracle |
-| `-t`, `--token` | credential CLI override | preserve | oracle |
-| `--url` | server URL CLI override | preserve | oracle |
+| binary | `mm` | same public name at cutover | scaffolded |
+| `--help` | Commander help | Cobra help, artifact-smoked | scaffolded |
+| `--version` | package version | Go build metadata, artifact-smoked | scaffolded |
+| `-t`, `--token` | credential CLI override | preserve | scaffolded |
+| `--url` | server URL CLI override | preserve | scaffolded |
 | `--json` | command JSON; watch JSONL | replace with schema-identified `mm/v2` JSON/JSONL | intentionally_changed |
-| `--no-color` | disables ANSI, not output-format selection | preserve | oracle |
-| `-r`, `--relative` | relative timestamps | preserve | oracle |
-| `--no-relative` | absolute timestamps | preserve | oracle |
-| agent relative default | `is-ai-agent` enables relative output | preserve semantically with Go detection | oracle |
-| `--redact` | enable heuristic redaction | preserve | oracle |
-| `--no-redact` | disable heuristic redaction, never active-token masking | preserve | oracle |
-| `--threads` | hydrate complete visible threads | preserve | oracle |
-| `--no-threads` | selected seeds only except `thread` | preserve | oracle |
-| numeric validation | canonical positive safe integer only | preserve bounded canonical integer validation | oracle |
-| duration validation | `^\d+[hdwm]$` | preserve | oracle |
+| `--no-color` | disables ANSI, not output-format selection | preserve | scaffolded |
+| `-r`, `--relative` | relative timestamps | preserve | scaffolded |
+| `--no-relative` | absolute timestamps | preserve | scaffolded |
+| agent relative default | `is-ai-agent` enables relative output | preserve semantically with Go detection | scaffolded |
+| `--redact` | enable heuristic redaction | preserve | scaffolded |
+| `--no-redact` | disable heuristic redaction, never active-token masking | preserve | scaffolded |
+| `--threads` | hydrate complete visible threads | preserve | scaffolded |
+| `--no-threads` | selected seeds only except `thread` | preserve | scaffolded |
+| numeric validation | canonical positive safe integer only | preserve bounded canonical integer validation | scaffolded |
+| duration validation | `^\d+[hdwm]$` | preserve | scaffolded |
 | URL normalization | WHATWG normalization plus custom loopback test | preserve safe canonicalization; reject transport-ambiguous IPv4/backslash forms | intentionally_changed |
 
 ## Configuration
 
 | Surface | v1 behavior | v2 disposition | Status |
 | --- | --- | --- | --- |
-| default path | `~/.config/mattermost-cli/config.toml` | preserve on every OS | oracle |
+| default path | `~/.config/mattermost-cli/config.toml` | preserve on every OS | scaffolded |
 | XDG path | ignored | use absolute `$XDG_CONFIG_HOME`, mandatory read-only v1 fallback | intentionally_changed |
-| `url` | TOML server URL | preserve | oracle |
-| `token` | TOML PAT | preserve | oracle |
-| `redact` | TOML default | preserve | oracle |
-| `mention_names` | trimmed non-empty string array | preserve | oracle |
-| `MM_URL` | URL env override | preserve | oracle |
-| `MM_TOKEN` | token env override | preserve | oracle |
-| `MM_REDACT` | `false` disables; other defined values enable | preserve | oracle |
-| precedence | CLI, env, file, defaults | preserve | oracle |
-| init | non-overwriting, mode `0600` | preserve at selected v2 path | oracle |
-| permissions | diagnose group/other access; token exposure can be fatal | preserve/fail closed | oracle |
+| `url` | TOML server URL | preserve | scaffolded |
+| `token` | TOML PAT | preserve | scaffolded |
+| `redact` | TOML default | preserve | scaffolded |
+| `mention_names` | trimmed non-empty string array | preserve | scaffolded |
+| `MM_URL` | URL env override | preserve | scaffolded |
+| `MM_TOKEN` | token env override | preserve | scaffolded |
+| `MM_REDACT` | `false` disables; other defined values enable | preserve | scaffolded |
+| precedence | CLI, env, file, defaults | preserve | scaffolded |
+| init | non-overwriting, mode `0600` | preserve at selected v2 path | scaffolded |
+| permissions | diagnose group/other access; token exposure can be fatal | preserve/fail closed | scaffolded |
 | state path | none | XDG state with `~/.local/state` fallback | intentionally_changed |
 
 ## Read, diagnostic, and watch commands
@@ -58,17 +58,17 @@ This is the removal gate for the TypeScript implementation. A row may become `ve
 | Command | Flags/defaults | Required v2 behavior | Status |
 | --- | --- | --- | --- |
 | `doctor` | global flags | same read-only readiness checks; `mm/v2/doctor` | oracle |
-| `config` | `--path`, `--init` | preserve plus deterministic XDG migration warning | oracle |
-| `whoami` | global flags | narrow validated identity | oracle |
-| `teams` | global flags | validated deterministic teams | oracle |
-| `users [query]` | `--team`, `-l`/`--limit 20` | preserve exact directory semantics | oracle |
-| `channels` | `--type all`; `dm/public/private/group/all` | preserve account-wide dedupe/team identity | oracle |
-| `dms` | repeated `-u`/`--user`; `-l`/`--limit 50`; `-s`/`--since 7d`; `-c`/`--channel`; `--cursor` | preserve exact D-channel and aggregate semantics | oracle |
-| `group-dms` | `-l`/`--limit 50`; `-s`/`--since 7d`; `-c`/`--channel`; `--cursor` | preserve exact G-channel and aggregate semantics | oracle |
-| `channel <name>` | `--team`; `-l`/`--limit 50`; `-s`/`--since 7d`; `--cursor` | preserve team-aware resolution | oracle |
-| `thread <postId>` | always hydrate | preserve | oracle |
-| `search <query>` | `--team`; `-l`/`--limit 50` | preserve bounded search/completeness | oracle |
-| `mentions` | `--team`; `-l`/`--limit 50`; optional `-s`/`--since`; `--channel` | preserve aliases and resolution | oracle |
+| `config` | `--path`, `--init` | preserve plus deterministic XDG migration warning | scaffolded |
+| `whoami` | global flags | narrow validated identity | scaffolded |
+| `teams` | global flags | validated deterministic teams | scaffolded |
+| `users [query]` | `--team`, `-l`/`--limit 20` | preserve exact directory semantics | scaffolded |
+| `channels` | `--type all`; `dm/public/private/group/all` | preserve account-wide dedupe/team identity | scaffolded |
+| `dms` | repeated `-u`/`--user`; `-l`/`--limit 50`; `-s`/`--since 7d`; `-c`/`--channel`; `--cursor` | preserve exact D-channel and aggregate semantics | scaffolded |
+| `group-dms` | `-l`/`--limit 50`; `-s`/`--since 7d`; `-c`/`--channel`; `--cursor` | preserve exact G-channel and aggregate semantics | scaffolded |
+| `channel <name>` | `--team`; `-l`/`--limit 50`; `-s`/`--since 7d`; `--cursor` | preserve team-aware resolution | scaffolded |
+| `thread <postId>` | always hydrate | preserve | scaffolded |
+| `search <query>` | `--team`; `-l`/`--limit 50` | preserve bounded search/completeness | scaffolded |
+| `mentions` | `--team`; `-l`/`--limit 50`; optional `-s`/`--since`; `--channel` | preserve aliases and resolution | scaffolded |
 | `unread` | `--team`; `--peek` | preserve metrics/sorting/fail-closed empty | oracle |
 | `watch [channel]` | `--team`; `--dm` | preserve auth, heartbeat, reconnect, gap diagnostics | oracle |
 
