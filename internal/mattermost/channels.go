@@ -182,6 +182,46 @@ func (l *channelList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type selectedChannelList struct {
+	wanted   map[string]bool
+	channels []Channel
+}
+
+func (l *selectedChannelList) UnmarshalJSON(data []byte) error {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(data, &rows); err != nil || rows == nil {
+		return ErrInvalidChannelsResponse
+	}
+	channels := make([]Channel, 0)
+	for _, row := range rows {
+		var discriminator struct {
+			Type json.RawMessage `json:"type"`
+		}
+		if json.Unmarshal(row, &discriminator) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		typeCode, ok := requiredString(discriminator.Type)
+		if !ok || (typeCode != "O" && typeCode != "P" && typeCode != "D" && typeCode != "G") {
+			return ErrInvalidChannelsResponse
+		}
+		if !l.wanted[typeCode] {
+			continue
+		}
+		var channel Channel
+		if json.Unmarshal(row, &channel) != nil {
+			return ErrInvalidChannelsResponse
+		}
+		channels = append(channels, channel)
+	}
+	l.channels = channels
+	return nil
+}
+
+type ChannelSelection struct {
+	Channels   []Channel
+	Membership TeamMembership
+}
+
 type directChannelList []Channel
 
 func (l *directChannelList) UnmarshalJSON(data []byte) error {
@@ -341,21 +381,39 @@ func canonicalChannelRequestID(value string) bool {
 // checked before any result is released. Team membership is fetched through
 // the same transport so proof cannot be mixed across sessions or servers.
 func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
-	if strings.TrimSpace(userID) == "" || userID == "me" {
-		return nil, ErrInvalidChannelRequest
-	}
-	var decoded channelList
-	if err := s.client.Get(ctx, "/users/"+url.PathEscape(userID)+"/channels", &decoded); err != nil {
+	selection, err := s.ListSelected(ctx, userID, "O", "P", "D", "G")
+	if err != nil {
 		return nil, err
 	}
-	channels := []Channel(decoded)
+	return selection.Channels, nil
+}
+
+// ListSelected validates every row's discriminator before fully decoding only
+// the requested channel types. The returned team snapshot is the exact proof
+// used to bind selected O/P channels and is empty when no selected O/P exists.
+func (s *Channels) ListSelected(ctx context.Context, userID string, types ...string) (ChannelSelection, error) {
+	if strings.TrimSpace(userID) == "" || userID == "me" {
+		return ChannelSelection{}, ErrInvalidChannelRequest
+	}
+	wanted := make(map[string]bool, len(types))
+	for _, typeCode := range types {
+		if typeCode != "O" && typeCode != "P" && typeCode != "D" && typeCode != "G" {
+			return ChannelSelection{}, ErrInvalidChannelRequest
+		}
+		wanted[typeCode] = true
+	}
+	var decoded = selectedChannelList{wanted: wanted}
+	if err := s.client.Get(ctx, "/users/"+url.PathEscape(userID)+"/channels", &decoded); err != nil {
+		return ChannelSelection{}, err
+	}
+	channels := decoded.channels
 	var membership TeamMembership
 	for _, channel := range channels {
 		if channel.Type == "O" || channel.Type == "P" {
 			var err error
 			membership, err = NewTeams(s.client).List(ctx, userID)
 			if err != nil {
-				return nil, err
+				return ChannelSelection{}, err
 			}
 			break
 		}
@@ -365,7 +423,7 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 	for _, channel := range channels {
 		if previous, duplicate := seen[channel.ID]; duplicate {
 			if previous != channel {
-				return nil, ErrInvalidChannelsResponse
+				return ChannelSelection{}, ErrInvalidChannelsResponse
 			}
 			continue
 		}
@@ -376,17 +434,17 @@ func (s *Channels) List(ctx context.Context, userID string) ([]Channel, error) {
 		switch channel.Type {
 		case "O", "P":
 			if !membership.contains(channel.TeamID) {
-				return nil, ErrInvalidChannelsResponse
+				return ChannelSelection{}, ErrInvalidChannelsResponse
 			}
 		case "D":
 			if !directChannelContains(channel.Name, userID) {
-				return nil, ErrInvalidChannelResponse
+				return ChannelSelection{}, ErrInvalidChannelResponse
 			}
 		}
 		result = append(result, channel)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result, nil
+	return ChannelSelection{Channels: result, Membership: membership}, nil
 }
 
 // ListForUnread preserves List's bounded identity proof while refusing to

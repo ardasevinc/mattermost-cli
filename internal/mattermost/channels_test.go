@@ -306,6 +306,61 @@ func TestChannelListDoesNotRequireTeamsForDirectOnlyDiscovery(t *testing.T) {
 	}
 }
 
+func TestListSelectedFiltersBeforeOneExactTeamProof(t *testing.T) {
+	public := `{"id":"public","team_id":"team","type":"O","name":"general","display_name":"General"}`
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels": `[` + public + `,{"type":"P","malformed":true},{"id":"dm","team_id":"","type":"D","name":"user__other","display_name":""}]`,
+		"/users/user/teams":    `[{"id":"team","name":"core","display_name":"Core","type":"O"}]`,
+	}}
+	selection, err := NewChannels(f).ListSelected(context.Background(), "user", "O")
+	if err != nil || len(selection.Channels) != 1 || selection.Channels[0].ID != "public" || len(selection.Membership.Items()) != 1 {
+		t.Fatalf("selection=%+v err=%v", selection, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels", "/users/user/teams"}) {
+		t.Fatalf("paths=%v", f.paths)
+	}
+}
+
+func TestListSelectedEmptyOppositeFilterDoesNotReadTeams(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[{"type":"P","malformed":true},{"id":"d","team_id":"","type":"D","name":"user__other","display_name":""}]`}}
+	selection, err := NewChannels(f).ListSelected(context.Background(), "user", "O")
+	if err != nil || selection.Channels == nil || len(selection.Channels) != 0 || len(selection.Membership.Items()) != 0 {
+		t.Fatalf("selection=%+v err=%v", selection, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+		t.Fatalf("paths=%v", f.paths)
+	}
+}
+
+func TestListSelectedRejectsMalformedDiscardedDiscriminatorAndSelectedDuplicates(t *testing.T) {
+	for name, payload := range map[string]string{
+		"missing discriminator":          `[{"id":"discarded"}]`,
+		"unknown discriminator":          `[{"type":"X"}]`,
+		"conflicting selected duplicate": `[{"id":"d","team_id":"","type":"D","name":"user__a","display_name":""},{"id":"d","team_id":"","type":"D","name":"user__b","display_name":""}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			if _, err := NewChannels(f).ListSelected(context.Background(), "user", "D"); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestListSelectedAllUsesOneTeamProof(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels": `[{"id":"o","team_id":"team","type":"O","name":"general","display_name":""},{"id":"d","team_id":"","type":"D","name":"user__other","display_name":""}]`,
+		"/users/user/teams":    `[{"id":"team","name":"core","type":"O"}]`,
+	}}
+	selection, err := NewChannels(f).ListSelected(context.Background(), "user", "O", "P", "D", "G")
+	if err != nil || len(selection.Channels) != 2 || len(selection.Membership.Items()) != 1 {
+		t.Fatalf("selection=%+v err=%v", selection, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/user/channels", "/users/user/teams"}) {
+		t.Fatalf("paths=%v", f.paths)
+	}
+}
+
 func TestListForUnreadRequiresPresentTotalsWithoutFanout(t *testing.T) {
 	for name, payload := range map[string]string{
 		"missing": `[{"id":"remote-secret","team_id":"","type":"D","name":"user__other","display_name":""}]`,
