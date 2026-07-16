@@ -133,6 +133,30 @@ func TestCacheReplacementCannotResolveAStaleUsername(t *testing.T) {
 	}
 }
 
+func TestByUsernameFreshObservesReassignmentAndRepairsNameCache(t *testing.T) {
+	transport := &fakeUsersTransport{responses: []string{
+		`{"id":"former","username":"shared"}`,
+		`{"id":"new-owner","username":"shared"}`,
+	}}
+	users := NewUsers(transport)
+	former, err := users.ByUsername(context.Background(), "shared")
+	if err != nil || former.ID != "former" {
+		t.Fatalf("former/error = %#v/%v", former, err)
+	}
+	owner, err := users.ByUsernameFresh(context.Background(), "shared")
+	if err != nil || owner.ID != "new-owner" {
+		t.Fatalf("owner/error = %#v/%v", owner, err)
+	}
+	cached, err := users.ByUsername(context.Background(), "shared")
+	if err != nil || cached.ID != "new-owner" || len(transport.calls) != 2 {
+		t.Fatalf("cached/error/calls = %#v/%v/%d", cached, err, len(transport.calls))
+	}
+	byID, err := users.ByID(context.Background(), "former")
+	if err != nil || byID.ID != "former" || len(transport.calls) != 2 {
+		t.Fatalf("immutable ID cache = %#v/%v", byID, err)
+	}
+}
+
 func TestByIDsDeduplicatesRequestPreservesOrderAndRequiresCompleteResult(t *testing.T) {
 	transport := &fakeUsersTransport{responses: []string{`[
 		{"id":"b","username":"bob"},{"id":"a","username":"alice"}

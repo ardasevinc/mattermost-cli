@@ -141,6 +141,16 @@ func (s *Users) ByUsername(ctx context.Context, username string) (User, error) {
 	if ok && present && strings.EqualFold(user.Username, username) {
 		return user, nil
 	}
+	return s.ByUsernameFresh(ctx, username)
+}
+
+// ByUsernameFresh always performs an authenticated remote lookup. It is used
+// by mutation staging so a username reassigned since an earlier read cannot
+// bind the former account from the session cache.
+func (s *Users) ByUsernameFresh(ctx context.Context, username string) (User, error) {
+	if strings.TrimSpace(username) == "" {
+		return User{}, ErrInvalidUserRequest
+	}
 	var fetched User
 	if err := s.client.Get(ctx, "/users/username/"+url.PathEscape(username), &fetched); err != nil {
 		return User{}, err
@@ -284,8 +294,14 @@ func (s *Users) cache(user User) {
 			delete(s.byName, previousKey)
 		}
 	}
+	key := strings.ToLower(user.Username)
+	if previousID, ok := s.byName[key]; ok && previousID != user.ID {
+		// Keep the previous profile addressable by immutable ID, but remove the
+		// stale name edge before installing the reassigned owner.
+		delete(s.byName, key)
+	}
 	s.byID[user.ID] = user
-	s.byName[strings.ToLower(user.Username)] = user.ID
+	s.byName[key] = user.ID
 }
 
 func encodeQueryComponent(value string) string {
