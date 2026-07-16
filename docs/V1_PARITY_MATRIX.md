@@ -33,6 +33,7 @@ This is the removal gate for the TypeScript implementation. A row may become `ve
 | `--no-threads` | selected seeds only except `thread` | preserve | oracle |
 | numeric validation | canonical positive safe integer only | preserve bounded canonical integer validation | oracle |
 | duration validation | `^\d+[hdwm]$` | preserve | oracle |
+| URL normalization | WHATWG normalization plus custom loopback test | preserve safe canonicalization; reject transport-ambiguous IPv4/backslash forms | intentionally_changed |
 
 ## Configuration
 
@@ -137,7 +138,7 @@ Every row requires a named Go regression test and, where applicable, a language-
 | uncertain mutation requests are never automatically replayed | oracle |
 | confirmed effect plus local receipt/output failure says do not retry | oracle |
 | reads retry only bounded safe failures | oracle |
-| HTTP is allowed only for loopback; unsafe URL components fail closed | oracle |
+| HTTP is allowed only for transport-canonical loopback; unsafe or parser-ambiguous URL components fail closed | intentionally_changed |
 | complete normalized base path is preserved and stage-bound | oracle |
 | read commands never create DMs or perform POST fallback | oracle |
 | dry-run performs no local persistence or remote mutation | oracle |

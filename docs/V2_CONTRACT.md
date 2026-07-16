@@ -407,6 +407,7 @@ The v1 security boundary survives the rewrite:
 
 - HTTPS is required except explicitly allowed loopback HTTP for local testing.
 - URLs with credentials, query strings, fragments, unsafe schemes, or ambiguous normalization fail closed.
+- URL normalization is transport-aligned rather than blindly WHATWG-compatible. Safe canonicalizations such as IDNA hostnames, dot-segment resolution, lowercase hosts, and default-port removal are preserved. Host spellings that Go's dialer could interpret differently from validation, including shorthand or leading-zero IPv4, and backslash authority forms are rejected. Loopback HTTP requires `localhost` or a canonical `netip` loopback address.
 - User-controlled path components are encoded.
 - Mutation requests do not follow redirects.
 - Active credentials are ownership-scoped and fully masked everywhere.
