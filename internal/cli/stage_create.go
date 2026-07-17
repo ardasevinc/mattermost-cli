@@ -491,6 +491,10 @@ func classifyStageError(err error) error {
 		return readFailure(errors.New("could not resolve the exact Mattermost target"))
 	case errors.Is(err, staging.ErrConflict):
 		return localStateFailure{errors.New("stage request conflicts with durable local state")}
+	case errors.Is(err, staging.ErrNotFound):
+		return localStateFailure{errors.New("stage not found")}
+	case errors.Is(err, staging.ErrNotEligible):
+		return localStateFailure{errors.New("stage lifecycle transition is not allowed")}
 	case errors.Is(err, staging.ErrStore):
 		return localStateFailure{errors.New("could not persist stage state")}
 	default:

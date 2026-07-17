@@ -3,6 +3,7 @@
 package stagecontent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -32,6 +33,7 @@ type Request struct {
 	Message    string
 	MessageSet bool
 	Machine    bool
+	Initial    []byte
 }
 
 // EditorInvocation is an argv-safe editor execution request. Command and Args
@@ -75,10 +77,10 @@ func Acquire(ctx context.Context, request Request, runtime Runtime) ([]byte, err
 	if request.Machine {
 		return nil, ErrContentRequired
 	}
-	return acquireEditor(ctx, runtime)
+	return acquireEditor(ctx, runtime, request.Initial)
 }
 
-func acquireEditor(ctx context.Context, runtime Runtime) ([]byte, error) {
+func acquireEditor(ctx context.Context, runtime Runtime, initial []byte) ([]byte, error) {
 	lookup := runtime.LookupEnv
 	if lookup == nil {
 		lookup = os.LookupEnv
@@ -110,6 +112,17 @@ func acquireEditor(ctx context.Context, runtime Runtime) ([]byte, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, ErrEditorOutput
+	}
+	if len(initial) != 0 {
+		validated, validateErr := messageinput.Read(bytes.NewReader(initial))
+		if validateErr != nil || !bytes.Equal(validated, initial) {
+			_ = file.Close()
+			return nil, ErrEditorOutput
+		}
+		if _, err = file.Write(validated); err != nil {
+			_ = file.Close()
+			return nil, ErrEditorOutput
+		}
 	}
 	if err := file.Close(); err != nil {
 		return nil, ErrEditorOutput

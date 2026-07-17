@@ -97,6 +97,27 @@ func TestAcquireEditorVisualPrecedenceAndSafeArgv(t *testing.T) {
 	}
 }
 
+func TestAcquireEditorStartsFromExactValidatedInitialContent(t *testing.T) {
+	want := []byte("# existing\n\n- item\n")
+	got, err := Acquire(context.Background(), Request{Stdin: strings.NewReader("tty"), Initial: want}, Runtime{
+		IsTTY:     func(io.Reader) bool { return true },
+		LookupEnv: func(string) (string, bool) { return "editor", true },
+		RunEditor: func(_ context.Context, value EditorInvocation) error {
+			seeded, readErr := os.ReadFile(value.Path)
+			if readErr != nil {
+				return readErr
+			}
+			if !bytes.Equal(seeded, want) {
+				return errors.New("editor seed changed")
+			}
+			return os.WriteFile(value.Path, append(seeded, []byte("edited\n")...), 0o600)
+		},
+	})
+	if err != nil || string(got) != string(want)+"edited\n" {
+		t.Fatalf("content=%q err=%v", got, err)
+	}
+}
+
 func TestAcquireEditorFallsBackToEditor(t *testing.T) {
 	var command string
 	_, err := Acquire(context.Background(), Request{Stdin: strings.NewReader("tty")}, Runtime{
