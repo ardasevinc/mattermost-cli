@@ -313,6 +313,10 @@ func exitCode(err error) int {
 	if errors.As(err, &outputFailure) {
 		return 3
 	}
+	var local localStateFailure
+	if errors.As(err, &local) {
+		return 6
+	}
 	var classified classifiedError
 	if errors.As(err, &classified) && classified.class == classRead {
 		return 3

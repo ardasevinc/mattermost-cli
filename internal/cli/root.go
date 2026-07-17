@@ -87,6 +87,10 @@ func machineErrorCode(err error) string {
 	if errors.As(err, &operation) {
 		return operation.code
 	}
+	var local localStateFailure
+	if errors.As(err, &local) {
+		return "local_state"
+	}
 	return "invalid_invocation"
 }
 
@@ -125,6 +129,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&state.flags.noThreads, "no-threads", false, "return selected seed posts only")
 	cmd.AddCommand(newSchemaCommand(state))
 	cmd.AddCommand(newStoreCommand(state))
+	cmd.AddCommand(newStageCommand(state))
 	cmd.AddCommand(newConfigCommand(state))
 	cmd.AddCommand(newDoctorCommand(state))
 	cmd.AddCommand(newWhoAmICommand(state))

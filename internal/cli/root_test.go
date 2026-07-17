@@ -174,6 +174,7 @@ func TestMachineErrorCodePreservesSemantics(t *testing.T) {
 		{readFailure(&api.APIError{Status: 401}), "authentication"},
 		{readFailure(&api.APIError{Status: 403}), "authorization"},
 		{outputError{err: errors.New("bad")}, "internal"},
+		{localStateFailure{err: errors.New("bad")}, "local_state"},
 	}
 	for _, test := range tests {
 		if got := machineErrorCode(test.err); got != test.want {
