@@ -44,7 +44,7 @@ npm-packages version release_dir="dist" output="npm-dist":
     go run ./scripts/npm-package --version "{{version}}" --release-dir "{{release_dir}}" --output "{{output}}"
 
 docker-e2e:
-    bun run test:e2e
+    go run ./scripts/e2e
 
 oracle-smoke:
     git diff --quiet v1.6.0 -- src package.json bun.lock tsconfig.json
