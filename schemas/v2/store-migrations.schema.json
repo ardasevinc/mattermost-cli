@@ -6,9 +6,9 @@
   "required": ["schema", "latest", "migrations"],
   "properties": {
     "schema": { "const": "mm/v2/store-migrations" },
-    "latest": { "const": 5 },
+    "latest": { "const": 6 },
     "migrations": {
-      "type": "array", "minItems": 5, "maxItems": 5,
+      "type": "array", "minItems": 6, "maxItems": 6,
       "prefixItems": [{ "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 1 }, "name": { "const": "core-stage-state" }, "checksum": { "const": "e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
@@ -19,6 +19,8 @@
         "version": { "const": 4 }, "name": { "const": "caller-intent-stage-revise-replay" }, "checksum": { "const": "c4076ad9dba0494142f0a9cddd94e1ddcfb9c6384729f5a5f54098c8eb24f9e4" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 5 }, "name": { "const": "revision-plan-follows-composition" }, "checksum": { "const": "fd14281b59cc1887375e125b6b782a1e4b1eff200b9e78286ec067d0286851e0" }
+      } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
+        "version": { "const": 6 }, "name": { "const": "durable-apply-journal" }, "checksum": { "const": "4a87ce0c406f1145b6f03a18d931681afa40dbe94ea69a89f655aa15de6bbd56" }
       } }],
       "items": false
     }

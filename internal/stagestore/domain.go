@@ -829,11 +829,13 @@ func loadReviseReplay(ctx context.Context, q queryer, server, user, id string, d
 		return result, found, err
 	}
 	var operation Operation
+	var lifecycle Lifecycle
+	var recovery Recovery
 	var storedServer, serverID, storedUser, stageCreated, revisionCreated, destination, plan string
 	var semantic, body []byte
-	err = q.QueryRowContext(ctx, `SELECT s.operation,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.semantic_digest,r.body,r.destination_json,r.plan_json
+	err = q.QueryRowContext(ctx, `SELECT s.operation,s.lifecycle,s.recovery,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.semantic_digest,r.body,r.destination_json,r.plan_json
 		FROM stages s JOIN stage_revisions r ON r.stage_id=s.id WHERE s.id=? AND r.revision=?`, result.Stage.ID, result.Stage.Revision).
-		Scan(&operation, &storedServer, &serverID, &storedUser, &stageCreated, &revisionCreated, &semantic, &body, &destination, &plan)
+		Scan(&operation, &lifecycle, &recovery, &storedServer, &serverID, &storedUser, &stageCreated, &revisionCreated, &semantic, &body, &destination, &plan)
 	if err != nil {
 		return MutationResult{}, false, localError(err)
 	}
@@ -843,11 +845,11 @@ func loadReviseReplay(ctx context.Context, q queryer, server, user, id string, d
 	}
 	stageCreatedAt, stageTimeErr := parseTime(stageCreated)
 	revisionCreatedAt, revisionTimeErr := parseTime(revisionCreated)
-	content, contentErr := normalizeContent(operation, RevisionContent{body, json.RawMessage(destination), json.RawMessage(plan), attachments})
+	content, retained, contentErr := replayContentProjection(operation, lifecycle, recovery, body, json.RawMessage(destination), json.RawMessage(plan), attachments)
 	if stageTimeErr != nil || revisionTimeErr != nil || contentErr != nil || len(semantic) != 32 || operation != result.Stage.Operation ||
 		storedServer != server || serverID != result.Stage.ServerID || storedUser != user || !stageCreatedAt.Equal(result.Stage.CreatedAt) ||
 		!revisionCreatedAt.Equal(result.Stage.UpdatedAt) || !revisionCreatedAt.Equal(result.RecordedAt) ||
-		!bytes.Equal(semantic, result.Stage.SemanticDigest[:]) || semanticDigest(operation, storedServer, serverID, storedUser, content) != result.Stage.SemanticDigest {
+		!bytes.Equal(semantic, result.Stage.SemanticDigest[:]) || !retained && semanticDigest(operation, storedServer, serverID, storedUser, content) != result.Stage.SemanticDigest {
 		return MutationResult{}, false, localError(errors.New("revise receipt projection"))
 	}
 	return result, true, nil
@@ -894,11 +896,13 @@ func findCreate(ctx context.Context, q queryer, server, user, id string) (Create
 		return CreateRecord{}, false, localError(errors.New("create receipt"))
 	}
 	var operation Operation
+	var lifecycle Lifecycle
+	var recovery Recovery
 	var stageServer, serverID, stageUser, stageCreated, revisionCreated string
 	var body []byte
 	var destination, plan string
 	var semantic []byte
-	err = q.QueryRowContext(ctx, `SELECT s.operation,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.body,r.destination_json,r.plan_json,r.semantic_digest FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=? WHERE s.id=?`, stage.Revision, stage.ID).Scan(&operation, &stageServer, &serverID, &stageUser, &stageCreated, &revisionCreated, &body, &destination, &plan, &semantic)
+	err = q.QueryRowContext(ctx, `SELECT s.operation,s.lifecycle,s.recovery,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.body,r.destination_json,r.plan_json,r.semantic_digest FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=? WHERE s.id=?`, stage.Revision, stage.ID).Scan(&operation, &lifecycle, &recovery, &stageServer, &serverID, &stageUser, &stageCreated, &revisionCreated, &body, &destination, &plan, &semantic)
 	if err != nil {
 		return CreateRecord{}, false, localError(err)
 	}
@@ -906,17 +910,48 @@ func findCreate(ctx context.Context, q queryer, server, user, id string) (Create
 	if err != nil {
 		return CreateRecord{}, false, err
 	}
-	content, err := normalizeContent(operation, RevisionContent{body, json.RawMessage(destination), json.RawMessage(plan), attachments})
+	content, retained, err := replayContentProjection(operation, lifecycle, recovery, body, json.RawMessage(destination), json.RawMessage(plan), attachments)
 	recordDestination, destinationErr := canonicalObject(record.Destination)
 	recordPlan, planErr := canonicalObject(record.Plan)
 	stageCreatedAt, stageCreatedErr := parseTime(stageCreated)
 	revisionCreatedAt, revisionCreatedErr := parseTime(revisionCreated)
-	if err != nil || destinationErr != nil || planErr != nil || stageCreatedErr != nil || revisionCreatedErr != nil || !stage.CreatedAt.Equal(stageCreatedAt) || !stage.CreatedAt.Equal(revisionCreatedAt) || len(semantic) != 32 || !bytes.Equal(semantic, stage.SemanticDigest[:]) || semanticDigest(operation, server, serverID, user, content) != stage.SemanticDigest ||
+	if err != nil || destinationErr != nil || planErr != nil || stageCreatedErr != nil || revisionCreatedErr != nil || !stage.CreatedAt.Equal(stageCreatedAt) || !stage.CreatedAt.Equal(revisionCreatedAt) || len(semantic) != 32 || !bytes.Equal(semantic, stage.SemanticDigest[:]) || !retained && semanticDigest(operation, server, serverID, user, content) != stage.SemanticDigest ||
 		!bytes.Equal(content.Destination, recordDestination) || !bytes.Equal(content.Plan, recordPlan) || operation != stage.Operation || stageServer != server || stageUser != user || serverID != stage.ServerID {
 		return CreateRecord{}, false, localError(errors.New("create projection"))
 	}
 	record.Destination, record.Plan = bytes.Clone(record.Destination), bytes.Clone(record.Plan)
 	return record, true, nil
+}
+
+// replayContentProjection validates live content normally. After a confirmed
+// apply, plaintext and attachment paths are intentionally erased, so the
+// immutable historical digest becomes the only possible content binding.
+func replayContentProjection(operation Operation, lifecycle Lifecycle, recovery Recovery, body []byte, destination, plan json.RawMessage, attachments []Attachment) (RevisionContent, bool, error) {
+	if lifecycle != LifecycleCompleted || recovery != RecoveryForbidden {
+		content, err := normalizeContent(operation, RevisionContent{body, destination, plan, attachments})
+		return content, false, err
+	}
+	if body != nil || len(attachments) != 0 {
+		return RevisionContent{}, false, ErrInvalid
+	}
+	canonicalDestination, err := canonicalObject(destination)
+	if err != nil {
+		return RevisionContent{}, false, err
+	}
+	canonicalPlan, steps, err := decodePersistedPlan(plan)
+	if err != nil {
+		return RevisionContent{}, false, err
+	}
+	uploads := 0
+	for _, step := range steps {
+		if step.Kind == "upload_attachment" {
+			uploads++
+		}
+	}
+	if !validPlanForOperation(operation, steps, uploads) {
+		return RevisionContent{}, false, ErrInvalid
+	}
+	return RevisionContent{Destination: canonicalDestination, Plan: canonicalPlan}, true, nil
 }
 
 func normalizeCreateProjection(destination, plan json.RawMessage) (json.RawMessage, json.RawMessage, error) {
@@ -1022,11 +1057,15 @@ func restoreLineSeparators(data []byte) []byte {
 	return out.Bytes()
 }
 func newStageID() (string, error) {
+	return newIdentity("stg_")
+}
+
+func newIdentity(prefix string) (string, error) {
 	v := make([]byte, 24)
 	if _, err := rand.Read(v); err != nil {
 		return "", err
 	}
-	return "stg_" + base64.RawURLEncoding.EncodeToString(v), nil
+	return prefix + base64.RawURLEncoding.EncodeToString(v), nil
 }
 func validOperation(v Operation) bool {
 	switch v {

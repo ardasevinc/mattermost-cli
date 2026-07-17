@@ -29,7 +29,7 @@ func attachment(name string) Attachment {
 	return Attachment{"/tmp/" + name, "/private/tmp/" + name, name, 3, "text/plain", sha256.Sum256([]byte(name))}
 }
 func createInput(request, body string) CreateInput {
-	return CreateInput{request, sha256.Sum256([]byte(body)), CreatePost, "https://mattermost.example/api/v4", "server-1", "user-1", RevisionContent{[]byte(body), json.RawMessage(`{"kind":"O","channelId":"channel-1"}`), json.RawMessage(`{"steps":[{"kind":"create_post"}]}`), []Attachment{attachment("a.txt"), attachment("b.txt")}}}
+	return CreateInput{request, sha256.Sum256([]byte(body)), CreatePost, "https://mattermost.example/api/v4", "server-1", "user-1", RevisionContent{[]byte(body), json.RawMessage(`{"kind":"O","channelId":"channel-1"}`), json.RawMessage(`{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"upload_attachment","condition":"always"},{"ordinal":3,"type":"create_post","condition":"always"}]}`), []Attachment{attachment("a.txt"), attachment("b.txt")}}}
 }
 
 func TestFindCreateUsesExactReceiptRevisionAndFailsClosedOnCorruption(t *testing.T) {
@@ -148,14 +148,14 @@ func TestCreateAndReplayReturnCanonicalAuthoritativeProjection(t *testing.T) {
 	s := openDomainStore(t)
 	in := createInput("canonical-projection", "body")
 	in.Content.Destination = json.RawMessage(`{ "kind": "O", "channelId": "channel-1" }`)
-	in.Content.Plan = json.RawMessage(`{ "steps": [ { "kind": "create_post" } ] }`)
+	in.Content.Plan = json.RawMessage(`{ "steps": [ { "ordinal": 1, "type": "create_post", "condition": "always" } ] }`)
 
 	created, err := s.Create(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantDestination := []byte(`{"kind":"O","channelId":"channel-1"}`)
-	wantPlan := []byte(`{"steps":[{"kind":"create_post"}]}`)
+	wantPlan := []byte(`{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}`)
 	if !bytes.Equal(created.Destination, wantDestination) || !bytes.Equal(created.Plan, wantPlan) {
 		t.Fatalf("created projection = %s / %s", created.Destination, created.Plan)
 	}
@@ -273,7 +273,7 @@ func TestRevisePreservesImmutableDestinationAndAcceptsDerivedPlan(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(after.Destination) != string(before.Destination) || string(after.Plan) != `{"steps":[{"kind":"create_post"}]}` || string(after.Plan) == string(before.Plan) {
+	if string(after.Destination) != string(before.Destination) || string(after.Plan) != `{"steps":[{"condition":"always","ordinal":1,"type":"upload_attachment"},{"condition":"always","ordinal":2,"type":"upload_attachment"},{"condition":"always","ordinal":3,"type":"create_post"}]}` || string(after.Plan) == string(before.Plan) {
 		t.Fatalf("unexpected revision binding: destination %s -> %s, plan %s -> %s", before.Destination, after.Destination, before.Plan, after.Plan)
 	}
 }
@@ -433,6 +433,12 @@ func TestListRecordsFailsClosedWhenCurrentRevisionIsMissing(t *testing.T) {
 	if _, err = s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.db.Exec(`UPDATE stages SET current_revision=999 WHERE id=?`, created.Stage.ID); err == nil {
+		t.Fatal("invalid current revision transition succeeded")
+	}
+	if _, err = s.db.Exec(`DROP TRIGGER stage_current_revision_transition_valid`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.db.Exec(`UPDATE stages SET current_revision=999 WHERE id=?`, created.Stage.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -445,6 +451,12 @@ func TestShowFailsClosedWhenRetainedContentBreaksSemanticDigest(t *testing.T) {
 	s := openDomainStore(t)
 	created, err := s.Create(context.Background(), createInput("", "original"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE stage_revisions SET body=? WHERE stage_id=? AND revision=1`, []byte("modified"), created.Stage.ID); err == nil {
+		t.Fatal("retained body mutation succeeded")
+	}
+	if _, err = s.db.Exec(`DROP TRIGGER stage_revision_body_erasure_only`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.Exec(`UPDATE stage_revisions SET body=? WHERE stage_id=? AND revision=1`, []byte("modified"), created.Stage.ID); err != nil {
@@ -502,7 +514,8 @@ func TestReviewedStateCASAndApplying(t *testing.T) {
 	if _, err = s.Cancel(context.Background(), staleCancel); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale cancel=%v", err)
 	}
-	if _, err = s.db.Exec(`UPDATE stages SET lifecycle='applying' WHERE id=?`, revised.Stage.ID); err != nil {
+	claim, err := s.ClaimApply(context.Background(), ApplyClaimInput{StageID: revised.Stage.ID, Revision: revised.Stage.Revision, ExpectedDigest: revised.Stage.SemanticDigest, RecoveryMode: RecoveryModeOrdinary})
+	if err != nil || claim.StageID != revised.Stage.ID {
 		t.Fatal(err)
 	}
 	if _, err = s.Revise(context.Background(), reviseInput(revised.Stage, "applying", "four")); !errors.Is(err, ErrNotEligible) {
@@ -597,6 +610,12 @@ func TestReviveOnlyLegalExpiredForbidden(t *testing.T) {
 		t.Fatalf("revived=%#v err=%v", revived, err)
 	}
 	other, _ := s.Create(context.Background(), createInput("", "x"))
+	if _, err := s.db.Exec(`UPDATE stages SET lifecycle='expired',recovery='force_unknown' WHERE id=?`, other.Stage.ID); err == nil {
+		t.Fatal("invalid expired recovery transition succeeded")
+	}
+	if _, err := s.db.Exec(`DROP TRIGGER stage_lifecycle_recovery_transition_valid`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`UPDATE stages SET lifecycle='expired',recovery='force_unknown' WHERE id=?`, other.Stage.ID); err != nil {
 		t.Fatal(err)
 	}

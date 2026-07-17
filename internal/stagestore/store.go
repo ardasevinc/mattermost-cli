@@ -80,6 +80,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		unlock()
 		return nil, err
 	}
+	if applyJournalAvailable() {
+		if _, err := s.recoverInterruptedApplies(ctx); err != nil {
+			_ = db.Close()
+			unlock()
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -182,6 +189,7 @@ func sqliteURI(path string, readOnly bool) string {
 	}
 	q.Add("_pragma", "busy_timeout("+strconv.Itoa(driverBusyMS)+")")
 	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "recursive_triggers(1)")
 	q.Add("_pragma", "trusted_schema(0)")
 	q.Add("_pragma", "secure_delete(FAST)")
 	q.Add("_pragma", "synchronous(FULL)")
@@ -192,6 +200,7 @@ func sqliteURI(path string, readOnly bool) string {
 func (s *Store) initialize(ctx context.Context, created bool) error {
 	for _, statement := range []string{
 		"PRAGMA foreign_keys = ON", "PRAGMA trusted_schema = OFF",
+		"PRAGMA recursive_triggers = ON",
 		"PRAGMA secure_delete = FAST", "PRAGMA synchronous = FULL",
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

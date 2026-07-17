@@ -835,7 +835,8 @@ func TestCurrentRevisionMustBeCurrent(t *testing.T) {
 	}
 	_, err = tx.Exec(`INSERT INTO stage_revisions(stage_id,revision,state,created_at,semantic_digest,destination_json,plan_json) VALUES('s',1,'superseded','x',zeroblob(32),'{}','{}')`)
 	if err != nil {
-		t.Fatal(err)
+		_ = tx.Rollback()
+		return
 	}
 	if err := tx.Commit(); err == nil {
 		t.Fatal("accepted superseded current revision")
