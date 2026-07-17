@@ -15,7 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 	"golang.org/x/text/unicode/norm"
 )
 

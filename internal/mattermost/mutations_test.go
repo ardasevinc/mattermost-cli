@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
 )
 
 type mutationRoundTripFunc func(*http.Request) (*http.Response, error)

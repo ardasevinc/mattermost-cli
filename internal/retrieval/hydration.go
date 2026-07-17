@@ -3,7 +3,7 @@ package retrieval
 import (
 	"context"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 type VisibleThreadsStatus uint8

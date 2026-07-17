@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/cli"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/cli"
 )
 
 func TestClosedStdoutUsesStableExitClass(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 
-	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 type callerIntent struct {

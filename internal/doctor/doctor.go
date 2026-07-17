@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	"github.com/ardasevinc/mattermost-cli/internal/config"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/config"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/serverurl"
 )
 
 type Status string

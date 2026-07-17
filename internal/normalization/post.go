@@ -7,10 +7,10 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/serverurl"
 )
 
 const deletedPostText = "[deleted post]"

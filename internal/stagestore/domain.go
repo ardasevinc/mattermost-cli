@@ -16,9 +16,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
-	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/messageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagecursor"
 )
 
 const (

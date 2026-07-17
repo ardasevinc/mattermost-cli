@@ -10,12 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagecontent"
-	"github.com/ardasevinc/mattermost-cli/internal/stageoutput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagerequest"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
-	"github.com/ardasevinc/mattermost-cli/internal/staging"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagecontent"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageoutput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagerequest"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/staging"
 )
 
 type stageCompositionFlags struct {

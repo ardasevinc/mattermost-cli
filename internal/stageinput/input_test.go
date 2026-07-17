@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 func TestTokenScannerEveryChunkBoundary(t *testing.T) {

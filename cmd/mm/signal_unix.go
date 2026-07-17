@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/ardasevinc/mattermost-cli/internal/cli"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/cli"
 )
 
 var brokenPipeSignals = make(chan os.Signal, 1)

@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagerequest"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
-	"github.com/ardasevinc/mattermost-cli/internal/staging"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagerequest"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/staging"
 )
 
 func createCLIApplyStage(t *testing.T, stateRoot, serverURL, body string) stagestore.MutationResult {

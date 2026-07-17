@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/config"
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/config"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 type storeDoctorEnvelope struct {

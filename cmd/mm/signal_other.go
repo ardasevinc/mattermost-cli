@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"sync"
 
-	"github.com/ardasevinc/mattermost-cli/internal/cli"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/cli"
 )
 
 func handleBrokenPipe() {}

@@ -13,12 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	applyservice "github.com/ardasevinc/mattermost-cli/internal/apply"
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagerequest"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	applyservice "github.com/ardasevinc/mattermost-cli/v2/internal/apply"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagerequest"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 var stageReferencePattern = regexp.MustCompile(`^(stg_[A-Za-z0-9_-]{32})@([1-9][0-9]{0,15})$`)

@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/retrieval"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/retrieval"
 )
 
 var safePostIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)

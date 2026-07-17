@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
 )
 
 func TestExecuteVersion(t *testing.T) {

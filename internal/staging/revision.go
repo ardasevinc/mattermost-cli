@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/messageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 var ErrNotEligible = errors.New("staging: lifecycle transition not allowed")

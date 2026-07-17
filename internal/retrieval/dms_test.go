@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 func TestDMHistoryAppliesOneGlobalDeterministicLimit(t *testing.T) {

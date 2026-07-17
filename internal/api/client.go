@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/serverurl"
 )
 
 const (

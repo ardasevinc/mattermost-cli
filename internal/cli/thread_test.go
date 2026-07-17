@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	"github.com/ardasevinc/mattermost-cli/internal/config"
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/config"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 func TestThreadJSONRunsRootBoundReadPipeline(t *testing.T) {

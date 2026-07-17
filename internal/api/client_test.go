@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
 )
 
 func TestPreparedMutationFreezesRequestBeforeDispatch(t *testing.T) {

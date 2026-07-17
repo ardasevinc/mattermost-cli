@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
 )
 
 const MaxSafeMachineInteger int64 = 9007199254740991

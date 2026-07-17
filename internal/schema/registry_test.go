@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	publicschemas "github.com/ardasevinc/mattermost-cli/schemas"
+	publicschemas "github.com/ardasevinc/mattermost-cli/v2/schemas"
 )
 
 func TestReadAndValidateReturnsExactDocument(t *testing.T) {

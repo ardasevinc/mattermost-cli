@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 func setOfflineStageEnvironment(t *testing.T, stateRoot string) {

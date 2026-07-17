@@ -7,10 +7,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
-	"github.com/ardasevinc/mattermost-cli/internal/staging"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/staging"
 )
 
 func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt, operation stagestore.Operation, currentUserID string, destination staging.Destination, body []byte, attachments []stagestore.Attachment) (stagestore.ApplyReceipt, error) {

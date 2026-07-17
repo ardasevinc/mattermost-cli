@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
 )
 
 var ErrUploadBinding = errors.New("Mattermost file no longer matches the validated upload")

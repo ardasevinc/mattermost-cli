@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
-	"github.com/ardasevinc/mattermost-cli/internal/staging"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagecursor"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/staging"
 )
 
 var ErrInvalid = errors.New("stage output: invalid or unsafe state")

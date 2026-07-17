@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	publicschemas "github.com/ardasevinc/mattermost-cli/schemas"
+	publicschemas "github.com/ardasevinc/mattermost-cli/v2/schemas"
 )
 
 // These tests deliberately stop at document-local invariants. The runtime must

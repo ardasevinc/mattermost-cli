@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 func TestMentionsJSONUsesAliasesScopesGlobalSelectionAndHydration(t *testing.T) {

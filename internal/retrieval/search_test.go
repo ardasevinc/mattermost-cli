@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 type searchSourceFunc func(context.Context, string, mattermost.SearchPageOptions) (mattermost.SearchPage, error)

@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/messageinput"
 )
 
 var (

@@ -9,7 +9,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
 )
 
 const maxMutationMessageBytes = 65_535

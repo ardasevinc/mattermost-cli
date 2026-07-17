@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 func TestWatchSelectorsFailBeforeNetwork(t *testing.T) {

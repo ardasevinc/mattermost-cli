@@ -563,7 +563,7 @@ Primary Go v2 distribution:
 - checksums and verifiable build provenance;
 - Homebrew using the established patterns in Arda's current Go projects;
 - install script with checksum verification;
-- `go install` for source-based installation.
+- `go install github.com/ardasevinc/mattermost-cli/v2/cmd/mm@v2.0.0` for source-based installation.
 
 The existing unscoped npm package remains an upgrade path for prior npm users. Its v2 package becomes a small launcher backed by platform-specific optional packages containing the exact Go release binaries. It must not fetch and execute an unverified binary during `postinstall`. npm installation continuity does not imply v1 command or schema compatibility.
 

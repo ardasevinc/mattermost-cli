@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 type failOnRead struct{ reads atomic.Int32 }

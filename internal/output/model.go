@@ -3,7 +3,7 @@ package output
 import (
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
 )
 
 // Redaction is presentation-owned because its Position is a UTF-16 code-unit

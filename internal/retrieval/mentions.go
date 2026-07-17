@@ -9,7 +9,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

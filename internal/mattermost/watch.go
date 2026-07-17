@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
-	"github.com/ardasevinc/mattermost-cli/internal/transport"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/transport"
 )
 
 const MaxWatchFrameBytes = 1 << 20

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 const (

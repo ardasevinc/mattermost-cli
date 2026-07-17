@@ -8,12 +8,12 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/normalization"
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/retrieval"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/normalization"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/retrieval"
 	"github.com/spf13/cobra"
 )
 

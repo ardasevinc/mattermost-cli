@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 type threadSourceFunc func(context.Context, string, mattermost.ThreadPageOptions) (mattermost.OrderedPostsPage, error)

@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
-	"github.com/ardasevinc/mattermost-cli/internal/stageoutput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagecursor"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageoutput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 type localStateFailure struct{ err error }

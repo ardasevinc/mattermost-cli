@@ -12,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageinput"
 )
 
 func TestGoApplyFullPostLifecycleWithAttachment(t *testing.T) {

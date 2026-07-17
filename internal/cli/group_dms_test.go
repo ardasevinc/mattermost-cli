@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/cursor"
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/cursor"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 func TestGroupDMsJSONDiscoversFocusedChannelsAppliesGlobalLimitAndSanitizesLabel(t *testing.T) {

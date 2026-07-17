@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagecursor"
 )
 
 func openDomainStore(t *testing.T) *Store {

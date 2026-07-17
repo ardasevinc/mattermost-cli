@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
 )
 
 type RawUnreadItem struct {

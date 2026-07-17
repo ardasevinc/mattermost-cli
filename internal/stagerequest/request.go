@@ -16,10 +16,10 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
-	"github.com/ardasevinc/mattermost-cli/internal/staging"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/staging"
 )
 
 const (

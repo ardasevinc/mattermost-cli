@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"testing"
 
-	publicschemas "github.com/ardasevinc/mattermost-cli/schemas"
+	publicschemas "github.com/ardasevinc/mattermost-cli/v2/schemas"
 )
 
 func TestApplySchemasAndExamples(t *testing.T) {

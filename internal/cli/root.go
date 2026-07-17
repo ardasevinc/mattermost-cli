@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ardasevinc/mattermost-cli/internal/buildinfo"
-	"github.com/ardasevinc/mattermost-cli/internal/output"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/buildinfo"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/output"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 type streams struct {

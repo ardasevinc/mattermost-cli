@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	"github.com/ardasevinc/mattermost-cli/internal/config"
-	"github.com/ardasevinc/mattermost-cli/internal/cursor"
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
-	"github.com/ardasevinc/mattermost-cli/internal/retrieval"
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/config"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/cursor"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/retrieval"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
 )
 
 func TestChannelJSONRunsValidatedReadPipeline(t *testing.T) {

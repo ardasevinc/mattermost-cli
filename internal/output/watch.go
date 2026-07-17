@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
-	"github.com/ardasevinc/mattermost-cli/internal/presentation"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/presentation"
 )
 
 const MaxWatchLineBytes = 1 << 20

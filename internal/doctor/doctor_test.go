@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
-	"github.com/ardasevinc/mattermost-cli/internal/config"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/config"
 )
 
 type fakeCall struct {

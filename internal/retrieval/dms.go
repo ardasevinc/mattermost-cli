@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/mattermost"
 )
 
 var ErrInvalidDMHistoryRequest = errors.New("invalid direct-message history request")

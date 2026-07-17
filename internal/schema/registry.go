@@ -13,7 +13,7 @@ import (
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 
-	publicschemas "github.com/ardasevinc/mattermost-cli/schemas"
+	publicschemas "github.com/ardasevinc/mattermost-cli/v2/schemas"
 )
 
 const maxDocumentBytes = 4 << 20

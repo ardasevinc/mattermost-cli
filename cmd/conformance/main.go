@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ardasevinc/mattermost-cli/internal/conformance"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/conformance"
 )
 
 type stringList []string

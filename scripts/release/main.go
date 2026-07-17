@@ -64,7 +64,7 @@ func run(version, commit, output string) error {
 		if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil { // #nosec G301 -- temporary release inputs contain no secrets.
 			return err
 		}
-		ldflags := fmt.Sprintf("-s -w -buildid= -X github.com/ardasevinc/mattermost-cli/internal/buildinfo.Version=%s -X github.com/ardasevinc/mattermost-cli/internal/buildinfo.Commit=%s", version, commit)
+		ldflags := fmt.Sprintf("-s -w -buildid= -X github.com/ardasevinc/mattermost-cli/v2/internal/buildinfo.Version=%s -X github.com/ardasevinc/mattermost-cli/v2/internal/buildinfo.Commit=%s", version, commit)
 		command := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags", ldflags, "-o", binary, "./cmd/mm") // #nosec G204 -- values are validated or from the closed target list.
 		command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+target.os, "GOARCH="+target.arch)
 		command.Stdout, command.Stderr = os.Stdout, os.Stderr

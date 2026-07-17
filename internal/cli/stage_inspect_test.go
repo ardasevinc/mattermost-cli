@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
-	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	mmSchema "github.com/ardasevinc/mattermost-cli/v2/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/stagestore"
 )
 
 func stageInspectCommand(t *testing.T, home, stateRoot string, jsonOutput bool, stdout, stderr *bytes.Buffer) (*rootState, *cobraCommandShim) {

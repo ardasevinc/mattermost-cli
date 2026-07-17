@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ardasevinc/mattermost-cli/internal/api"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/api"
 )
 
 type ConversationMutations struct{ client *api.Client }

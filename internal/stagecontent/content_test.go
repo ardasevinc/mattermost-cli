@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
+	"github.com/ardasevinc/mattermost-cli/v2/internal/messageinput"
 )
 
 func TestAcquireExplicitMessagePreservesBytes(t *testing.T) {
