@@ -267,7 +267,7 @@ func executeChannel(t *testing.T, serverURL string, args ...string) (string, str
 
 func setChannelEnvironment(t *testing.T, serverURL string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("MM_URL", serverURL)
 	t.Setenv("MM_TOKEN", "test-token")

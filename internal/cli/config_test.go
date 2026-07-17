@@ -17,7 +17,7 @@ func TestConfigStatusIsOfflineAndNeverEmitsValues(t *testing.T) {
 	const token = "config-status-opaque-token"
 	const server = "https://private-mm.example/team"
 	writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), "url = \""+server+"\"\ntoken = \""+token+"\"\n", 0o600)
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
 	var stdout, stderr bytes.Buffer
@@ -46,7 +46,7 @@ func TestConfigStatusIsOfflineAndNeverEmitsValues(t *testing.T) {
 
 func TestConfigPathAndInitUseSelectedXDGPathWithoutCredentials(t *testing.T) {
 	home, xdg := t.TempDir(), filepath.Join(t.TempDir(), "xdg")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
@@ -82,7 +82,7 @@ func TestConfigReportsLegacyFallbackAndUnsafeDiagnostics(t *testing.T) {
 	home, xdg := t.TempDir(), filepath.Join(t.TempDir(), "xdg")
 	legacy := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
 	writeFile(t, legacy, "broken = [", 0o644)
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("MM_TOKEN", "")
 	var stdout, stderr bytes.Buffer
@@ -96,7 +96,7 @@ func TestConfigReportsLegacyFallbackAndUnsafeDiagnostics(t *testing.T) {
 }
 
 func TestConfigFlagsAreMutuallyExclusiveAndMachineErrorsAreIsolated(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	for _, args := range [][]string{{"config", "--path", "--init"}, {"config", "--path="}} {
 		var stdout, stderr bytes.Buffer
 		code := Execute(context.Background(), append([]string{"--json"}, args...), strings.NewReader(""), &stdout, &stderr)
@@ -113,7 +113,7 @@ func TestConfigRedactionFlagsShareGlobalValidationAndSemantics(t *testing.T) {
 	if err := os.Mkdir(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MM_TOKEN", token)
 
 	for _, flag := range []string{"--no-redact", "--redact=false"} {
@@ -154,7 +154,7 @@ func TestConfigInsecureStoredTokenMatchesRuntimeSeverity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), test.body, 0o644)
-			t.Setenv("HOME", home)
+			setTestHome(t, home)
 			for _, machine := range []bool{false, true} {
 				args := []string{"config"}
 				if machine {
@@ -191,7 +191,7 @@ func TestConfigPresentationSanitizesPathsAndWarningsEvenWithoutRedaction(t *test
 	}
 	legacy := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
 	writeFile(t, legacy, "url = \"https://example.com\"\n", 0o600)
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "selected"))
 	t.Setenv("MM_TOKEN", token)
 
@@ -232,7 +232,7 @@ func TestConfigDiagnosticDocumentsUseHandledExitThree(t *testing.T) {
 			home := t.TempDir()
 			path := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
 			test.setup(t, path)
-			t.Setenv("HOME", home)
+			setTestHome(t, home)
 			for _, machine := range []bool{false, true} {
 				args := []string{"config"}
 				if machine {
@@ -271,7 +271,7 @@ func TestHumanConfigReportsUnknownRetentionOnReadOrParseFailure(t *testing.T) {
 		} else {
 			writeFile(t, path, body, 0o600)
 		}
-		t.Setenv("HOME", home)
+		setTestHome(t, home)
 		var stdout, stderr bytes.Buffer
 		code := Execute(context.Background(), []string{"config"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 3 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Stage TTL seconds: unknown") || !strings.Contains(stdout.String(), "Stage prune after seconds: unknown") {
@@ -288,7 +288,7 @@ func TestConfigPathDoesNotInspectSelectedFile(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	var stdout, stderr bytes.Buffer
 	code := Execute(context.Background(), []string{"--json", "config", "--path"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 || stderr.Len() != 0 {

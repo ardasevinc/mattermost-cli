@@ -18,7 +18,7 @@ import (
 
 func setOfflineStageEnvironment(t *testing.T, stateRoot string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	t.Setenv("MM_URL", "")
@@ -172,7 +172,7 @@ func TestStructuredExactPruneIsReplayableAndErasesRetainedContent(t *testing.T) 
 
 func TestBulkPruneFailsClosedWithoutAgeAndUsesConfiguredAge(t *testing.T) {
 	home, stateRoot, configRoot := t.TempDir(), filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "config")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	t.Setenv("MM_URL", "")
@@ -200,7 +200,7 @@ func TestBulkPruneFailsClosedWithoutAgeAndUsesConfiguredAge(t *testing.T) {
 func TestConfiguredTTLIsOpportunisticAndReadOnlyInspectionDoesNotMutate(t *testing.T) {
 	home, stateRoot, configRoot := t.TempDir(), filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "config")
 	stageID := createInspectionStage(t, home, stateRoot, "still reviewable")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	t.Setenv("MM_URL", "")

@@ -67,7 +67,7 @@ func TestMentionsJSONUsesAliasesScopesGlobalSelectionAndHydration(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`mention_names = ["Arda Sevinc", "Arda Sevinc", ""]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
 	t.Setenv("MM_URL", server.URL)
 	t.Setenv("MM_TOKEN", "test-token")

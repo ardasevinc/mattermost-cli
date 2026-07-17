@@ -47,7 +47,7 @@ func stageTargetServer(t *testing.T, methods *[]string) *httptest.Server {
 
 func setStageEnvironment(t *testing.T, serverURL, stateRoot string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	t.Setenv("MM_URL", serverURL)

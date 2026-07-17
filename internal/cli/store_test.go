@@ -17,7 +17,7 @@ import (
 
 func TestStoreDoctorAbsentIsReadOnlyAndSchemaValid(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "hostile\x1bstate"))
 	t.Setenv("MM_URL", "not-a-url")
 	t.Setenv("MM_TOKEN", "unused-token")
@@ -79,7 +79,7 @@ func TestStoreDoctorExistingDoesNotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
@@ -95,7 +95,7 @@ func TestStoreDoctorExistingDoesNotMutate(t *testing.T) {
 }
 
 func TestStoreMigrationsIsOfflineAndSchemaValid(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MM_URL", "not-a-url")
 	t.Setenv("MM_TOKEN", "unused-token")
 	var stdout, stderr bytes.Buffer
@@ -126,7 +126,7 @@ func TestStoreDoctorUnsafeStateIsMachineError(t *testing.T) {
 	if err := os.WriteFile(db, []byte("not sqlite"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	var stdout, stderr bytes.Buffer
 	code := Execute(context.Background(), []string{"--json", "store", "doctor"}, strings.NewReader(""), &stdout, &stderr)
@@ -161,7 +161,7 @@ func TestStoreDoctorUnhealthyIntegrityReturnsStateConflictExit(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	var stdout, stderr bytes.Buffer
 	code := Execute(context.Background(), []string{"--json", "store", "doctor"}, strings.NewReader(""), &stdout, &stderr)
@@ -174,7 +174,7 @@ func TestStoreNoRedactDisablesOnlyHeuristics(t *testing.T) {
 	home := t.TempDir()
 	const credential = "active-mm-credential-123456"
 	const heuristic = "AKIAIOSFODNN7EXAMPLE"
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MM_TOKEN", credential)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, heuristic, credential))
 	var stdout, stderr bytes.Buffer
@@ -192,7 +192,7 @@ func TestStoreDoctorResolvesRedactionFromEnvironmentAndFileOffline(t *testing.T)
 	}{{"environment", true}, {"file", false}} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
-			t.Setenv("HOME", home)
+			setTestHome(t, home)
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, heuristic))
 			if test.env {
 				t.Setenv("MM_REDACT", "false")
@@ -236,7 +236,7 @@ func TestStoreMigrationsActiveCredentialCollisionFailsBeforeOutput(t *testing.T)
 
 func TestStoreMigrationsTreatsReadFileTokenAsActiveCredential(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MM_TOKEN", "")
 	writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), "token = \"core-stage-state\"\n", 0o600)
 	var stdout, stderr bytes.Buffer
@@ -249,7 +249,7 @@ func TestStoreMigrationsTreatsReadFileTokenAsActiveCredential(t *testing.T) {
 func TestStoreDoctorMasksConfiguredTokenReadForPreference(t *testing.T) {
 	home := t.TempDir()
 	const token = "configured-mm-token-123456"
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, token))
 	t.Setenv("MM_TOKEN", "")
 	writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), "redact = false\ntoken = \""+token+"\"\n", 0o600)
@@ -263,7 +263,7 @@ func TestStoreDoctorMasksConfiguredTokenReadForPreference(t *testing.T) {
 func TestStoreArgValidationMasksConfiguredTokenBeforePreRun(t *testing.T) {
 	home := t.TempDir()
 	const token = "configured-mm-token-arg-123456"
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MM_TOKEN", "")
 	writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), "token = \""+token+"\"\n", 0o600)
 	var stdout, stderr bytes.Buffer
@@ -300,7 +300,7 @@ func TestStoreMigrationRuntimeRejectsUnsafeMetadata(t *testing.T) {
 }
 
 func TestStoreHumanOutputStatesBounds(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("XDG_STATE_HOME", "")
 	var stdout, stderr bytes.Buffer
 	if code := Execute(context.Background(), []string{"store", "doctor"}, strings.NewReader(""), &stdout, &stderr); code != 0 || stderr.Len() != 0 {

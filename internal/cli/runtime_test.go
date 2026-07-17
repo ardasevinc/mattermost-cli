@@ -239,7 +239,7 @@ func TestExitClassesAndSchemaIsolation(t *testing.T) {
 	if exitCode(invalidFailure("bad input")) != 2 || exitCode(configFailure("bad config")) != 3 || exitCode(outputError{err: errors.New("write")}) != 3 {
 		t.Fatal("stable exit class mapping changed")
 	}
-	t.Setenv("HOME", "relative-home-must-not-be-read")
+	setTestHome(t, "relative-home-must-not-be-read")
 	var stdout, stderr bytes.Buffer
 	if code := Execute(context.Background(), []string{"schema", "list"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("schema required runtime config: exit=%d stderr=%q", code, stderr.String())
@@ -259,7 +259,7 @@ func TestFileOnlyTokenMasksPreParseErrorsWithoutMakingSchemaDependOnConfig(t *te
 	home := t.TempDir()
 	const token = "file-only-opaque-token"
 	writeRuntimeConfig(t, home, "token = \""+token+"\"\n")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	var stdout, stderr bytes.Buffer
 	code := Execute(context.Background(), []string{token}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 || strings.Contains(stderr.String(), token) || !strings.Contains(stderr.String(), "mattermost_credential") {
@@ -351,6 +351,13 @@ func runtimeProbe(t *testing.T, home string, env map[string]string, tty bool) (*
 func writeRuntimeConfig(t *testing.T, home, body string) {
 	t.Helper()
 	writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), body, 0o600)
+}
+
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
 }
 
 func writeFile(t *testing.T, path, body string, mode os.FileMode) {

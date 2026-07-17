@@ -37,7 +37,7 @@ func TestDoctorMachineReportUsesPublicPingAndAuthenticatedIdentity(t *testing.T)
 	}))
 	defer server.Close()
 
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
 	var stdout, stderr bytes.Buffer
@@ -55,7 +55,7 @@ func TestDoctorMachineReportUsesPublicPingAndAuthenticatedIdentity(t *testing.T)
 }
 
 func TestDoctorIncompleteConfigurationEmitsReportThenHandledExit(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
 	var stdout, stderr bytes.Buffer
@@ -80,7 +80,7 @@ func TestDoctorMigrationWarningDoesNotCorruptMachineReport(t *testing.T) {
 	home, xdg := t.TempDir(), filepath.Join(t.TempDir(), "xdg\x1b]8;;bad\x07")
 	legacy := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
 	writeFile(t, legacy, "url = \"http://127.0.0.1:1\"\n", 0o600)
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("MM_URL", "")
 	t.Setenv("MM_TOKEN", "")
@@ -95,7 +95,7 @@ func TestDoctorMigrationWarningDoesNotCorruptMachineReport(t *testing.T) {
 }
 
 func TestDoctorRejectsArgumentsAndReportsWriterFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	var stdout, stderr bytes.Buffer
 	if code := Execute(context.Background(), []string{"doctor", "extra"}, strings.NewReader(""), &stdout, &stderr); code != 2 || stdout.Len() != 0 {
 		t.Fatalf("argument exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -122,7 +122,7 @@ func TestDoctorHonorsEnvAndFileRedactionFalseWithoutExposingActiveCredential(t *
 	defer server.Close()
 
 	t.Run("environment", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
+		setTestHome(t, t.TempDir())
 		t.Setenv("MM_REDACT", "false")
 		var stdout, stderr bytes.Buffer
 		code := Execute(context.Background(), []string{"--json", "--url", server.URL, "--token", token, "doctor"}, strings.NewReader(""), &stdout, &stderr)
@@ -143,7 +143,7 @@ func TestDoctorHonorsEnvAndFileRedactionFalseWithoutExposingActiveCredential(t *
 		})
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".config", "mattermost-cli", "config.toml"), "url = \""+server.URL+"\"\ntoken = \""+token+"\"\nredact = false\n", 0o600)
-		t.Setenv("HOME", home)
+		setTestHome(t, home)
 		t.Setenv("MM_URL", "")
 		t.Setenv("MM_TOKEN", "")
 		var stdout, stderr bytes.Buffer
