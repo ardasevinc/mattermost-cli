@@ -1,12 +1,28 @@
 package conformance
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func expected(exit int, stdout, stderr string) *ProcessExpected {
+	return &ProcessExpected{ExitCode: &exit, Stdout: &stdout, Stderr: &stderr}
+}
+
+func TestRunPairIdentifiesFailingSide(t *testing.T) {
+	pair := PairScenario{
+		Oracle:    Scenario{Args: []string{"-c", "printf oracle"}, Expected: expected(0, "oracle", "")},
+		Candidate: Scenario{Args: []string{"-c", "printf candidate"}, Expected: expected(0, "wrong", "")},
+	}
+	err := RunPair(context.Background(), Command{Path: "sh"}, Command{Path: "sh"}, pair)
+	if err == nil || !strings.Contains(err.Error(), "candidate: stdout mismatch") {
+		t.Fatalf("RunPair() error = %v", err)
+	}
+}
 
 func TestLimitedBufferBoundsStoredOutput(t *testing.T) {
 	buffer := newLimitedBuffer(4)

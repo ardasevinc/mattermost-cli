@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mm/conformance-pair/v1",
+  "title": "mattermost-cli paired conformance scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "oracle", "candidate"],
+  "properties": {
+    "schema": { "const": "mm/conformance-pair/v1" },
+    "name": { "type": "string", "minLength": 1 },
+    "oracle": { "$ref": "#/$defs/case" },
+    "candidate": { "$ref": "#/$defs/case" }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["args", "expected"],
+      "properties": {
+        "args": { "type": "array", "items": { "type": "string" } },
+        "stdin": { "type": "string" },
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+        "env": { "$ref": "#/$defs/stringMap" },
+        "http": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request", "response"],
+            "properties": {
+              "request": { "$ref": "#/$defs/request" },
+              "response": { "$ref": "#/$defs/response" }
+            }
+          }
+        },
+        "expected": { "$ref": "#/$defs/expected" }
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exitCode", "stdout", "stderr"],
+      "properties": {
+        "exitCode": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "uri"],
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "uri": { "type": "string", "pattern": "^/" },
+        "headers": { "$ref": "#/$defs/stringMap" },
+        "ignoreHeaders": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "body": { "type": "string" }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "headers": { "$ref": "#/$defs/stringMap" },
+        "body": { "type": "string" }
+      }
+    }
+  }
+}

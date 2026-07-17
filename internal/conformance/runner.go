@@ -23,6 +23,16 @@ type Command struct {
 	Dir        string
 }
 
+func RunPair(ctx context.Context, oracle, candidate Command, pair PairScenario) error {
+	if err := Run(ctx, oracle, pair.Oracle); err != nil {
+		return fmt.Errorf("oracle: %w", err)
+	}
+	if err := Run(ctx, candidate, pair.Candidate); err != nil {
+		return fmt.Errorf("candidate: %w", err)
+	}
+	return nil
+}
+
 func Run(ctx context.Context, command Command, scenario Scenario) error {
 	if command.Path == "" {
 		return fmt.Errorf("command path is required")

@@ -46,6 +46,35 @@ func TestLoadRejectsIgnoredAuthorizationHeader(t *testing.T) {
 	}
 }
 
+func TestLoadPairRequiresStrictCompleteCases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pair.json")
+	content := `{"schema":"mm/conformance-pair/v1","name":"pair","oracle":{"args":[],"expected":{"exitCode":0,"stdout":"","stderr":""}},"candidate":{"schema":"mm/conformance/v1","args":[],"expected":{"exitCode":0,"stdout":"","stderr":""}}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadPair(path)
+	if err == nil || !strings.Contains(err.Error(), "nested scenario must not declare schema") {
+		t.Fatalf("LoadPair() error = %v", err)
+	}
+}
+
+func TestPairFixturesLoad(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "conformance", "scenarios", "pairs", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no paired conformance fixtures found")
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := LoadPair(path); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSequentialServerReportsMissingRequests(t *testing.T) {
 	server := newSequentialServer([]HTTPExchange{{
 		Request:  HTTPRequestExpected{Method: "GET", URI: "/api/v4/users/me"},

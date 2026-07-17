@@ -31,7 +31,7 @@ This is the removal gate for the TypeScript implementation. A row may become `ve
 | `--no-redact` | disable heuristic redaction, never active-token masking | preserve | scaffolded |
 | `--threads` | hydrate complete visible threads | preserve | scaffolded |
 | `--no-threads` | selected seeds only except `thread` | preserve | scaffolded |
-| numeric validation | canonical positive safe integer only | preserve bounded canonical integer validation | scaffolded |
+| numeric validation | canonical positive safe integer only | preserve bounded canonical integer validation | verified (`conformance/scenarios/pairs/invalid-limit.json`, Go validation tests) |
 | duration validation | `^\d+[hdwm]$` | preserve | scaffolded |
 | URL normalization | WHATWG normalization plus custom loopback test | preserve safe canonicalization; reject transport-ambiguous IPv4/backslash forms | intentionally_changed |
 
@@ -59,8 +59,8 @@ This is the removal gate for the TypeScript implementation. A row may become `ve
 | --- | --- | --- | --- |
 | `doctor` | global flags | same read-only readiness checks; `mm/v2/doctor` | oracle |
 | `config` | `--path`, `--init` | preserve plus deterministic XDG migration warning | scaffolded |
-| `whoami` | global flags | narrow validated identity | scaffolded |
-| `teams` | global flags | validated deterministic teams | scaffolded |
+| `whoami` | global flags | narrow validated identity | verified (`conformance/scenarios/pairs/whoami.json`, `internal/cli/identity_test.go`) |
+| `teams` | global flags | validated deterministic teams | verified (`conformance/scenarios/pairs/teams.json`, `internal/cli/identity_test.go`) |
 | `users [query]` | `--team`, `-l`/`--limit 20` | preserve exact directory semantics | scaffolded |
 | `channels` | `--type all`; `dm/public/private/group/all` | preserve account-wide dedupe/team identity | scaffolded |
 | `dms` | repeated `-u`/`--user`; `-l`/`--limit 50`; `-s`/`--since 7d`; `-c`/`--channel`; `--cursor` | preserve exact D-channel and aggregate semantics | scaffolded |
@@ -179,6 +179,18 @@ Every row requires a named Go regression test and, where applicable, a language-
 The E2E disposition specifically preserves verbatim short Markdown DM and near-limit long Markdown group storage/readback, final-newline and Unicode fidelity, and exactly one resulting post.
 
 Removal requires every v1 test file to link to one or more verified Go tests/scenarios in this table or a finer generated inventory.
+
+## Differential corpus
+
+Paired fixtures use `mm/conformance-pair/v1`. Oracle and candidate run in separate isolated homes against separate sequential fake servers. Each side locks its own exact args, stdin, environment, HTTP method/URI/headers/body, stdout, stderr, and exit code. This proves preserved semantics while making contract-authorized v2 schema and exit-code changes explicit.
+
+Current executable pairs:
+
+- `invalid-limit.json`: canonical numeric rejection and zero network activity
+- `teams.json`: authenticated request order, narrow field projection, deterministic sorting, and secret redaction
+- `whoami.json`: authenticated request shape, narrow identity projection, and private-field exclusion
+
+The sequential request transcript is the fake server's resulting state for these read-only cases. Mutation state is proved by Go fault tests and the disposable Mattermost E2E suite rather than inferred from stdout.
 
 ## Build, CI, and release disposition
 

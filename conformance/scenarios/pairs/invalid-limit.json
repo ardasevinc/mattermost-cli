@@ -1,0 +1,22 @@
+{
+  "schema": "mm/conformance-pair/v1",
+  "name": "invalid numeric input fails before network on both versions",
+  "oracle": {
+    "args": ["--json", "users", "--limit", "0"],
+    "env": { "MM_TOKEN": "fixture-mattermost-token" },
+    "expected": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error: --limit must be a positive number.\n"
+    }
+  },
+  "candidate": {
+    "args": ["--json", "users", "--limit", "0"],
+    "env": { "MM_TOKEN": "fixture-mattermost-token" },
+    "expected": {
+      "exitCode": 2,
+      "stdout": "",
+      "stderr": "{\"schema\":\"mm/v2/error\",\"code\":\"invalid_input\",\"message\":\"--limit must be a positive number\",\"exitCode\":2,\"recovery\":\"none\"}\n"
+    }
+  }
+}
