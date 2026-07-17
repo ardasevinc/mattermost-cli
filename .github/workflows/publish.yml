@@ -127,7 +127,7 @@ jobs:
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w 0)"
             remote=""
             for attempt in {1..12}; do
-              if remote="$(npm view "$name@$version" dist --json 2>/dev/null)"; then break; fi
+              if remote="$(npm view --prefer-online "$name@$version" dist --json 2>/dev/null)"; then break; fi
               remote=""
               if [[ "$attempt" -lt 12 ]]; then sleep 5; fi
             done
