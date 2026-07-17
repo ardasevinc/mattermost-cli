@@ -1,18 +1,217 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ardasevinc/mattermost-cli/internal/presentation"
 )
+
+func TestPreparedMutationFreezesRequestBeforeDispatch(t *testing.T) {
+	body := map[string]string{"message": "before", "other": "\u2028"}
+	var gotMethod, gotURI, gotAuth, gotType string
+	var gotBody []byte
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.GetBody != nil || request.Body == nil || request.Body == http.NoBody {
+			t.Errorf("mutation body is replayable: GetBody=%v Body=%T", request.GetBody != nil, request.Body)
+		}
+		gotMethod, gotURI = request.Method, request.URL.RequestURI()
+		gotAuth, gotType = request.Header.Get("Authorization"), request.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(request.Body)
+		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"post-1"}`))}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example/base", WithRoundTripper(transport))
+	prepared, err := c.PreparePost("/posts?set=pinned", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body["message"] = "after"
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := prepared.Execute(context.Background(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotURI != "/base/api/v4/posts?set=pinned" || gotAuth != "Bearer token-value" || gotType != "application/json" || result.ID != "post-1" {
+		t.Fatalf("request=%s %s auth=%q type=%q result=%+v", gotMethod, gotURI, gotAuth, gotType, result)
+	}
+	if !bytes.Equal(gotBody, []byte("{\"message\":\"before\",\"other\":\"\u2028\"}")) {
+		t.Fatalf("body = %q", gotBody)
+	}
+}
+
+func TestPreparedEmptyDeleteRemainsNonReplayable(t *testing.T) {
+	var attempts atomic.Int32
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		if request.GetBody != nil || request.Body == nil || request.Body == http.NoBody || request.ContentLength != 0 {
+			t.Fatalf("replayable empty mutation: GetBody=%v Body=%T ContentLength=%d", request.GetBody != nil, request.Body, request.ContentLength)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil || len(body) != 0 {
+			t.Fatalf("body=%q error=%v", body, err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PrepareDelete("/posts/post-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Execute(context.Background(), &struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d", attempts.Load())
+	}
+}
+
+func TestPreparedMutationRejectsLocalFailuresBeforeDispatch(t *testing.T) {
+	transport := &countingTransport{err: errors.New("must not be called")}
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	if _, err := c.PreparePost("posts", map[string]string{"message": "hi"}); err == nil {
+		t.Fatal("invalid path prepared")
+	}
+	if _, err := c.PreparePost("/posts", map[string]any{"bad": make(chan int)}); err == nil || err.Error() != "unable to encode Mattermost request" {
+		t.Fatalf("encoding error = %v", err)
+	}
+	c.Close()
+	if _, err := c.PrepareDelete("/posts/post-1"); !errors.Is(err, ErrClientClosed) {
+		t.Fatalf("closed error = %v", err)
+	}
+	if transport.count.Load() != 0 {
+		t.Fatalf("attempts = %d", transport.count.Load())
+	}
+}
+
+func TestPreparedMutationIsOneShotAcrossConcurrentCallers(t *testing.T) {
+	var attempts atomic.Int32
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PreparePut("/posts/post-1", map[string]string{"message": "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const callers = 16
+	start := make(chan struct{})
+	errorsSeen := make(chan error, callers)
+	var wait sync.WaitGroup
+	for range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			errorsSeen <- prepared.Execute(context.Background(), &struct{}{})
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errorsSeen)
+	succeeded, consumed := 0, 0
+	for err := range errorsSeen {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrMutationUsed):
+			var unknown *OutcomeUnknownError
+			if !errors.As(err, &unknown) {
+				t.Fatalf("consumed mutation was not unknown: %v", err)
+			}
+			consumed++
+		default:
+			t.Fatalf("unexpected error = %v", err)
+		}
+	}
+	if succeeded != 1 || consumed != callers-1 || attempts.Load() != 1 {
+		t.Fatalf("succeeded=%d consumed=%d attempts=%d", succeeded, consumed, attempts.Load())
+	}
+}
+
+func TestPreparedMutationClassifiesEveryPostIntentFailureConservatively(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       int
+		body         string
+		transportErr error
+		want4x       bool
+	}{
+		{"rejected", 409, `ignored`, nil, true},
+		{"redirect", 307, `ignored`, nil, false},
+		{"informational", 101, `ignored`, nil, false},
+		{"server", 503, `ignored`, nil, false},
+		{"network", 0, ``, errors.New("network failed"), false},
+		{"empty success", 204, ``, nil, false},
+		{"malformed success", 200, `{`, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				attempts.Add(1)
+				if tc.transportErr != nil {
+					return nil, tc.transportErr
+				}
+				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})
+			c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+			prepared, err := c.PrepareDelete("/posts/post-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = prepared.Execute(context.Background(), &struct{}{})
+			var rejected *APIError
+			var unknown *OutcomeUnknownError
+			if tc.want4x {
+				if !errors.As(err, &rejected) || rejected.Status != tc.status {
+					t.Fatalf("error = %v", err)
+				}
+			} else if !errors.As(err, &unknown) {
+				t.Fatalf("error = %v", err)
+			}
+			if attempts.Load() != 1 {
+				t.Fatalf("attempts = %d", attempts.Load())
+			}
+		})
+	}
+}
+
+func TestPreparedMutationFailureAfterPreparationIsUnknownAndConsumed(t *testing.T) {
+	transport := &countingTransport{err: errors.New("network failed")}
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PreparePost("/posts", map[string]string{"message": "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var unknown *OutcomeUnknownError
+	if err := prepared.Execute(ctx, &struct{}{}); !errors.As(err, &unknown) {
+		t.Fatalf("canceled error = %v", err)
+	}
+	if err := prepared.Execute(context.Background(), &struct{}{}); !errors.Is(err, ErrMutationUsed) || !errors.As(err, &unknown) {
+		t.Fatalf("replay error = %v", err)
+	}
+
+	closed, err := c.PreparePost("/posts", map[string]string{"message": "next"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if err := closed.Execute(context.Background(), &struct{}{}); !errors.As(err, &unknown) {
+		t.Fatalf("closed error = %v", err)
+	}
+}
 
 func TestReadAuthJSONAndRetryCounts(t *testing.T) {
 	var attempts atomic.Int32

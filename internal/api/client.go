@@ -33,6 +33,7 @@ var (
 	ErrInvalidJSON  = errors.New("Mattermost returned an invalid JSON response")
 	ErrBodyTooLarge = errors.New("Mattermost response exceeded the size limit")
 	ErrClientClosed = errors.New("Mattermost client is closed")
+	ErrMutationUsed = errors.New("prepared Mattermost mutation was already consumed")
 )
 
 type APIError struct{ Status int }
@@ -100,6 +101,24 @@ type Client struct {
 	closed    bool
 }
 
+// PreparedMutation is an immutable, one-shot JSON mutation. URL resolution and
+// body encoding happen before it is returned so callers can durably record
+// dispatch intent immediately before Execute. Once Execute starts, every local,
+// transport, response, or cancellation failure is conservatively outcome
+// unknown; callers must never retry the same effect automatically.
+type PreparedMutation struct {
+	client   *Client
+	method   string
+	endpoint *url.URL
+	payload  []byte
+	state    *preparedMutationState
+}
+
+type preparedMutationState struct {
+	mu   sync.Mutex
+	used bool
+}
+
 type requestContextKey uint8
 
 const mutationRequestKey requestContextKey = 1
@@ -155,6 +174,79 @@ func (c *Client) Put(ctx context.Context, path string, body, out any) error {
 }
 func (c *Client) Delete(ctx context.Context, path string, out any) error {
 	return c.request(ctx, http.MethodDelete, path, nil, out, true, true)
+}
+
+func (c *Client) PreparePost(path string, body any) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodPost, path, body)
+}
+
+func (c *Client) PreparePut(path string, body any) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodPut, path, body)
+}
+
+func (c *Client) PrepareDelete(path string) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodDelete, path, nil)
+}
+
+func (c *Client) prepareMutation(method, path string, body any) (*PreparedMutation, error) {
+	c.lifecycle.RLock()
+	defer c.lifecycle.RUnlock()
+	if c.closed {
+		return nil, ErrClientClosed
+	}
+	endpoint, err := c.endpoint(path)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := encodeBody(body)
+	if err != nil {
+		return nil, errors.New("unable to encode Mattermost request")
+	}
+	return &PreparedMutation{client: c, method: method, endpoint: endpoint, payload: bytes.Clone(payload), state: &preparedMutationState{}}, nil
+}
+
+// Execute consumes the prepared mutation before inspecting cancellation or
+// client state. This makes a durable dispatch intent conservative: any failure
+// after the caller records it is unknown and the mutation cannot be replayed.
+func (p *PreparedMutation) Execute(ctx context.Context, out any) error {
+	if p == nil || p.state == nil || p.client == nil || p.endpoint == nil {
+		return consumedMutationError()
+	}
+	p.state.mu.Lock()
+	if p.state.used {
+		p.state.mu.Unlock()
+		return consumedMutationError()
+	}
+	p.state.used = true
+	p.state.mu.Unlock()
+
+	p.client.lifecycle.RLock()
+	defer p.client.lifecycle.RUnlock()
+	if p.client.closed || ctx == nil {
+		return &OutcomeUnknownError{}
+	}
+	status, _, data, failure := p.client.attempt(ctx, p.method, p.endpoint, p.payload, true, true)
+	if failure != nil {
+		return &OutcomeUnknownError{}
+	}
+	if status >= 400 && status < 500 {
+		return &APIError{Status: status}
+	}
+	if status < 200 || status >= 300 {
+		return &OutcomeUnknownError{}
+	}
+	decodeTarget := out
+	if decodeTarget == nil {
+		decodeTarget = new(any)
+	}
+	if err := decodeJSON(data, decodeTarget); err != nil {
+		return &OutcomeUnknownError{}
+	}
+	return nil
+}
+
+func consumedMutationError() error {
+	return errors.Join(&OutcomeUnknownError{}, ErrMutationUsed)
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body, out any, mutation, authenticated bool) error {
@@ -234,9 +326,20 @@ func (c *Client) attempt(parent context.Context, method string, endpoint *url.UR
 	if mutation {
 		ctx = context.WithValue(ctx, mutationRequestKey, true)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(payload))
+	var body io.Reader = bytes.NewReader(payload)
+	if mutation {
+		// bytes.Reader makes requests replayable by populating GetBody, and a
+		// nil body becomes http.NoBody. Both permit transparent HTTP/2 retries.
+		// A distinct ReadCloser keeps even empty mutations non-replayable.
+		body = io.NopCloser(bytes.NewReader(payload))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return 0, nil, nil, &attemptFailure{kind: "transport"}
+	}
+	if mutation {
+		req.ContentLength = int64(len(payload))
+		req.GetBody = nil
 	}
 	if authenticated {
 		req.Header.Set("Authorization", "Bearer "+c.token)
