@@ -3,6 +3,12 @@ name: Publish npm packages
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -10,7 +16,7 @@ permissions:
   attestations: read
 
 concurrency:
-  group: npm-${{ github.event.release.tag_name }}
+  group: npm-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -21,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -38,13 +44,14 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="${{ github.event.release.tag_name }}"
+          release_tag="${{ github.event.release.tag_name || inputs.tag }}"
+          version="$release_tag"
           version="${version#v}"
-          test "${{ github.event.release.tag_name }}" = "v$version"
+          test "$release_tag" = "v$version"
           source_version="$(awk -F'"' '/^[[:space:]]*Version = / {print $2}' internal/buildinfo/buildinfo.go)"
           test "$version" = "$source_version"
           commit="$(git rev-parse HEAD)"
-          test "$commit" = "$(git rev-parse '${{ github.event.release.tag_name }}^{commit}')"
+          test "$commit" = "$(git rev-parse "$release_tag^{commit}")"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
       - name: Download and verify native release assets
@@ -52,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir dist
-          gh release download "${{ github.event.release.tag_name }}" --dir dist
+          gh release download "${{ github.event.release.tag_name || inputs.tag }}" --dir dist
           (cd dist && sha256sum --check checksums.txt)
           for artifact in dist/*; do
             gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
@@ -105,7 +112,7 @@ jobs:
             if npm view "$name@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
               echo "already published identically: $name@${{ steps.version.outputs.version }}"
             else
-              npm publish "$tarball" --access public --provenance
+              npm publish "./$tarball" --access public --provenance
             fi
           done
       - name: Publish launcher package last
@@ -115,7 +122,7 @@ jobs:
           if npm view "mattermost-cli@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
             echo "already published identically: mattermost-cli@${{ steps.version.outputs.version }}"
           else
-            npm publish "$tarball" --access public --provenance
+            npm publish "./$tarball" --access public --provenance
           fi
       - name: Verify exact registry artifacts
         shell: bash
