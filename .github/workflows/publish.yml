@@ -60,7 +60,7 @@ jobs:
           go run ./scripts/npm-package --version "${{ steps.version.outputs.version }}" --release-dir dist --output npm-dist
           mkdir npm-packs
           for package_dir in npm-dist/*; do
-            npm pack --json --ignore-scripts --pack-destination npm-packs "$package_dir" >/dev/null
+            npm pack --json --ignore-scripts --pack-destination npm-packs "./$package_dir" >/dev/null
           done
           test "$(find npm-packs -maxdepth 1 -name '*.tgz' | wc -l)" -eq 5
           for tarball in npm-packs/ardasevinc-*.tgz; do

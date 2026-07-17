@@ -51,7 +51,7 @@ jobs:
           go run ./scripts/npm-package --version 2.0.0-dev --release-dir dist --output npm-dist
           mkdir npm-packs
           for package_dir in npm-dist/*; do
-            npm pack --json --ignore-scripts --pack-destination npm-packs "$package_dir" >/dev/null
+            npm pack --json --ignore-scripts --pack-destination npm-packs "./$package_dir" >/dev/null
           done
           test "$(find npm-packs -maxdepth 1 -name '*.tgz' | wc -l)" -eq 5
       - name: Smoke native archive and npm launcher
