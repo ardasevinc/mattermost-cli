@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:teams",
+  "title": "mm v2 team membership",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "teams"],
+  "properties": {
+    "schema": { "const": "mm/v2/teams" },
+    "teams": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/team" }
+    }
+  },
+  "$defs": {
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "displayName", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "displayName": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "type": { "enum": ["open", "invite_only"] }
+      }
+    },
+    "nullableNonEmptyString": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  }
+}

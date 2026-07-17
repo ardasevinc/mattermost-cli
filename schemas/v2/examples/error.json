@@ -1,0 +1,8 @@
+{
+  "schema": "mm/v2/error",
+  "code": "state_conflict",
+  "message": "stage revision no longer matches",
+  "exitCode": 6,
+  "stageRef": "stage_fixture@2",
+  "recovery": "none"
+}

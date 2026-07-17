@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:stage-prune-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "stageId", "expectedRevision", "expectedDigest", "abandonRecovery"],
+  "properties": {
+    "schema": { "const": "mm/v2/stage-prune-request" },
+    "requestId": { "$ref": "#/$defs/requestId" },
+    "stageId": { "$ref": "#/$defs/stageId" },
+    "expectedRevision": { "$ref": "#/$defs/revision" },
+    "expectedDigest": { "$ref": "#/$defs/digest" },
+    "abandonRecovery": { "type": "boolean" }
+  },
+  "$defs": {
+    "requestId": {
+      "type": "string", "minLength": 1, "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]*$"
+    },
+    "stageId": { "type": "string", "pattern": "^stg_[A-Za-z0-9_-]{32}$" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

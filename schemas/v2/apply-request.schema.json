@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:apply-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "requestId", "stageId", "revision", "expectedDigest", "recoveryMode"],
+  "properties": {
+    "schema": { "const": "mm/v2/apply-request" },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]*$" },
+    "stageId": { "type": "string", "pattern": "^stg_[A-Za-z0-9_-]{32}$" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "expectedDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "recoveryMode": { "enum": ["ordinary", "resume_partial", "force_unknown"] }
+  }
+}

@@ -10,12 +10,12 @@ description: >-
   unread messages, or finding tasks mentioned in chat. Also use when the user needs context
   from team communication, wants to find action items from conversations, or needs to monitor
   a channel for updates in real-time.
-version: 1.6.0
+version: 2.0.0
 ---
 
 # Mattermost CLI
 
-CLI for safely reading Mattermost and deliberately sending to exact DM/group destinations. Retrieved output is automatically redacted for safe LLM processing.
+Native CLI for safely reading Mattermost and preparing inspectable staged mutations. Retrieved output is automatically redacted for safe LLM processing. Remote changes happen only through a separate exact-revision `apply` command.
 
 ## When to Invoke Immediately
 
@@ -101,24 +101,34 @@ mm group-dms --since 24h --limit 100 # shared output budget across group DMs
 mm group-dms --channel <channel-id> --cursor <opaque> # resume one group DM
 ```
 
-### Send a Direct or Group Message
+### Stage and Apply a Message
 ```bash
-mm --json send dm alice --dry-run
-printf '%s' 'hello alice' | mm --json send dm alice
+mm stage send dm alice --dry-run
+printf '%s' 'hello alice' | mm stage send dm alice
 
-mm --json send group <group-channel-id> --dry-run
-printf '%s' 'hello group' | mm --json send group <group-channel-id>
+mm stage send group <group-channel-id> --dry-run
+printf '%s' 'hello group' | mm stage send group <group-channel-id>
+
+mm stage list
+mm stage show <stage-id>
+mm apply <stage-id>@<revision>
 ```
 
-Only send when the user has explicitly supplied both the destination and message intent. Prefer a
-dry-run first when destination identity is not already proven. `send dm` may create the exact DM;
-`send group` accepts an existing type-G channel ID and never creates or guesses a group. Message
-content comes from stdin so it does not enter process arguments. Do not include the active
-Mattermost credential in outbound content.
+Stage only when the user has supplied the destination and message intent. Staging may read remote
+identity and destination state and writes only to private local SQLite; it does not mutate
+Mattermost. Review the exact stage with `stage show`, then apply only when the user explicitly asks
+to execute it. Do not collapse stage and apply into one unattended shell command.
 
-Never automatically retry an uncertain send. Timeout, transport/body failure, malformed receipt,
-or server failure can mean the post exists. Inspect the destination first. If the CLI says DM setup
-was uncertain but the message was not attempted, rerun the dry-run before deciding whether to send.
+`stage send dm` targets an existing exact DM; explicit `stage dm-create` and `stage group-create`
+prepare conversation creation. `stage send group` accepts an exact type-G channel ID. Message
+content normally comes from stdin so it does not enter process arguments. `--message` is available
+but visible to process inspection and shell history. Do not include the active Mattermost
+credential in outbound content or attachments.
+
+Never automatically retry an uncertain apply. If recovery is proven partial, the CLI may require
+`--resume-partial`; if the outcome is unknown, only an explicit user decision may use
+`--force-unknown`, which accepts duplicate risk. A confirmed-effect receipt/output failure means do
+not retry.
 
 ### Fetch Channel Messages
 ```bash
@@ -215,8 +225,10 @@ make readiness fail after all checks print; network checks use independent bound
 | Watch channel live | `mm watch general` |
 | Watch DM live | `mm watch --dm alice` |
 | Specific thread | `mm thread <postId>` |
-| Send a DM | `printf '%s' 'message' \| mm send dm alice` |
-| Send to existing group DM | `printf '%s' 'message' \| mm send group <channel-id>` |
+| Stage a DM | `printf '%s' 'message' \| mm stage send dm alice` |
+| Stage to existing group DM | `printf '%s' 'message' \| mm stage send group <channel-id>` |
+| Review a stage | `mm stage show <stage-id>` |
+| Apply reviewed revision | `mm apply <stage-id>@<revision>` |
 | JSON for processing | `mm dms --json` |
 | Setup config | `mm config --init` |
 
@@ -244,9 +256,10 @@ These apply to all commands:
 | `--json` flag | JSON | Parsing, analysis, programmatic access |
 | `--json watch ...` | JSON Lines | Streaming into pipes or append-only logs |
 
-Empty `dms`, `group-dms`, `channel`, `search`, and `mentions` reads are successful: JSON output is `[]`, while
-terminal and piped text output is `No messages found.`. Treat a missing requested thread or post as
-an error. Empty `unread --json` output is `{ "unread": [] }`.
+Empty reads succeed only when retrieval proves completeness. Machine output is always a strict
+`mm/v2/<command>` envelope with explicit selection and completeness metadata; human output uses
+`No messages found.` for a proven empty message result. Treat a missing requested thread or post as
+an error.
 
 Under AI agents, relative time is auto-enabled ("2 days ago" instead of "29 Jan 2026"). Override with `--no-relative`.
 
@@ -286,7 +299,8 @@ Masking preserves context: `ghp_abc123xyz789secret` → `ghp_...cret`
 
 Remote strings are control-character sanitized even with `--no-redact`. Heuristic secret masking
 can be disabled when explicitly needed, but the active Mattermost credential stays fully masked.
-Outbound messages are not display-redacted; the active credential itself is blocked before sending.
+Outbound messages are not display-redacted; the active credential itself is blocked before local
+persistence and checked again before remote dispatch.
 
 ## Configuration
 
@@ -312,14 +326,15 @@ mention_names = ["Arda", "arda.sevinc"]  # aliases for mm mentions
 | "Could not find DM channel" | User doesn't exist or no DM history | Check username spelling |
 | "Could not find channel" | Channel name wrong or no access | Verify name and team |
 | "Multiple teams found" | Multi-team user without `--team` | Add `--team <name>` |
-| Unknown write outcome | Server/transport failed after dispatch | Inspect the destination before retrying |
+| Partial/unknown apply outcome | Effect could not be proven | Inspect the stage and destination; never ordinary-retry |
+| Confirmed-effect output failure | Remote effect succeeded but local receipt/output failed | Do not retry |
 | Connection errors on reads | Network/server issues | Verify URL is correct and accessible |
 | WebSocket auth failure | Invalid token for watch mode | Regenerate access token |
 
 ## When NOT to Use
 
 - User is asking about Slack, Discord, or other chat platforms
-- User wants to create channels, manage members, edit/delete posts, or send outside DMs/group DMs
+- User wants administrative channel/member management, webhooks, or unsupported server administration
 - User needs webhook or bot integrations
 
 ## Example Workflows

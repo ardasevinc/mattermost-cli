@@ -1,189 +1,158 @@
 # Agent Guide
 
-Codebase guide for AI agents working on this project.
+Repository guide for agents working on `mattermost-cli` v2.
 
-## Project Structure
+## Product invariant
 
-```
-src/
-├── index.ts              # CLI entry point (commander setup)
-├── cli.ts                # Read/send command handlers and output orchestration
-├── config.ts             # TOML config file loading (~/.config/mattermost-cli/)
-├── cursor.ts             # Opaque deterministic history cursors
-├── doctor.ts             # Read-only configuration/server/auth diagnostics
-├── input.ts              # Bounded fatal-UTF-8 message stdin
-├── types.ts              # All TypeScript interfaces
-├── validation.ts         # Strict CLI numeric validation
-├── api/
-│   ├── client.ts         # Bounded HTTP, auth, retry, rate-limit policy
-│   ├── users.ts          # User fetching + caching
-│   ├── channels.ts       # Channel/DM/team fetching + team resolution
-│   ├── posts.ts          # Message writes, fetching, pagination, and search
-│   ├── url.ts            # Server URL and permalink validation
-│   └── websocket.ts      # Live post events for watch mode
-├── preprocessing/
-│   ├── patterns.ts       # Secret detection regex patterns
-│   ├── credential.ts     # Active credential ownership and exact masking
-│   ├── secrets.ts        # Detection + masking logic
-│   ├── sanitize.ts       # Terminal/control/bidi sanitization
-│   ├── post.ts           # Post and attachment normalization
-│   └── pipeline.ts       # Presentation preprocessing entry
-├── utils/
-│   ├── colors.ts         # ANSI colors + username color hashing
-│   ├── date.ts           # Date formatting (DD/MM, relative time)
-│   ├── threading.ts      # Thread grouping + ordering
-│   └── unread.ts         # Unread metrics + sorting helpers
-└── formatters/
-    ├── json.ts           # JSON output
-    ├── markdown.ts       # Markdown output (for pipes/LLMs)
-    ├── pretty.ts         # Terminal output (colors, grouping)
-    └── watch.ts          # Pretty/JSONL watch events
+`mm` reads and watches Mattermost, but remote mutations are always two-step:
 
+1. `mm stage ...` resolves and persists an inspectable local intent without a
+   remote mutation.
+2. `mm apply <stage-id>@<revision>` compare-and-swaps and dispatches that exact
+   reviewed revision.
+
+Never add an immediate send/edit/delete/react bypass. Never automatically retry
+an uncertain mutation.
+
+## Structure
+
+```text
+cmd/
+  mm/                    native CLI entry point and signal handling
+  conformance/           language-neutral fake-server runner
+internal/
+  api/                   bounded HTTP, retry, redirect, and no-replay policy
+  apply/                 remote mutation execution
+  cli/                   Cobra commands and output orchestration
+  config/                XDG TOML configuration and permission checks
+  mattermost/            narrow validated REST and watch operations
+  messageinput/          bounded exact UTF-8 message input
+  normalization/         post normalization and deleted-content suppression
+  output/                human Markdown/pretty and machine envelopes
+  presentation/          sanitization, redaction, credential ownership
+  retrieval/             bounded pagination, cursors, hydration, completeness
+  schema/                embedded strict machine-schema registry
+  serverurl/             canonical safe URL policy
+  stagecontent/          stdin/editor/message acquisition
+  stagecursor/           deterministic local-stage cursors
+  stageinput/            attachment identity, scanning, and spooling
+  stageoutput/           stage receipt construction and validation
+  stagerequest/          strict structured mutation request decoding
+  stagestore/            SQLite migrations, CAS, journal, retention, recovery
+  staging/               read-only resolution and stage planning
+  transport/             WebSocket transport
+schemas/v2/              checked-in JSON Schemas and golden examples
+tests/e2e/               disposable Mattermost acceptance tests and Compose file
 scripts/
-├── check-version.mjs     # package/lockfile/CLI version invariant
-└── test-e2e.mjs          # Disposable Mattermost Docker send harness
-
-.github/workflows/
-├── ci.yml                # Vitest, checks, audit, exact tarball smoke
-└── publish.yml           # OIDC npm publishing of verified tarball
-
-tests/                    # Vitest suites by API, CLI, security, formatting, and utilities
+  e2e/                   Go-native Docker conductor
+  licenses/              exact reviewed dependency-license gate
+  release/               deterministic native archives and Homebrew formula
+  npm-package/           exact launcher/platform npm packages
+  install.sh             checksum-verifying installer
 ```
 
-## Key Flows
+## Working conventions
 
-### CLI → API → Output
-```
-index.ts (parse args)
-    → cli.ts (whoami/teams/users/channels/dms/group-dms/send/channel/thread/search/mentions/unread/watch)
-        → api/* (fetch data from Mattermost)
-        → preprocessing/* (redact secrets)
-        → formatters/* (format output)
-```
+- Go 1.26+; format with `gofmt`.
+- Keep protocol and security behavior in narrow packages, not Cobra handlers.
+- Use the local Mattermost REST client; do not add the server SDK.
+- Centralize machine types in `internal/output` and schemas under `schemas/v2`.
+- Every structured request/output is self-identifying and schema-validated.
+- Preserve exact content bytes after valid UTF-8 and bound checks.
+- Validate canonical identities before presentation sanitization.
+- Keep reads bounded, deterministic, and honest about incomplete results.
+- Before adding a module, review maintenance and license posture, then update
+  `scripts/licenses/main.go` intentionally.
 
-### Secret Redaction Pipeline
-```
-cli.ts calls normalizePosts()/preprocess()
-    → preprocessing/post.ts or preprocessing/pipeline.ts
-        → sanitize.ts makes terminal/control/bidi characters visible
-        → secrets.ts:detectSecrets() finds matches
-        → secrets.ts:maskSecret() partial-masks each
-        → credential.ts fully masks exact active Mattermost credentials
-        → returns sanitized presentation data and redaction provenance
-```
-
-## Common Tasks
-
-### Add a new secret pattern
-1. Edit `src/preprocessing/patterns.ts`
-2. Add to `SECRET_PATTERNS` array with `name` and `pattern` (regex with capture group)
-3. Add tests in `tests/preprocessing/secrets.test.ts` and boundary coverage where emitted
-
-### Add a new output format
-1. Create `src/formatters/newformat.ts`
-2. Export from `src/formatters/index.ts`
-3. Wire it through the output selection in `src/cli.ts`
-
-### Add a new API endpoint
-1. Add function in appropriate `src/api/*.ts` file
-2. Use `getClient().get<T>()` or `.post<T>()`
-3. Add types to `src/types.ts` if needed
-
-### Add a new command
-1. Add handler in `src/cli.ts`
-2. Add command wiring in `src/index.ts`
-3. Add/adjust tests under `tests/`
-
-## Code Conventions
-
-- **Bun for dev** - use `bun run`; production code uses cross-runtime APIs
-- **Vitest for tests** - use `bun run test` or `bun run test -- <pattern>`; do not use Bun's built-in test runner
-- **No `npx` in this repo** - use `bunx`/`bun run` only
-- **Biome is configured** - use `bun run lint` / `bun run check` / `bun run format`
-- **No dotenv** - Bun auto-loads `.env`
-- **Types in types.ts** - keep interfaces centralized
-- **Singleton client** - use `getClient()` after `initClient()`
-
-## Testing
+## Core gates
 
 ```bash
-bun run lint                # Biome lint
-bun run check               # Biome full check
-bun run typecheck           # Typecheck
-bun run test                # Run all tests with Vitest
-bun run test:e2e            # Isolated real Mattermost DM/group sends via Docker
-bun run test -- secrets     # Run tests matching "secrets"
-bunx vitest run --no-isolate # Catch shared singleton/cache leakage
-bun run build               # Build npm artifact
-bun run verify              # Full local release gate
-bun audit                   # Dependency vulnerability check
+just gate
+just docker-e2e
 ```
 
-Test files live in `tests/` by domain.
+Useful focused commands:
 
-## Security Rules
-
-**Never:**
-- Log or print `MM_TOKEN` (not even in errors or with `--no-redact`)
-- Store original secret values in output (we removed `originalText` and `redactions.original` for this reason)
-- Make write operations in read commands (we removed POST fallback in `getDMChannelWithUser`)
-- Automatically retry a message or direct-channel write after an uncertain outcome
-- Echo outbound message content in receipts or errors
-
-**Always:**
-- Redact before output
-- Use partial masking (show prefix/suffix for context)
-- Fully mask exact active Mattermost credentials regardless of redaction preference
-- Keep transport/API errors generic and never reflect remote response bodies
-- Fail closed when retrieval completeness or required identity/team data is unknown
-- Validate exact D/G destinations before sending and keep group creation out of send flows
-- Block the active Mattermost credential from outbound message content
-
-## Configuration
-
-**Priority chain:** CLI args → env vars → TOML config file
-
-### Environment Variables
 ```bash
-MM_URL=https://mattermost.example.com   # Server URL
-MM_TOKEN=<token>                         # Personal access token
-MM_REDACT=false                          # Optional: disable redaction
+go test ./internal/cli
+go test -race ./internal/stagestore ./internal/apply
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+go run ./scripts/licenses
+go test -tags=e2e -run '^$' ./tests/e2e
 ```
 
-### Config File
-```bash
-mm config --init  # Creates ~/.config/mattermost-cli/config.toml
+`just gate` runs formatting, all normal and race tests, vet, Staticcheck,
+`govulncheck`, license and module checks, native build, tagged E2E compile/vet,
+four CGO-free cross-builds, and `git diff --check`.
+
+`just docker-e2e` starts pinned Mattermost 11.8.3 and Postgres images on a
+loopback-only dynamic port, creates only fake users, runs lifecycle/read/watch
+acceptance, and verifies complete resource teardown. It never touches a
+configured workplace server.
+
+## Security rules
+
+Never:
+
+- emit, log, or persist the active Mattermost credential or a guessable digest;
+- retain original secret values in redaction provenance;
+- reflect remote response bodies, reason phrases, parser details, or untrusted
+  path values in ordinary errors;
+- follow redirects for mutations;
+- replay a write after dispatch unless the explicit recovery contract proves a
+  suffix was not applied or the caller accepts unknown duplicate risk;
+- turn unknown completeness into an empty/complete claim;
+- make a read command create a DM or perform any write fallback;
+- echo staged outbound content in list output or ordinary receipts.
+
+Always:
+
+- register active credentials only for the owning invocation and release them;
+- reject that credential in outbound body, structured fields, attachment
+  metadata/path, and bytes before persistence and again before dispatch;
+- bind full normalized server URL, authenticated user, destination, revision,
+  and semantic digest before apply;
+- journal dispatch intent before handing a mutation to transport;
+- distinguish definitive rejection, partial/unknown outcome, local conflict,
+  and confirmed-effect receipt/output failure;
+- add regression coverage for bugs and contract changes.
+
+## Configuration and state
+
+Priority: CLI flags, environment, TOML, defaults.
+
+```text
+$XDG_CONFIG_HOME/mattermost-cli/config.toml
+~/.config/mattermost-cli/config.toml
 ```
 
-```toml
-# ~/.config/mattermost-cli/config.toml
-url = "https://mattermost.example.com"
-token = "your-personal-access-token"
-redact = true
-mention_names = ["Arda", "arda.sevinc"] # optional aliases used by `mm mentions`
+State:
+
+```text
+$XDG_STATE_HOME/mattermost-cli
+~/.local/state/mattermost-cli
 ```
 
-## Entry Points
+Both XDG variables must be absolute when set. Configuration and state paths are
+the same on macOS and Linux. State is private SQLite plus its journals; stage
+inspection is read-only unless the command explicitly mutates local lifecycle.
 
-| Task | File | Function |
-|------|------|----------|
-| CLI parsing | `src/index.ts` | `program.parseAsync()` |
-| Config loading | `src/config.ts` | `loadConfigFile()` |
-| Health diagnostics | `src/doctor.ts` | `runDoctor()` |
-| Identity | `src/cli.ts` | `showWhoAmI()` |
-| Team discovery | `src/cli.ts` | `listTeams()` |
-| User discovery | `src/cli.ts` | `listUsers()` |
-| List channels | `src/cli.ts` | `listChannels()` |
-| Fetch DMs | `src/cli.ts` | `fetchDMs()` |
-| Fetch group DMs | `src/cli.ts` | `fetchGroupDMs()` |
-| Fetch one channel | `src/cli.ts` | `fetchChannel()` |
-| Fetch one thread | `src/cli.ts` | `fetchThread()` |
-| Search messages | `src/cli.ts` | `searchMessages()` |
-| Fetch mentions | `src/cli.ts` | `fetchMentions()` |
-| Show unread summary | `src/cli.ts` | `showUnread()` |
-| Watch live channel events | `src/cli.ts` | `watchChannel()` |
-| Date formatting | `src/utils/date.ts` | `formatDate()`, `formatRelativeTime()` |
-| Thread grouping | `src/utils/threading.ts` | `groupIntoThreads()` |
-| Secret detection | `src/preprocessing/secrets.ts` | `detectSecrets()` |
-| API requests | `src/api/client.ts` | `MattermostClient.request()` |
-| History cursors | `src/cursor.ts` | `encodeChannelHistoryCursor()`, `decodeChannelHistoryCursor()` |
+## Change routing
+
+- CLI grammar/orchestration: `internal/cli/`
+- HTTP/retry/no-replay: `internal/api/`
+- Mattermost endpoint binding: `internal/mattermost/`
+- Retrieval/cursor/completeness: `internal/retrieval/`, `internal/cursor/`
+- Human/machine output: `internal/output/`, `schemas/v2/`
+- Redaction/sanitization: `internal/presentation/`
+- Stage planning: `internal/staging/`
+- SQLite lifecycle/recovery: `internal/stagestore/`
+- Apply execution: `internal/apply/`
+- Attachments: `internal/stageinput/`
+- Distribution: `scripts/release/`, `scripts/npm-package/`, workflows
+
+The frozen TypeScript implementation is not present on v2. Consult tag
+`v1.6.0`, `docs/V1_PARITY_MATRIX.md`, and `docs/V1_TEST_DISPOSITION.md` when
+historical oracle evidence matters.

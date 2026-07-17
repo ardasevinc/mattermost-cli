@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:channels",
+  "title": "mm v2 account channel directory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "channels"],
+  "properties": {
+    "schema": { "const": "mm/v2/channels" },
+    "channels": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/channel" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "displayName"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "displayName": { "$ref": "#/$defs/nullableNonEmptyString" }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "name", "displayName", "team", "lastPost", "messageCount"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["dm", "public", "private", "group"] },
+        "name": { "type": "string", "minLength": 1 },
+        "displayName": { "$ref": "#/$defs/nullableNonEmptyString" },
+        "team": { "anyOf": [{ "$ref": "#/$defs/team" }, { "type": "null" }] },
+        "lastPost": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "messageCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["public", "private"] } }, "required": ["type"] },
+          "then": { "properties": { "team": { "$ref": "#/$defs/team" } } }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["dm", "group"] } }, "required": ["type"] },
+          "then": { "properties": { "team": { "type": "null" }, "displayName": { "type": "null" } } }
+        }
+      ]
+    },
+    "nullableNonEmptyString": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  }
+}

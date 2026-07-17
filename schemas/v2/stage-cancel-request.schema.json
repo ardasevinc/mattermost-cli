@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:stage-cancel-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "requestId",
+    "stageId",
+    "expectedRevision",
+    "expectedDigest"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mm/v2/stage-cancel-request"
+    },
+    "requestId": {
+      "$ref": "#/$defs/requestId"
+    },
+    "stageId": {
+      "$ref": "#/$defs/stageId"
+    },
+    "expectedRevision": {
+      "$ref": "#/$defs/revision"
+    },
+    "expectedDigest": {
+      "$ref": "#/$defs/digest"
+    }
+  },
+  "$defs": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]*$"
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "remoteFilename",
+        "mediaType"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+        },
+        "remoteFilename": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[^/\\\\\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[\\x{0021}-\\x{007e}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16383,
+      "pattern": "[^\\s]"
+    },
+    "stageId": {
+      "type": "string",
+      "pattern": "^stg_[A-Za-z0-9_-]{32}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

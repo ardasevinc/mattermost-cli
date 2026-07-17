@@ -1,0 +1,62 @@
+{
+  "schema": "mm/conformance-pair/v1",
+  "name": "teams preserves sorting redaction and narrow fields across v1 and v2",
+  "oracle": {
+    "args": ["--json", "teams"],
+    "env": { "MM_TOKEN": "fixture-mattermost-token" },
+    "http": [
+      {
+        "request": {
+          "method": "GET",
+          "uri": "/api/v4/users/me",
+          "headers": { "Authorization": "Bearer fixture-mattermost-token" },
+          "ignoreHeaders": ["Accept", "Accept-Encoding", "Accept-Language", "Connection", "Content-Type", "Sec-Fetch-Mode", "User-Agent"]
+        },
+        "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "{\"id\":\"user-1\",\"username\":\"arda\"}" }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "uri": "/api/v4/users/user-1/teams",
+          "headers": { "Authorization": "Bearer fixture-mattermost-token" },
+          "ignoreHeaders": ["Accept", "Accept-Encoding", "Accept-Language", "Connection", "Content-Type", "Sec-Fetch-Mode", "User-Agent"]
+        },
+        "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "[{\"id\":\"z\",\"name\":\"beta\",\"display_name\":\"Beta\",\"type\":\"I\",\"email\":\"hidden\"},{\"id\":\"b\",\"name\":\"alpha\",\"display_name\":null,\"type\":\"O\"},{\"id\":\"a\",\"name\":\"alpha\",\"display_name\":\"AKIAIOSFODNN7EXAMPLE\",\"type\":\"O\"}]" }
+      }
+    ],
+    "expected": {
+      "exitCode": 0,
+      "stdout": "[\n  {\n    \"id\": \"a\",\n    \"name\": \"alpha\",\n    \"displayName\": \"AK...LE\",\n    \"type\": \"open\"\n  },\n  {\n    \"id\": \"b\",\n    \"name\": \"alpha\",\n    \"type\": \"open\"\n  },\n  {\n    \"id\": \"z\",\n    \"name\": \"beta\",\n    \"displayName\": \"Beta\",\n    \"type\": \"invite_only\"\n  }\n]\n",
+      "stderr": ""
+    }
+  },
+  "candidate": {
+    "args": ["--json", "teams"],
+    "env": { "MM_TOKEN": "fixture-mattermost-token" },
+    "http": [
+      {
+        "request": {
+          "method": "GET",
+          "uri": "/api/v4/users/me",
+          "headers": { "Authorization": "Bearer fixture-mattermost-token" },
+          "ignoreHeaders": ["Accept", "Accept-Encoding", "Accept-Language", "Connection", "Content-Type", "Sec-Fetch-Mode", "User-Agent"]
+        },
+        "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "{\"id\":\"user-1\",\"username\":\"arda\"}" }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "uri": "/api/v4/users/user-1/teams",
+          "headers": { "Authorization": "Bearer fixture-mattermost-token" },
+          "ignoreHeaders": ["Accept", "Accept-Encoding", "Accept-Language", "Connection", "Content-Type", "Sec-Fetch-Mode", "User-Agent"]
+        },
+        "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "[{\"id\":\"z\",\"name\":\"beta\",\"display_name\":\"Beta\",\"type\":\"I\",\"email\":\"hidden\"},{\"id\":\"b\",\"name\":\"alpha\",\"display_name\":null,\"type\":\"O\"},{\"id\":\"a\",\"name\":\"alpha\",\"display_name\":\"AKIAIOSFODNN7EXAMPLE\",\"type\":\"O\"}]" }
+      }
+    ],
+    "expected": {
+      "exitCode": 0,
+      "stdout": "{\"schema\":\"mm/v2/teams\",\"teams\":[{\"id\":\"a\",\"name\":\"alpha\",\"displayName\":\"AK...LE\",\"type\":\"open\"},{\"id\":\"b\",\"name\":\"alpha\",\"displayName\":null,\"type\":\"open\"},{\"id\":\"z\",\"name\":\"beta\",\"displayName\":\"Beta\",\"type\":\"invite_only\"}]}\n",
+      "stderr": ""
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"schema":"mm/v2/watch-diagnostic","type":"reconnect","timestamp":"2026-07-16T00:00:00.000Z","message":"WebSocket disconnected; reconnecting without REST backfill.","backfill":false,"fatal":false,"redactions":[],"attempt":1,"delayMs":1000}

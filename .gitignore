@@ -1,10 +1,12 @@
-# dependencies (bun install)
-node_modules
-
 # output
 out
 dist
+npm-dist
+bin
+!npm/bin/
+!npm/bin/mm.js
 *.tgz
+npm-dist
 
 # code coverage
 coverage
@@ -25,9 +27,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.local
 
 # caches
-.eslintcache
 .cache
-*.tsbuildinfo
 
 # IntelliJ based IDEs
 .idea
@@ -43,6 +43,3 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Claude Code
 .claude/
-
-# Bun build artifacts
-*.bun-build

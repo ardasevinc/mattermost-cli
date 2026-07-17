@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:watch-event",
+  "title": "mm v2 watch event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "sequence", "postId", "channelId", "channelName", "senderId", "sender", "message", "timestamp", "rootId", "fileIds", "redactions"],
+  "properties": {
+    "schema": { "const": "mm/v2/watch-event" },
+    "type": { "const": "posted" },
+    "sequence": { "type": "object", "additionalProperties": false, "required": ["connectionId", "number"], "properties": { "connectionId": { "type": "string", "minLength": 1 }, "number": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } } },
+    "postId": { "type": "string", "minLength": 1 },
+    "channelId": { "type": "string", "minLength": 1 },
+    "channelName": { "type": "string" },
+    "senderId": { "type": "string", "minLength": 1 },
+    "sender": { "type": "string" },
+    "message": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "rootId": { "type": ["string", "null"], "minLength": 1 },
+    "fileIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "redactions": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["type", "masked", "position", "field"],
+        "properties": {
+          "type": { "type": "string", "minLength": 1 }, "masked": { "type": "string" },
+          "position": { "type": "integer", "minimum": 0 }, "field": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

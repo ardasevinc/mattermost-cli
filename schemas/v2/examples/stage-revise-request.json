@@ -1,0 +1,1 @@
+{"schema":"mm/v2/stage-revise-request","requestId":"agent-20260717-002","stageId":"stg_0123456789abcdefghijklmnopqrstuv","expectedRevision":1,"expectedDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","revive":false,"body":"revised hello","attachments":[]}

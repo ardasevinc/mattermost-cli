@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:stage-revise-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "requestId",
+    "stageId",
+    "expectedRevision",
+    "expectedDigest",
+    "revive",
+    "body",
+    "attachments"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mm/v2/stage-revise-request"
+    },
+    "requestId": {
+      "$ref": "#/$defs/requestId"
+    },
+    "stageId": {
+      "$ref": "#/$defs/stageId"
+    },
+    "expectedRevision": {
+      "$ref": "#/$defs/revision"
+    },
+    "expectedDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "revive": {
+      "type": "boolean"
+    },
+    "body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/body"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attachments": {
+      "anyOf": [
+        {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/attachment"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$comment": "A null body or attachments value preserves that part of the current composition; an empty attachment array clears attachments. Whether changes apply is determined from the stored immutable operation. Runtime rejects changes for non-content operations and attachment changes for operations other than create_post or reply.",
+  "$defs": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]*$"
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "remoteFilename",
+        "mediaType"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+        },
+        "remoteFilename": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[^/\\\\\\x{0000}-\\x{001f}\\x{007f}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^[\\x{0021}-\\x{007e}]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16383,
+      "pattern": "[^\\x{0009}\\x{000a}\\x{000b}\\x{000c}\\x{000d}\\x{0020}\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}]"
+    },
+    "stageId": {
+      "type": "string",
+      "pattern": "^stg_[A-Za-z0-9_-]{32}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

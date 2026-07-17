@@ -1,0 +1,40 @@
+{
+  "schema": "mm/conformance/v1",
+  "name": "v1 whoami emits a narrow identity",
+  "args": ["--json", "whoami"],
+  "env": {
+    "MM_TOKEN": "fixture-mattermost-token"
+  },
+  "http": [
+    {
+      "request": {
+        "method": "GET",
+        "uri": "/api/v4/users/me",
+        "headers": {
+          "Authorization": "Bearer fixture-mattermost-token"
+        },
+        "ignoreHeaders": [
+          "Accept",
+          "Accept-Encoding",
+          "Accept-Language",
+          "Connection",
+          "Content-Type",
+          "Sec-Fetch-Mode",
+          "User-Agent"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":\"user-1\",\"username\":\"alice\",\"first_name\":\"Alice\",\"last_name\":\"Agent\",\"nickname\":\"ali\",\"roles\":\"system_user team_user\",\"email\":\"must-not-leak@example.test\"}"
+      }
+    }
+  ],
+  "expected": {
+    "exitCode": 0,
+    "stdout": "{\n  \"id\": \"user-1\",\n  \"username\": \"alice\",\n  \"displayName\": \"Alice Agent\",\n  \"nickname\": \"ali\",\n  \"roles\": [\n    \"system_user\",\n    \"team_user\"\n  ]\n}\n",
+    "stderr": ""
+  }
+}

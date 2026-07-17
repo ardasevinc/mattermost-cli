@@ -9,37 +9,61 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          bun-version: 1.3.14
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - run: go run ./scripts/licenses
+      - run: go mod verify
+      - run: go build -o "$RUNNER_TEMP/mm" ./cmd/mm
+      - run: git diff --check
+
+  distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22
-      - run: bun install --frozen-lockfile
-      - run: bun run verify
-      - run: bun audit
-      - name: Pack and verify contents
-        id: pack
+          node-version: 24
+      - name: Build release artifacts reproducibly
+        run: |
+          go run ./scripts/release --version 2.0.0-dev --commit "$GITHUB_SHA" --output dist
+          GOCACHE="$RUNNER_TEMP/repro-cache" go run ./scripts/release --version 2.0.0-dev --commit "$GITHUB_SHA" --output repro
+          diff -r dist repro
+          (cd dist && sha256sum --check checksums.txt)
+          ruby -c dist/mattermost-cli.rb
+      - name: Generate and pack exact npm packages
         shell: bash
         run: |
-          tarball=$(npm pack --json --ignore-scripts | node -e 'let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => process.stdout.write(JSON.parse(input)[0].filename))')
-          printf 'tarball=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
-          actual=$(tar -tzf "$tarball" | LC_ALL=C sort)
-          expected=$(printf '%s\n' package/LICENSE package/README.md package/dist/index.js package/package.json | LC_ALL=C sort)
-          diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual")
-      - name: Smoke packed CLI on Node 22
+          go run ./scripts/npm-package --version 2.0.0-dev --release-dir dist --output npm-dist
+          mkdir npm-packs
+          for package_dir in npm-dist/*; do
+            npm pack --json --ignore-scripts --pack-destination npm-packs "./$package_dir" >/dev/null
+          done
+          test "$(find npm-packs -maxdepth 1 -name '*.tgz' | wc -l)" -eq 5
+      - name: Smoke native archive and npm launcher
         run: |
-          mkdir package-smoke
-          tar -xzf "${{ steps.pack.outputs.tarball }}" -C package-smoke
-          test "$(node package-smoke/package/dist/index.js --version)" = "$(node -p "require('./package.json').version")"
-          node package-smoke/package/dist/index.js --help
-          node package-smoke/package/dist/index.js config --path
-      - name: Smoke global npm install
-        run: |
-          npm install --global --prefix "$RUNNER_TEMP/npm-global" "./${{ steps.pack.outputs.tarball }}"
-          test "$("$RUNNER_TEMP/npm-global/bin/mm" --version)" = "$(node -p "require('./package.json').version")"
-          "$RUNNER_TEMP/npm-global/bin/mm" --help
+          mkdir "$RUNNER_TEMP/native-smoke"
+          tar -xzf dist/mattermost-cli_2.0.0-dev_linux_amd64.tar.gz -C "$RUNNER_TEMP/native-smoke"
+          test "$("$RUNNER_TEMP/native-smoke/mm" --version)" = "mm version 2.0.0-dev ($GITHUB_SHA)"
+          mkdir "$RUNNER_TEMP/npm-smoke"
+          cd "$RUNNER_TEMP/npm-smoke"
+          npm init -y >/dev/null
+          npm install --ignore-scripts \
+            "$GITHUB_WORKSPACE/npm-packs/ardasevinc-mattermost-cli-linux-amd64-2.0.0-dev.tgz" \
+            "$GITHUB_WORKSPACE/npm-packs/mattermost-cli-2.0.0-dev.tgz" >/dev/null
+          test "$(./node_modules/.bin/mm --version)" = "mm version 2.0.0-dev ($GITHUB_SHA)"
+          ./node_modules/.bin/mm --help
