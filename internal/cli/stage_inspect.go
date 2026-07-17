@@ -24,21 +24,33 @@ func (e localStateFailure) Error() string { return e.err.Error() }
 func (e localStateFailure) Unwrap() error { return e.err }
 
 func newStageCommand(state *rootState) *cobra.Command {
+	var fromJSON bool
 	command := &cobra.Command{
 		Use:   "stage",
 		Short: "Create and inspect staged Mattermost changes",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if state.flags.json {
-				return invalidFailure("--json requires a stage subcommand")
-			}
-			return cmd.Help()
-		},
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return resolveStoreRedaction(state, cmd)
-		},
 	}
+	command.RunE = func(cmd *cobra.Command, _ []string) error {
+		if fromJSON {
+			return runStructuredStage(cmd, state)
+		}
+		if state.flags.json {
+			return invalidFailure("--json requires a stage subcommand")
+		}
+		return cmd.Help()
+	}
+	command.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if fromJSON {
+			state.flags.json = true
+			if cmd != command {
+				return invalidFailure("--from-json cannot be combined with a stage subcommand")
+			}
+		}
+		return resolveStoreRedaction(state, cmd)
+	}
+	command.PersistentFlags().BoolVar(&fromJSON, "from-json", false, "read one versioned stage request from stdin")
 	command.AddCommand(newStageListCommand(state), newStageShowCommand(state))
+	command.AddCommand(newStageCreationCommands(state)...)
 	return command
 }
 
