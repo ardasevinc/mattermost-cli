@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -454,15 +455,12 @@ func TestBindRejectsReplacementDuringScan(t *testing.T) {
 	if err := os.WriteFile(replacement, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() {
-		time.Sleep(time.Millisecond)
-		done <- os.Rename(replacement, path)
-	}()
-	got, err := Bind(context.Background(), []Attachment{{Path: path, RemoteFilename: "large"}}, nil)
-	if renameErr := <-done; renameErr != nil {
-		t.Fatal(renameErr)
-	}
+	got, err := bind(context.Background(), []Attachment{{Path: path, RemoteFilename: "large"}}, nil, func(openedPath string) error {
+		if openedPath != path {
+			return fmt.Errorf("opened path %q, want %q", openedPath, path)
+		}
+		return os.Rename(replacement, path)
+	})
 	if (!errors.Is(err, ErrFileChanged) && !errors.Is(err, ErrUnsafeFile)) || got != nil {
 		t.Fatalf("result=%v err=%v", got, err)
 	}
