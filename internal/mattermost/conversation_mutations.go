@@ -58,14 +58,20 @@ func (m *ConversationMutations) prepare(in ResolveConversationMutationInput, cha
 	slices.Sort(members)
 	name := strings.Join(members, "__")
 	if channelType == "G" {
-		digest := sha1.Sum([]byte(strings.Join(members, "")))
-		name = hex.EncodeToString(digest[:])
+		name = canonicalGroupChannelName(members)
 	}
 	prepared, err := m.client.PreparePostStatus(path, members, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
 	return &PreparedResolveConversation{prepared, channelType, name, peers}, nil
+}
+
+func canonicalGroupChannelName(memberIDs []string) string {
+	members := slices.Clone(memberIDs)
+	slices.Sort(members)
+	digest := sha1.Sum([]byte(strings.Join(members, "")))
+	return hex.EncodeToString(digest[:])
 }
 
 func (p *PreparedResolveConversation) Execute(ctx context.Context) (ResolveConversationMutationResult, error) {

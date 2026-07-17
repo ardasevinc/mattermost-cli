@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -101,16 +102,24 @@ type ChannelMember struct {
 	UserID    string
 }
 
-func (m *ChannelMember) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		ChannelID json.RawMessage `json:"channel_id"`
-		UserID    json.RawMessage `json:"user_id"`
+type groupMemberList []ChannelMember
+
+func (l *groupMemberList) UnmarshalJSON(data []byte) error {
+	var members []ChannelMember
+	if err := json.Unmarshal(data, &members); err != nil || members == nil || len(members) > 8 {
+		return ErrInvalidChannelsResponse
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	*l = members
+	return nil
+}
+
+func (m *ChannelMember) UnmarshalJSON(data []byte) error {
+	fields, ok := uniqueJSONObject(data)
+	if !ok {
 		return ErrInvalidChannelResponse
 	}
-	channelID, channelOK := requiredString(raw.ChannelID)
-	userID, userOK := requiredString(raw.UserID)
+	channelID, channelOK := requiredString(fields["channel_id"])
+	userID, userOK := requiredString(fields["user_id"])
 	if !channelOK || !userOK {
 		return ErrInvalidChannelResponse
 	}
@@ -525,6 +534,78 @@ func (s *Channels) ExistingDirect(ctx context.Context, currentUserID, peerID str
 			return Channel{}, false, ErrInvalidChannelsResponse
 		}
 		match, found = channel, true
+	}
+	return match, found, nil
+}
+
+func (s *Channels) exactGroupMemberIDs(ctx context.Context, channelID string) ([]string, error) {
+	if !isSafePostID(channelID) {
+		return nil, ErrInvalidChannelRequest
+	}
+	var decoded groupMemberList
+	path := "/channels/" + url.PathEscape(channelID) + "/members?page=0&per_page=9"
+	if err := s.client.Get(ctx, path, &decoded); err != nil {
+		return nil, err
+	}
+	members := []ChannelMember(decoded)
+	ids := make([]string, 0, len(members))
+	seen := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		if member.ChannelID != channelID || !isSafePostID(member.UserID) {
+			return nil, ErrInvalidChannelsResponse
+		}
+		if _, duplicate := seen[member.UserID]; duplicate {
+			return nil, ErrInvalidChannelsResponse
+		}
+		seen[member.UserID] = struct{}{}
+		ids = append(ids, member.UserID)
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// ExistingGroup finds the unique current-user-bound G channel for an exact
+// peer set. Mattermost defines the channel name as SHA-1 over the sorted full
+// member IDs, so the canonical listing binds both membership and identity
+// without an unbounded per-channel member fan-out.
+func (s *Channels) ExistingGroup(ctx context.Context, currentUserID string, peerIDs []string) (Channel, bool, error) {
+	if !isSafePostID(currentUserID) || len(peerIDs) < 2 || len(peerIDs) > 7 {
+		return Channel{}, false, ErrInvalidChannelRequest
+	}
+	peers := slices.Clone(peerIDs)
+	slices.Sort(peers)
+	for index, id := range peers {
+		if !isSafePostID(id) || id == currentUserID || index > 0 && id == peers[index-1] {
+			return Channel{}, false, ErrInvalidChannelRequest
+		}
+	}
+	wanted := canonicalGroupChannelName(append(peers, currentUserID))
+	channels, err := s.GroupList(ctx, currentUserID)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	var match Channel
+	found := false
+	for _, channel := range channels {
+		if channel.Name != wanted {
+			continue
+		}
+		if !isSafePostID(channel.ID) || found {
+			return Channel{}, false, ErrInvalidChannelsResponse
+		}
+		match, found = channel, true
+	}
+	if !found {
+		return Channel{}, false, nil
+	}
+	members, err := s.exactGroupMemberIDs(ctx, match.ID)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	expected := append(slices.Clone(peers), currentUserID)
+	slices.Sort(expected)
+	if !slices.Equal(members, expected) {
+		return Channel{}, false, ErrInvalidChannelsResponse
 	}
 	return match, found, nil
 }

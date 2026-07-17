@@ -508,6 +508,57 @@ func TestGroupListUsesCanonicalListingAsBoundedMembershipProof(t *testing.T) {
 	}
 }
 
+func TestExistingGroupFindsExactCanonicalPeerSet(t *testing.T) {
+	wanted := canonicalGroupChannelName([]string{"self", "a", "b"})
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/self/channels":                       `[{"id":"other","team_id":"","type":"G","name":"opaque","display_name":"Other"},{"id":"wanted","team_id":"","type":"G","name":"` + wanted + `","display_name":"A, B"}]`,
+		"/channels/wanted/members?page=0&per_page=9": `[{"channel_id":"wanted","user_id":"b"},{"channel_id":"wanted","user_id":"self"},{"channel_id":"wanted","user_id":"a"}]`,
+	}}
+	got, found, err := NewChannels(f).ExistingGroup(context.Background(), "self", []string{"b", "a"})
+	if err != nil || !found || got.ID != "wanted" {
+		t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+	}
+	if !reflect.DeepEqual(f.paths, []string{"/users/self/channels", "/channels/wanted/members?page=0&per_page=9"}) {
+		t.Fatalf("paths=%v", f.paths)
+	}
+}
+
+func TestExistingGroupRejectsStaleNameWithPartialLiveMembership(t *testing.T) {
+	wanted := canonicalGroupChannelName([]string{"self", "a", "b"})
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/self/channels":                       `[{"id":"wanted","team_id":"","type":"G","name":"` + wanted + `","display_name":"A, B"}]`,
+		"/channels/wanted/members?page=0&per_page=9": `[{"channel_id":"wanted","user_id":"self"},{"channel_id":"wanted","user_id":"a"}]`,
+	}}
+	if _, _, err := NewChannels(f).ExistingGroup(context.Background(), "self", []string{"a", "b"}); !errors.Is(err, ErrInvalidChannelsResponse) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExistingGroupReturnsNoneAndRejectsAmbiguousOrInvalidSets(t *testing.T) {
+	wanted := canonicalGroupChannelName([]string{"self", "a", "b"})
+	for name, payload := range map[string]string{
+		"none":      `[{"id":"other","team_id":"","type":"G","name":"opaque","display_name":"Other"}]`,
+		"ambiguous": `[{"id":"one","team_id":"","type":"G","name":"` + wanted + `","display_name":"A"},{"id":"two","team_id":"","type":"G","name":"` + wanted + `","display_name":"B"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeChannelTransport{responses: map[string]string{"/users/self/channels": payload}}
+			got, found, err := NewChannels(f).ExistingGroup(context.Background(), "self", []string{"a", "b"})
+			if name == "none" && (err != nil || found || got != (Channel{})) {
+				t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+			}
+			if name == "ambiguous" && !errors.Is(err, ErrInvalidChannelsResponse) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+	for _, peers := range [][]string{{"a"}, {"a", "a"}, {"self", "a"}, {"a", "../b"}, {"a", "b", "c", "d", "e", "f", "g", "h"}} {
+		f := &fakeChannelTransport{}
+		if _, _, err := NewChannels(f).ExistingGroup(context.Background(), "self", peers); !errors.Is(err, ErrInvalidChannelRequest) || len(f.paths) != 0 {
+			t.Fatalf("peers=%q error=%v paths=%v", peers, err, f.paths)
+		}
+	}
+}
+
 func TestGroupListRejectsMalformedFocusedChannelsAndMembership(t *testing.T) {
 	for name, payload := range map[string]string{
 		"malformed group":       `[{"id":"group","team_id":"","type":"G","display_name":"Crew"}]`,
