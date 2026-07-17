@@ -35,12 +35,19 @@ type liveHarness struct {
 	mu     sync.Mutex
 	writes map[string]int
 	crash  *responseCrash
+	gate   *requestGate
 }
 
 type responseCrash struct {
 	key     string
 	process <-chan *os.Process
 	result  chan<- error
+}
+
+type requestGate struct {
+	key     string
+	arrived chan<- struct{}
+	release <-chan struct{}
 }
 
 type stageReceipt struct {
@@ -135,10 +142,23 @@ func newLiveHarness(t *testing.T) *liveHarness {
 		return nil
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var gate *requestGate
 		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions {
 			harness.mu.Lock()
 			harness.writes[request.Method+" "+request.URL.Path]++
+			if harness.gate != nil && harness.gate.key == request.Method+" "+request.URL.Path {
+				gate, harness.gate = harness.gate, nil
+			}
 			harness.mu.Unlock()
+		}
+		if gate != nil {
+			gate.arrived <- struct{}{}
+			select {
+			case <-gate.release:
+			case <-time.After(5 * time.Second):
+				http.Error(response, "E2E mutation gate timed out", http.StatusGatewayTimeout)
+				return
+			}
 		}
 		proxy.ServeHTTP(response, request)
 	}))
@@ -348,6 +368,10 @@ func (h *liveHarness) cliResult(stdin string, args ...string) ([]byte, []byte, i
 }
 
 func (h *liveHarness) cliCommand(stdin string, args ...string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
+	return h.cliCommandWithEnv(stdin, nil, args...)
+}
+
+func (h *liveHarness) cliCommandWithEnv(stdin string, extraEnv []string, args ...string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
 	h.t.Helper()
 	command := exec.Command(h.binary, args...)
 	command.Stdin = strings.NewReader(stdin)
@@ -365,6 +389,7 @@ func (h *liveHarness) cliCommand(stdin string, args ...string) (*exec.Cmd, *byte
 		"NO_COLOR=1",
 		"TERM=dumb",
 	}
+	command.Env = append(command.Env, extraEnv...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	return command, &stdout, &stderr
@@ -381,6 +406,19 @@ func (h *liveHarness) armCrashAfterResponse(key string) (chan<- *os.Process, <-c
 	}
 	h.crash = &responseCrash{key: key, process: process, result: result}
 	return process, result
+}
+
+func (h *liveHarness) armRequestGate(key string) (<-chan struct{}, chan<- struct{}) {
+	h.t.Helper()
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.gate != nil {
+		h.t.Fatal("mutation request gate is already armed")
+	}
+	h.gate = &requestGate{key: key, arrived: arrived, release: release}
+	return arrived, release
 }
 
 func (h *liveHarness) cliKilledAfterResponse(stdin, key string, args ...string) ([]byte, []byte) {

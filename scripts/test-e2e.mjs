@@ -186,7 +186,7 @@ try {
   await run('bunx', ['vitest', 'run', '--config', 'vitest.e2e.config.ts'], {
     env: { MM_E2E_URL: url, MM_E2E_TOKEN: token },
   })
-  await run('go', ['build', '-o', goBinary, './cmd/mm'])
+  await run('go', ['build', '-tags=e2e', '-o', goBinary, './cmd/mm'])
   await run('go', ['test', '-tags=e2e', '-count=1', './tests/e2e'], {
     env: {
       MM_E2E_URL: url,

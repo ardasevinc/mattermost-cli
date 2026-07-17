@@ -384,6 +384,7 @@ func flockContext(ctx context.Context, fd int) error {
 		if !errors.Is(err, unix.EWOULDBLOCK) || !time.Now().Before(deadline) {
 			return ErrBusy
 		}
+		notifyFlockContention()
 		timer := time.NewTimer(10 * time.Millisecond)
 		select {
 		case <-ctx.Done():
