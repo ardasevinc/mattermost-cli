@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Reproducible native release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate tag and source version
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$GITHUB_REF_NAME" = "v$version"
+          source_version="$(awk -F'"' '/^[[:space:]]*Version = / {print $2}' internal/buildinfo/buildinfo.go)"
+          test "$version" = "$source_version"
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'prerelease=%s\n' "$prerelease" >> "$GITHUB_OUTPUT"
+      - name: Require tagged commit on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Require successful CI for tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed" --jq '.workflow_runs | sort_by(.created_at) | last | .conclusion')"
+          test "$conclusion" = success
+      - name: Reject existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists" >&2
+            exit 1
+          fi
+      - name: Test release source
+        run: |
+          go mod download
+          GOPROXY=off go test -race -p 1 ./...
+          GOPROXY=off go vet ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
+      - name: Build deterministic archives twice
+        env:
+          GOPROXY: "off"
+        run: |
+          GOCACHE="$RUNNER_TEMP/gocache-a" go run ./scripts/release --version "${{ steps.version.outputs.version }}" --commit "$GITHUB_SHA" --output dist
+          GOCACHE="$RUNNER_TEMP/gocache-b" go run ./scripts/release --version "${{ steps.version.outputs.version }}" --commit "$GITHUB_SHA" --output repro
+          diff -r dist repro
+      - name: Verify archives, checksums, formula, and Linux binary
+        run: |
+          cd dist
+          sha256sum --check checksums.txt
+          ruby -c mattermost-cli.rb
+          mkdir "$RUNNER_TEMP/mm-smoke"
+          tar -xzf "mattermost-cli_${{ steps.version.outputs.version }}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/mm-smoke"
+          test "$("$RUNNER_TEMP/mm-smoke/mm" --version)" = "mm version ${{ steps.version.outputs.version }} ($GITHUB_SHA)"
+          "$RUNNER_TEMP/mm-smoke/mm" --help
+          "$RUNNER_TEMP/mm-smoke/mm" config --path
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: "dist/*"
+      - name: Verify release attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for artifact in dist/*; do
+            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
+          done
+      - name: Create complete draft release
+        id: create_release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: true
+          overwrite_files: false
+          prerelease: ${{ steps.version.outputs.prerelease }}
+      - name: Verify assets and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.create_release.outputs.id }}
+        run: |
+          find dist -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/expected-assets"
+          test -n "$RELEASE_ID"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$RUNNER_TEMP/actual-assets"
+          diff -u "$RUNNER_TEMP/expected-assets" "$RUNNER_TEMP/actual-assets"
+          if [[ "${{ steps.version.outputs.prerelease }}" == true ]]; then latest=false; else latest=true; fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -F prerelease="${{ steps.version.outputs.prerelease }}" \
+            -f make_latest="$latest" >/dev/null
+      - name: Update Homebrew tap formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          test -n "$GH_TOKEN"
+          path="Formula/mattermost-cli.rb"
+          content="$(base64 -w 0 < dist/mattermost-cli.rb)"
+          sha="$(gh api "repos/ardasevinc/homebrew-tap/contents/$path" --jq .sha 2>/dev/null || true)"
+          args=(--method PUT "repos/ardasevinc/homebrew-tap/contents/$path" -f message="mattermost-cli $VERSION" -f content="$content" -f branch=main)
+          if [[ -n "$sha" ]]; then args+=(-f sha="$sha"); fi
+          gh api "${args[@]}" >/dev/null
