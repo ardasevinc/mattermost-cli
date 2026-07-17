@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -46,30 +47,42 @@ type ApplyClaimInput struct {
 }
 
 type ApplyStep struct {
-	Ordinal   int             `json:"ordinal"`
-	Kind      string          `json:"kind"`
-	Condition string          `json:"condition"`
-	State     StepState       `json:"state"`
-	Result    json.RawMessage `json:"result"`
-	StartedAt *time.Time      `json:"startedAt"`
-	EndedAt   *time.Time      `json:"endedAt"`
+	Ordinal    int             `json:"ordinal"`
+	Kind       string          `json:"kind"`
+	Condition  string          `json:"condition"`
+	State      StepState       `json:"state"`
+	Result     json.RawMessage `json:"result"`
+	StartedAt  *time.Time      `json:"startedAt"`
+	EndedAt    *time.Time      `json:"endedAt"`
+	ReusedFrom *StepSource     `json:"reusedFrom,omitempty"`
+}
+
+type StepSource struct {
+	AttemptID string `json:"attemptId"`
+	Ordinal   int    `json:"ordinal"`
+}
+
+type ReusableUpload struct {
+	Ordinal, SourceOrdinal  int
+	SourceAttemptID, FileID string
 }
 
 type ApplyAttempt struct {
-	ID                  string          `json:"id"`
-	StageID             string          `json:"stageId"`
-	Revision            int64           `json:"revision"`
-	SemanticDigest      [32]byte        `json:"semanticDigest"`
-	RecoveryMode        RecoveryMode    `json:"recoveryMode"`
-	PriorRecovery       Recovery        `json:"priorRecovery"`
-	ForcedDuplicateRisk bool            `json:"forcedDuplicateRisk"`
-	Plan                json.RawMessage `json:"plan"`
-	PendingPostID       string          `json:"pendingPostId"`
-	StartedAt           time.Time       `json:"startedAt"`
-	EndedAt             *time.Time      `json:"endedAt"`
-	Outcome             *AttemptOutcome `json:"outcome"`
-	Steps               []ApplyStep     `json:"steps"`
-	Replay              bool            `json:"-"`
+	ID                  string           `json:"id"`
+	StageID             string           `json:"stageId"`
+	Revision            int64            `json:"revision"`
+	SemanticDigest      [32]byte         `json:"semanticDigest"`
+	RecoveryMode        RecoveryMode     `json:"recoveryMode"`
+	PriorRecovery       Recovery         `json:"priorRecovery"`
+	ForcedDuplicateRisk bool             `json:"forcedDuplicateRisk"`
+	Plan                json.RawMessage  `json:"plan"`
+	PendingPostID       string           `json:"pendingPostId"`
+	StartedAt           time.Time        `json:"startedAt"`
+	EndedAt             *time.Time       `json:"endedAt"`
+	Outcome             *AttemptOutcome  `json:"outcome"`
+	Steps               []ApplyStep      `json:"steps"`
+	Replay              bool             `json:"-"`
+	ReusableUploads     []ReusableUpload `json:"-"`
 }
 
 type ApplyReceipt struct {
@@ -133,12 +146,6 @@ func (s *Store) ClaimApply(ctx context.Context, in ApplyClaimInput) (ApplyAttemp
 	if base.Lifecycle != LifecycleOpen || !modeMatchesRecovery(in.RecoveryMode, base.Recovery) {
 		return ApplyAttempt{}, ErrNotEligible
 	}
-	// Partial resume needs step input digests plus explicit remote revalidation.
-	// Refuse it until that proof is part of the claim instead of redispatching a
-	// previously confirmed effect from ordinal coincidence alone.
-	if in.RecoveryMode == RecoveryModePartial {
-		return ApplyAttempt{}, ErrNotEligible
-	}
 	plan, steps, err := decodePersistedPlan(base.Plan)
 	if err != nil {
 		return ApplyAttempt{}, localError(err)
@@ -149,6 +156,19 @@ func (s *Store) ClaimApply(ctx context.Context, in ApplyClaimInput) (ApplyAttemp
 	}
 	if !validPlanForOperation(base.Operation, steps, len(attachments)) {
 		return ApplyAttempt{}, localError(errors.New("stored apply plan"))
+	}
+	var reusable []ReusableUpload
+	if in.RecoveryMode == RecoveryModePartial {
+		if !validatedUploadReuseAvailable() {
+			return ApplyAttempt{}, ErrNotEligible
+		}
+		reusable, err = findReusableUploads(ctx, tx, base.ID, base.Revision, base.SemanticDigest, len(attachments))
+		if err != nil {
+			return ApplyAttempt{}, err
+		}
+		if len(reusable) == 0 {
+			return ApplyAttempt{}, ErrNotEligible
+		}
 	}
 	attemptID, err := newIdentity("att_")
 	if err != nil {
@@ -190,7 +210,32 @@ func (s *Store) ClaimApply(ctx context.Context, in ApplyClaimInput) (ApplyAttemp
 	}
 	runCommitHook()
 	return ApplyAttempt{ID: attemptID, StageID: base.ID, Revision: base.Revision, SemanticDigest: base.SemanticDigest, RecoveryMode: in.RecoveryMode, PriorRecovery: base.Recovery,
-		ForcedDuplicateRisk: forced, Plan: plan, PendingPostID: pendingID, StartedAt: now, Steps: steps}, nil
+		ForcedDuplicateRisk: forced, Plan: plan, PendingPostID: pendingID, StartedAt: now, Steps: steps, ReusableUploads: reusable}, nil
+}
+
+func findReusableUploads(ctx context.Context, q queryer, stageID string, revision int64, digest [32]byte, attachmentCount int) ([]ReusableUpload, error) {
+	out := make([]ReusableUpload, 0, attachmentCount)
+	for ordinal := 1; ordinal <= attachmentCount; ordinal++ {
+		var source, fileID string
+		err := q.QueryRowContext(ctx, `SELECT p.attempt_id,json_extract(p.result_json,'$.fileId')
+FROM apply_steps p JOIN apply_attempts a ON a.id=p.attempt_id
+WHERE a.stage_id=? AND a.revision=? AND a.semantic_digest=? AND a.outcome IS NOT NULL
+  AND p.ordinal=? AND p.kind='upload_attachment' AND p.state='response_validated'
+  AND NOT EXISTS(SELECT 1 FROM apply_step_reuse r WHERE r.attempt_id=p.attempt_id AND r.ordinal=p.ordinal)
+  AND NOT EXISTS(SELECT 1 FROM apply_steps u WHERE u.attempt_id=a.id AND u.state='outcome_unknown')
+ORDER BY a.started_at DESC,a.id DESC LIMIT 1`, stageID, revision, digest[:], ordinal).Scan(&source, &fileID)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return nil, localError(err)
+		}
+		if !bounded(source, maxIdentityBytes) || !bounded(fileID, maxIdentityBytes) {
+			return nil, localError(errors.New("reusable upload binding"))
+		}
+		out = append(out, ReusableUpload{Ordinal: ordinal, SourceOrdinal: ordinal, SourceAttemptID: source, FileID: fileID})
+	}
+	return out, nil
 }
 
 func (s *Store) BeginDispatch(ctx context.Context, attemptID string, ordinal int) error {
@@ -211,6 +256,37 @@ func (s *Store) MarkStepUnknown(ctx context.Context, attemptID string, ordinal i
 
 func (s *Store) MarkStepSkipped(ctx context.Context, attemptID string, ordinal int, result json.RawMessage) error {
 	return s.transitionStep(ctx, attemptID, ordinal, StepPending, StepSkipped, result)
+}
+
+func (s *Store) MarkStepReused(ctx context.Context, attemptID string, ordinal int, sourceAttemptID string, sourceOrdinal int, fileID string) error {
+	if ctx == nil || !bounded(attemptID, maxIdentityBytes) || !bounded(sourceAttemptID, maxIdentityBytes) || !bounded(fileID, maxIdentityBytes) || ordinal < 1 || sourceOrdinal < 1 {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return localError(err)
+	}
+	defer tx.Rollback()
+	stamp := formatTime(time.Now().UTC())
+	if _, err = tx.ExecContext(ctx, `INSERT INTO apply_step_reuse(attempt_id,ordinal,source_attempt_id,source_ordinal,file_id) VALUES(?,?,?,?,?)`, attemptID, ordinal, sourceAttemptID, sourceOrdinal, fileID); err != nil {
+		return localError(err)
+	}
+	result := json.RawMessage(`{"fileId":` + strconv.Quote(fileID) + `}`)
+	updated, err := tx.ExecContext(ctx, `UPDATE apply_steps SET state='response_validated',result_json=?,started_at=?,ended_at=? WHERE attempt_id=? AND ordinal=? AND state='pending'`, string(result), stamp, stamp, attemptID, ordinal)
+	if err != nil {
+		return localError(err)
+	}
+	if !oneRow(updated) {
+		return ErrConflict
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO apply_events(attempt_id,ordinal,event,recorded_at) VALUES(?,?,'response_validated',?)`, attemptID, ordinal, stamp); err != nil {
+		return localError(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return localError(err)
+	}
+	runCommitHook()
+	return nil
 }
 
 // SealRemainingNotDispatched closes a compound attempt after confirmed early
@@ -518,15 +594,26 @@ func scanApplyAttempt(ctx context.Context, q queryer, attemptID string) (ApplyAt
 		}
 		a.Outcome = &value
 	}
-	rows, err := q.QueryContext(ctx, `SELECT ordinal,kind,condition,state,result_json,started_at,ended_at FROM apply_steps WHERE attempt_id=? ORDER BY ordinal`, attemptID)
+	stepQuery := `SELECT ordinal,kind,condition,state,result_json,started_at,ended_at,NULL,NULL FROM apply_steps WHERE attempt_id=? ORDER BY ordinal`
+	if validatedUploadReuseAvailable() {
+		stepQuery = `SELECT p.ordinal,p.kind,p.condition,p.state,p.result_json,p.started_at,p.ended_at,r.source_attempt_id,r.source_ordinal FROM apply_steps p LEFT JOIN apply_step_reuse r ON r.attempt_id=p.attempt_id AND r.ordinal=p.ordinal WHERE p.attempt_id=? ORDER BY p.ordinal`
+	}
+	rows, err := q.QueryContext(ctx, stepQuery, attemptID)
 	if err != nil {
 		return ApplyAttempt{}, localError(err)
 	}
 	for rows.Next() {
 		var step ApplyStep
-		var result, stepStarted, stepEnded sql.NullString
-		if err = rows.Scan(&step.Ordinal, &step.Kind, &step.Condition, &step.State, &result, &stepStarted, &stepEnded); err != nil {
+		var result, stepStarted, stepEnded, sourceAttempt sql.NullString
+		var sourceOrdinal sql.NullInt64
+		if err = rows.Scan(&step.Ordinal, &step.Kind, &step.Condition, &step.State, &result, &stepStarted, &stepEnded, &sourceAttempt, &sourceOrdinal); err != nil {
 			return ApplyAttempt{}, localError(err)
+		}
+		if sourceAttempt.Valid != sourceOrdinal.Valid || sourceOrdinal.Valid && (sourceOrdinal.Int64 < 1 || sourceOrdinal.Int64 > 102) {
+			return ApplyAttempt{}, localError(errors.New("apply reuse projection"))
+		}
+		if sourceAttempt.Valid {
+			step.ReusedFrom = &StepSource{AttemptID: sourceAttempt.String, Ordinal: int(sourceOrdinal.Int64)}
 		}
 		if result.Valid {
 			step.Result = json.RawMessage(result.String)
@@ -788,7 +875,7 @@ func validAttempt(a ApplyAttempt) bool {
 		return false
 	}
 	for i, step := range a.Steps {
-		if step.Ordinal != i+1 || step.Kind != planned[i].Kind || step.Condition != planned[i].Condition || !validApplyStep(step) {
+		if step.Ordinal != i+1 || step.Kind != planned[i].Kind || step.Condition != planned[i].Condition || !validApplyStep(step) || step.ReusedFrom != nil && a.RecoveryMode != RecoveryModePartial {
 			return false
 		}
 	}
@@ -797,6 +884,9 @@ func validAttempt(a ApplyAttempt) bool {
 
 func validApplyStep(step ApplyStep) bool {
 	if !validStepKind(step.Kind) || step.Condition != "always" && step.Condition != "if_missing" || !validStepState(step.State) {
+		return false
+	}
+	if step.ReusedFrom != nil && (step.State != StepValidated || step.Kind != "upload_attachment" || !bounded(step.ReusedFrom.AttemptID, maxIdentityBytes) || step.ReusedFrom.Ordinal != step.Ordinal) {
 		return false
 	}
 	switch step.State {
@@ -831,11 +921,15 @@ func validReceiptForAttempt(receipt ApplyReceipt, attempt ApplyAttempt) bool {
 	}
 	for i := range receipt.Steps {
 		if receipt.Steps[i].Ordinal != attempt.Steps[i].Ordinal || receipt.Steps[i].Kind != attempt.Steps[i].Kind || receipt.Steps[i].Condition != attempt.Steps[i].Condition || receipt.Steps[i].State != attempt.Steps[i].State ||
-			!bytes.Equal(receipt.Steps[i].Result, attempt.Steps[i].Result) || !timePointerEqual(receipt.Steps[i].StartedAt, attempt.Steps[i].StartedAt) || !timePointerEqual(receipt.Steps[i].EndedAt, attempt.Steps[i].EndedAt) {
+			!bytes.Equal(receipt.Steps[i].Result, attempt.Steps[i].Result) || !timePointerEqual(receipt.Steps[i].StartedAt, attempt.Steps[i].StartedAt) || !timePointerEqual(receipt.Steps[i].EndedAt, attempt.Steps[i].EndedAt) || !stepSourceEqual(receipt.Steps[i].ReusedFrom, attempt.Steps[i].ReusedFrom) {
 			return false
 		}
 	}
 	return true
+}
+
+func stepSourceEqual(a, b *StepSource) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 func timePointerEqual(a, b *time.Time) bool {

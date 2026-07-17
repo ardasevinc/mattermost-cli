@@ -98,6 +98,9 @@ func TestApplyAttachmentPostPreservesShortAndLongMarkdownAndOrderedBytes(t *test
 					}
 					response.WriteHeader(http.StatusCreated)
 					_, _ = fmt.Fprintf(response, `{"file_infos":[{"id":"file-%d","user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":%q,"size":%d}]}`, index+1, filename, len(got))
+				case "/api/v4/files/file-1/info", "/api/v4/files/file-2/info":
+					index := int(request.URL.Path[len("/api/v4/files/file-")] - '1')
+					_, _ = fmt.Fprintf(response, `{"id":"file-%d","user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":"file-%d.bin","size":%d}`, index+1, index+1, len(files[index]))
 				case "/api/v4/posts":
 					posts.Add(1)
 					var input struct {
@@ -177,6 +180,161 @@ func TestApplyAttachmentRejectionAfterValidatedUploadIsPartial(t *testing.T) {
 	receipt, err := service.Apply(context.Background(), applyClaim(stage, "apply-partial-upload"))
 	if err != nil || receipt.Outcome != stagestore.OutcomePartial || receipt.Recovery != stagestore.RecoveryPartial || receipt.Steps[0].State != stagestore.StepValidated || receipt.Steps[1].State != stagestore.StepRejected || receipt.Steps[2].State != stagestore.StepNotSent || posts.Load() != 0 {
 		t.Fatalf("receipt=%+v uploads=%d posts=%d err=%v", receipt, uploads.Load(), posts.Load(), err)
+	}
+}
+
+func TestApplyAttachmentPartialResumeReusesValidatedPrefixAndUploadsOnlySuffix(t *testing.T) {
+	var uploads, metadataReads, posts atomic.Int32
+	var uploadedNames []string
+	server := attachmentTargetServer(t, func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/api/v4/files":
+			call := uploads.Add(1)
+			name := request.URL.Query().Get("filename")
+			uploadedNames = append(uploadedNames, name)
+			body, _ := io.ReadAll(request.Body)
+			if call == 2 {
+				response.WriteHeader(http.StatusForbidden)
+				return
+			}
+			fileID := "file-1"
+			if call == 3 {
+				fileID = "file-2"
+			}
+			response.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(response, `{"file_infos":[{"id":%q,"user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":%q,"size":%d}]}`, fileID, name, len(body))
+		case strings.HasPrefix(request.URL.Path, "/api/v4/files/file-"):
+			metadataReads.Add(1)
+			fileID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/v4/files/"), "/info")
+			index := 0
+			if fileID == "file-2" {
+				index = 1
+			}
+			_, _ = fmt.Fprintf(response, `{"id":%q,"user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":"file-%d.bin","size":%d}`, fileID, index+1, len([][]byte{[]byte("first"), []byte("second")}[index]))
+		case request.URL.Path == "/api/v4/posts":
+			posts.Add(1)
+			var input struct {
+				FileIDs       []string `json:"file_ids"`
+				Message       string   `json:"message"`
+				PendingPostID string   `json:"pending_post_id"`
+			}
+			if json.NewDecoder(request.Body).Decode(&input) != nil || !slices.Equal(input.FileIDs, []string{"file-1", "file-2"}) || input.Message != "body" {
+				response.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			response.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(response, mutationPostResponse("post-1", "channel-1", "self", "body", "", input.PendingPostID, input.FileIDs, 101, 101))
+		}
+	})
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createAttachmentApplyStage(t, store, server.URL+"/api/v4", "body", [][]byte{[]byte("first"), []byte("second")})
+	service, client := applyAttachmentService(t, server.URL, store)
+	defer client.Close()
+	first, err := service.Apply(context.Background(), applyClaim(stage, "apply-partial-first"))
+	if err != nil || first.Outcome != stagestore.OutcomePartial {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	detail, err := store.Show(context.Background(), stage.Stage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := applyClaim(stagestore.MutationResult{Stage: detail.StageSummary}, "apply-partial-resume")
+	claim.RecoveryMode = stagestore.RecoveryModePartial
+	resumed, err := service.Apply(context.Background(), claim)
+	if err != nil || resumed.Outcome != stagestore.OutcomeSucceeded || resumed.Recovery != stagestore.RecoveryForbidden || resumed.Steps[0].ReusedFrom == nil || resumed.Steps[0].ReusedFrom.AttemptID != first.AttemptID || resumed.Steps[1].ReusedFrom != nil || uploads.Load() != 3 || metadataReads.Load() != 3 || posts.Load() != 1 || !slices.Equal(uploadedNames, []string{"file-1.bin", "file-2.bin", "file-2.bin"}) {
+		t.Fatalf("resumed=%+v uploads=%d metadata=%d posts=%d names=%v err=%v", resumed, uploads.Load(), metadataReads.Load(), posts.Load(), uploadedNames, err)
+	}
+	replayed, err := service.Apply(context.Background(), claim)
+	if err != nil || !replayed.Replay || replayed.AttemptID != resumed.AttemptID || uploads.Load() != 3 || metadataReads.Load() != 3 || posts.Load() != 1 {
+		t.Fatalf("replayed=%+v uploads=%d metadata=%d posts=%d err=%v", replayed, uploads.Load(), metadataReads.Load(), posts.Load(), err)
+	}
+}
+
+func TestApplyAttachmentPartialResumeRejectsRemoteMetadataDriftBeforeMutation(t *testing.T) {
+	var uploads, metadataReads, posts atomic.Int32
+	server := attachmentTargetServer(t, func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/api/v4/files":
+			call := uploads.Add(1)
+			if call == 2 {
+				response.WriteHeader(http.StatusForbidden)
+				return
+			}
+			name := request.URL.Query().Get("filename")
+			body, _ := io.ReadAll(request.Body)
+			response.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(response, `{"file_infos":[{"id":"file-1","user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":%q,"size":%d}]}`, name, len(body))
+		case request.URL.Path == "/api/v4/files/file-1/info":
+			metadataReads.Add(1)
+			_, _ = io.WriteString(response, `{"id":"file-1","user_id":"other","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":"file-1.bin","size":5}`)
+		case request.URL.Path == "/api/v4/posts":
+			posts.Add(1)
+		}
+	})
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createAttachmentApplyStage(t, store, server.URL+"/api/v4", "body", [][]byte{[]byte("first"), []byte("second")})
+	service, client := applyAttachmentService(t, server.URL, store)
+	defer client.Close()
+	first, err := service.Apply(context.Background(), applyClaim(stage, "apply-drift-first"))
+	if err != nil || first.Outcome != stagestore.OutcomePartial {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	detail, err := store.Show(context.Background(), stage.Stage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := applyClaim(stagestore.MutationResult{Stage: detail.StageSummary}, "apply-drift-resume")
+	claim.RecoveryMode = stagestore.RecoveryModePartial
+	_, err = service.Apply(context.Background(), claim)
+	after, showErr := store.Show(context.Background(), stage.Stage.ID)
+	if !errors.Is(err, ErrTargetDrift) || showErr != nil || after.Lifecycle != stagestore.LifecycleOpen || after.Recovery != stagestore.RecoveryPartial || uploads.Load() != 2 || metadataReads.Load() != 1 || posts.Load() != 0 {
+		t.Fatalf("after=%+v uploads=%d metadata=%d posts=%d err=%v show=%v", after.StageSummary, uploads.Load(), metadataReads.Load(), posts.Load(), err, showErr)
+	}
+}
+
+func TestApplyAttachmentPartialResumeSealsAfterReuseJournalFailure(t *testing.T) {
+	var uploads, metadataReads, posts atomic.Int32
+	server := attachmentTargetServer(t, func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/api/v4/files":
+			index := uploads.Add(1)
+			name := request.URL.Query().Get("filename")
+			body, _ := io.ReadAll(request.Body)
+			response.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(response, `{"file_infos":[{"id":"file-%d","user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":%q,"size":%d}]}`, index, name, len(body))
+		case strings.HasPrefix(request.URL.Path, "/api/v4/files/file-"):
+			metadataReads.Add(1)
+			fileID := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/api/v4/files/"), "/info")
+			index := int(fileID[len(fileID)-1] - '1')
+			_, _ = fmt.Fprintf(response, `{"id":%q,"user_id":"self","channel_id":"channel-1","create_at":100,"update_at":100,"delete_at":0,"name":"file-%d.bin","size":%d}`, fileID, index+1, len([][]byte{[]byte("first"), []byte("second")}[index]))
+		case request.URL.Path == "/api/v4/posts":
+			posts.Add(1)
+			response.WriteHeader(http.StatusForbidden)
+		}
+	})
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createAttachmentApplyStage(t, store, server.URL+"/api/v4", "body", [][]byte{[]byte("first"), []byte("second")})
+	service, client := applyAttachmentService(t, server.URL, store)
+	first, err := service.Apply(context.Background(), applyClaim(stage, "apply-reuse-fault-first"))
+	client.Close()
+	if err != nil || first.Outcome != stagestore.OutcomePartial || uploads.Load() != 2 || posts.Load() != 1 {
+		t.Fatalf("first=%+v uploads=%d posts=%d err=%v", first, uploads.Load(), posts.Load(), err)
+	}
+	detail, err := store.Show(context.Background(), stage.Stage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	faults := &faultStore{Store: store, reuseOrdinal: 2, reuseErr: errors.New("journal unavailable")}
+	service, client = applyAttachmentServiceWithStore(t, server.URL, faults, store.StateDir())
+	defer client.Close()
+	claim := applyClaim(stagestore.MutationResult{Stage: detail.StageSummary}, "apply-reuse-fault-resume")
+	claim.RecoveryMode = stagestore.RecoveryModePartial
+	receipt, err := service.Apply(context.Background(), claim)
+	if err != nil || receipt.Outcome != stagestore.OutcomePartial || receipt.Steps[0].ReusedFrom == nil || receipt.Steps[1].State != stagestore.StepNotSent || receipt.Steps[2].State != stagestore.StepNotSent || uploads.Load() != 2 || metadataReads.Load() != 4 || posts.Load() != 1 {
+		t.Fatalf("receipt=%+v uploads=%d metadata=%d posts=%d err=%v", receipt, uploads.Load(), metadataReads.Load(), posts.Load(), err)
 	}
 }
 
@@ -520,6 +678,10 @@ func attachmentTargetServer(t *testing.T, write func(http.ResponseWriter, *http.
 		case "/api/v4/files", "/api/v4/posts":
 			write(response, request)
 		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v4/files/") && strings.HasSuffix(request.URL.Path, "/info") {
+				write(response, request)
+				return
+			}
 			http.NotFound(response, request)
 		}
 	}))

@@ -112,7 +112,26 @@ func (s *Service) applyPostWithAttachments(ctx context.Context, attempt stagesto
 	}
 
 	fileIDs := make([]string, 0, len(spools))
-	for i, spool := range spools {
+	for _, reusable := range attempt.ReusableUploads {
+		attachment := attachments[reusable.Ordinal-1]
+		if err := s.fileWrites.ValidateUpload(ctx, mattermost.UploadMutationInput{ChannelID: destination.ChannelID, UserID: currentUserID,
+			Filename: attachment.RemoteFilename, Length: attachment.ByteLength}, reusable.FileID); err != nil {
+			return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
+		}
+	}
+	for i, reusable := range attempt.ReusableUploads {
+		if err := s.store.MarkStepReused(context.WithoutCancel(ctx), attempt.ID, reusable.Ordinal, reusable.SourceAttemptID, reusable.SourceOrdinal, reusable.FileID); err != nil {
+			if i == 0 {
+				return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, err)
+			}
+			return s.stopCompoundBeforeDispatch(ctx, attempt.ID, err)
+		}
+		_ = spools[reusable.Ordinal-1].Close()
+		spools[reusable.Ordinal-1] = nil
+		fileIDs = append(fileIDs, reusable.FileID)
+	}
+	for i := len(attempt.ReusableUploads); i < len(spools); i++ {
+		spool := spools[i]
 		ordinal := i + 1
 		prepared, err := s.fileWrites.PrepareUpload(mattermost.UploadMutationInput{
 			ChannelID: destination.ChannelID, UserID: currentUserID, Filename: spool.RemoteFilename, MediaType: spool.MediaType, Length: spool.Length, Body: spool,
@@ -151,6 +170,16 @@ func (s *Service) applyPostWithAttachments(ctx context.Context, attempt stagesto
 			return stagestore.ApplyReceipt{}, &ConfirmedEffectError{sealErr}
 		}
 		return s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
+	}
+	for i, fileID := range fileIDs {
+		attachment := attachments[i]
+		if err := s.fileWrites.ValidateUpload(ctx, mattermost.UploadMutationInput{ChannelID: destination.ChannelID, UserID: currentUserID,
+			Filename: attachment.RemoteFilename, Length: attachment.ByteLength}, fileID); err != nil {
+			if sealErr := s.store.SealRemainingNotDispatched(context.WithoutCancel(ctx), attempt.ID); sealErr != nil {
+				return stagestore.ApplyReceipt{}, &ConfirmedEffectError{sealErr}
+			}
+			return s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
+		}
 	}
 	rootID := ""
 	if destination.RootPostID != nil {

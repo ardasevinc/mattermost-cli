@@ -6,9 +6,9 @@
   "required": ["schema", "latest", "migrations"],
   "properties": {
     "schema": { "const": "mm/v2/store-migrations" },
-    "latest": { "const": 9 },
+    "latest": { "const": 10 },
     "migrations": {
-      "type": "array", "minItems": 9, "maxItems": 9,
+      "type": "array", "minItems": 10, "maxItems": 10,
       "prefixItems": [{ "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 1 }, "name": { "const": "core-stage-state" }, "checksum": { "const": "e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
@@ -27,6 +27,8 @@
         "version": { "const": 8 }, "name": { "const": "already-satisfied-edit-apply" }, "checksum": { "const": "cff30dd4fcc987876e092e2de1f5afd21ebeadbcb792fd550a56eb4c221edd10" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 9 }, "name": { "const": "attachment-identity-binding" }, "checksum": { "const": "d0782e01014d010e5978b39bf6f04ef26508bec9318c7ace3be8bfbbcab4999d" }
+      } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
+        "version": { "const": 10 }, "name": { "const": "validated-upload-reuse" }, "checksum": { "const": "75088d75d41eab9d7d1b1c7b1fa6fc4ce604849321b88feeb110d7ada3447947" }
       } }],
       "items": false
     }

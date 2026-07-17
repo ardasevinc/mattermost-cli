@@ -46,6 +46,7 @@ type Store interface {
 	MarkStepRejected(context.Context, string, int, json.RawMessage) error
 	MarkStepUnknown(context.Context, string, int) error
 	MarkStepSkipped(context.Context, string, int, json.RawMessage) error
+	MarkStepReused(context.Context, string, int, string, int, string) error
 	SealRemainingNotDispatched(context.Context, string) error
 	FinalizeApply(context.Context, string) (stagestore.ApplyReceipt, error)
 }

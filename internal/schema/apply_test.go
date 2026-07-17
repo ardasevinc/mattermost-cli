@@ -273,6 +273,64 @@ func TestApplyReceiptAcceptsStatusConfirmedDeleteProjection(t *testing.T) {
 	}
 }
 
+func TestApplyReceiptBindsReusedUploadProvenance(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := fs.ReadFile(publicschemas.FS, "v2/examples/apply-receipt.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base map[string]any
+	if err := json.Unmarshal(raw, &base); err != nil {
+		t.Fatal(err)
+	}
+	base["recoveryMode"] = "resume_partial"
+	base["steps"] = []any{
+		map[string]any{"ordinal": float64(1), "kind": "upload_attachment", "condition": "always", "state": "response_validated", "result": map[string]any{"fileId": "file-1"}, "startedAt": "2026-07-17T02:00:00Z", "endedAt": "2026-07-17T02:00:00Z", "reusedFrom": map[string]any{"attemptId": "att_11111111111111111111111111111111", "ordinal": float64(1)}},
+		base["steps"].([]any)[0],
+	}
+	base["steps"].([]any)[1].(map[string]any)["ordinal"] = float64(2)
+	valid, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(valid)); err != nil {
+		t.Fatalf("rejected reused upload receipt: %v\n%s", err, valid)
+	}
+
+	for name, mutate := range map[string]func(map[string]any){
+		"ordinary mode": func(doc map[string]any) { doc["recoveryMode"] = "ordinary" },
+		"same attempt": func(doc map[string]any) {
+			doc["steps"].([]any)[0].(map[string]any)["reusedFrom"].(map[string]any)["attemptId"] = doc["attemptId"]
+		},
+		"wrong ordinal": func(doc map[string]any) {
+			doc["steps"].([]any)[0].(map[string]any)["reusedFrom"].(map[string]any)["ordinal"] = float64(2)
+		},
+		"create step": func(doc map[string]any) {
+			source := doc["steps"].([]any)[0].(map[string]any)["reusedFrom"]
+			delete(doc["steps"].([]any)[0].(map[string]any), "reusedFrom")
+			doc["steps"].([]any)[1].(map[string]any)["reusedFrom"] = source
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var doc map[string]any
+			if err := json.Unmarshal(valid, &doc); err != nil {
+				t.Fatal(err)
+			}
+			mutate(doc)
+			encoded, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(encoded)); err == nil {
+				t.Fatalf("accepted invalid reuse provenance: %s", encoded)
+			}
+		})
+	}
+}
+
 func makeEditReceipt(doc map[string]any, resultPostID string) {
 	doc["operation"] = "edit_post"
 	destination := doc["destination"].(map[string]any)

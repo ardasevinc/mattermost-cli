@@ -588,7 +588,7 @@ func TestApplyPartialAndUnknownRecoveryAreMonotonic(t *testing.T) {
 	})
 }
 
-func TestApplyPartialResumeIsRefusedUntilReuseProofIsBound(t *testing.T) {
+func TestApplyPartialResumeBindsValidatedUploadProvenance(t *testing.T) {
 	s := openDomainStore(t)
 	created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"create_post","condition":"always"}]}`)
 	first, _ := s.ClaimApply(context.Background(), claimInput(created.Stage, "", RecoveryModeOrdinary))
@@ -598,8 +598,77 @@ func TestApplyPartialResumeIsRefusedUntilReuseProofIsBound(t *testing.T) {
 	_ = s.MarkStepRejected(context.Background(), first.ID, 2, json.RawMessage(`{"status":400}`))
 	_, _ = s.FinalizeApply(context.Background(), first.ID)
 	detail, _ := s.Show(context.Background(), created.Stage.ID)
-	if _, err := s.ClaimApply(context.Background(), claimInput(detail.StageSummary, "", RecoveryModePartial)); !errors.Is(err, ErrNotEligible) {
-		t.Fatalf("unsafe partial resume=%v", err)
+	resume, err := s.ClaimApply(context.Background(), claimInput(detail.StageSummary, "", RecoveryModePartial))
+	if err != nil || len(resume.ReusableUploads) != 1 || resume.ReusableUploads[0].SourceAttemptID != first.ID || resume.ReusableUploads[0].FileID != "file-1" {
+		t.Fatalf("resume=%+v err=%v", resume, err)
+	}
+	for name, args := range map[string][]any{
+		"wrong file":           {resume.ID, 1, first.ID, 1, "file-2"},
+		"wrong source ordinal": {resume.ID, 1, first.ID, 2, "file-1"},
+		"wrong destination":    {resume.ID, 2, first.ID, 1, "file-1"},
+		"self source":          {resume.ID, 1, resume.ID, 1, "file-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := s.db.Exec(`INSERT INTO apply_step_reuse(attempt_id,ordinal,source_attempt_id,source_ordinal,file_id) VALUES(?,?,?,?,?)`, args...); err == nil {
+				t.Fatal("invalid provenance insertion succeeded")
+			}
+		})
+	}
+	if err = s.MarkStepReused(context.Background(), resume.ID, 1, first.ID, 1, "file-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE apply_step_reuse SET file_id='file-2' WHERE attempt_id=? AND ordinal=1`, resume.ID); err == nil {
+		t.Fatal("reuse provenance update succeeded")
+	}
+	if _, err = s.db.Exec(`DELETE FROM apply_step_reuse WHERE attempt_id=? AND ordinal=1`, resume.ID); err == nil {
+		t.Fatal("reuse provenance deletion succeeded")
+	}
+	stored, err := scanApplyAttempt(context.Background(), s.db, resume.ID)
+	if err != nil || stored.Steps[0].ReusedFrom == nil || stored.Steps[0].ReusedFrom.AttemptID != first.ID || stored.Steps[0].StartedAt == nil {
+		t.Fatalf("stored=%+v err=%v", stored, err)
+	}
+}
+
+func TestApplyPartialResumeAccumulatesOnlyDirectValidatedUploads(t *testing.T) {
+	s := openDomainStore(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"upload_attachment","condition":"always"},{"ordinal":3,"type":"create_post","condition":"always"}]}`)
+	first, err := s.ClaimApply(context.Background(), claimInput(created.Stage, "", RecoveryModeOrdinary))
+	must(err)
+	must(s.BeginDispatch(context.Background(), first.ID, 1))
+	must(s.MarkStepValidated(context.Background(), first.ID, 1, json.RawMessage(`{"fileId":"file-1"}`)))
+	must(s.BeginDispatch(context.Background(), first.ID, 2))
+	must(s.MarkStepRejected(context.Background(), first.ID, 2, json.RawMessage(`{"status":403}`)))
+	_, err = s.FinalizeApply(context.Background(), first.ID)
+	must(err)
+
+	detail, err := s.Show(context.Background(), created.Stage.ID)
+	must(err)
+	second, err := s.ClaimApply(context.Background(), claimInput(detail.StageSummary, "", RecoveryModePartial))
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(s.MarkStepReused(context.Background(), second.ID, 1, first.ID, 1, "file-1"))
+	must(s.BeginDispatch(context.Background(), second.ID, 2))
+	must(s.MarkStepValidated(context.Background(), second.ID, 2, json.RawMessage(`{"fileId":"file-2"}`)))
+	must(s.BeginDispatch(context.Background(), second.ID, 3))
+	must(s.MarkStepRejected(context.Background(), second.ID, 3, json.RawMessage(`{"status":403}`)))
+	_, err = s.FinalizeApply(context.Background(), second.ID)
+	must(err)
+
+	detail, err = s.Show(context.Background(), created.Stage.ID)
+	must(err)
+	third, err := s.ClaimApply(context.Background(), claimInput(detail.StageSummary, "", RecoveryModePartial))
+	if err != nil || len(third.ReusableUploads) != 2 || third.ReusableUploads[0].SourceAttemptID != first.ID || third.ReusableUploads[1].SourceAttemptID != second.ID {
+		t.Fatalf("third=%+v err=%v", third, err)
+	}
+	if err = s.MarkStepReused(context.Background(), third.ID, 1, second.ID, 1, "file-1"); err == nil {
+		t.Fatal("reuse chain succeeded")
 	}
 }
 

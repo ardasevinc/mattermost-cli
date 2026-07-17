@@ -611,7 +611,9 @@ func applyServiceWithCredentials(t *testing.T, serverURL string, store Store, cr
 type faultStore struct {
 	*stagestore.Store
 	skipErr, unknownErr, validatedErr, finalizeErr, beginErr error
+	reuseErr                                                 error
 	beginOrdinal                                             int
+	reuseOrdinal                                             int
 	beforeSkip                                               func()
 }
 
@@ -644,6 +646,13 @@ func (s *faultStore) MarkStepValidated(ctx context.Context, attemptID string, or
 		return s.validatedErr
 	}
 	return s.Store.MarkStepValidated(ctx, attemptID, ordinal, result)
+}
+
+func (s *faultStore) MarkStepReused(ctx context.Context, attemptID string, ordinal int, sourceAttemptID string, sourceOrdinal int, fileID string) error {
+	if s.reuseErr != nil && ordinal == s.reuseOrdinal {
+		return s.reuseErr
+	}
+	return s.Store.MarkStepReused(ctx, attemptID, ordinal, sourceAttemptID, sourceOrdinal, fileID)
 }
 
 func (s *faultStore) FinalizeApply(ctx context.Context, attemptID string) (stagestore.ApplyReceipt, error) {

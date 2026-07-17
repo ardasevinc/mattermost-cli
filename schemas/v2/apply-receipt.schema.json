@@ -97,7 +97,16 @@
         "state": { "enum": ["pending", "dispatch_intent", "response_validated", "rejected", "outcome_unknown", "skipped", "not_dispatched"] },
         "result": { "$ref": "#/$defs/result" },
         "startedAt": { "type": ["string", "null"], "format": "date-time" },
-        "endedAt": { "type": ["string", "null"], "format": "date-time" }
+        "endedAt": { "type": ["string", "null"], "format": "date-time" },
+        "reusedFrom": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["attemptId", "ordinal"],
+          "properties": {
+            "attemptId": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{32}$" },
+            "ordinal": { "type": "integer", "minimum": 1, "maximum": 102 }
+          }
+        }
       },
       "allOf": [
         { "if": { "properties": { "state": { "const": "pending" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "null" }, "endedAt": { "type": "null" } } } },
@@ -113,6 +122,7 @@
         { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "delete_post" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/postResult" } } } },
         { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "enum": ["add_reaction", "remove_reaction"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/postResult" } } } },
         { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "resolve_conversation" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/conversationResult" } } } }
+        ,{ "if": { "required": ["reusedFrom"] }, "then": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "upload_attachment" } } } }
       ]
     },
     "singleStep": { "properties": { "steps": { "minItems": 1, "maxItems": 1 } } },

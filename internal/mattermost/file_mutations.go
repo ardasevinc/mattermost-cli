@@ -3,6 +3,7 @@ package mattermost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/ardasevinc/mattermost-cli/internal/api"
 )
+
+var ErrUploadBinding = errors.New("Mattermost file no longer matches the validated upload")
 
 type FileMutations struct{ client *api.Client }
 
@@ -36,6 +39,22 @@ func (m *FileMutations) DiscoverMaxUploadBytes(ctx context.Context) (int64, bool
 		return 0, false
 	}
 	return value, true
+}
+
+func (m *FileMutations) ValidateUpload(ctx context.Context, in UploadMutationInput, fileID string) error {
+	if m == nil || m.client == nil || ctx == nil || !isSafePostID(fileID) || !isSafePostID(in.ChannelID) || !isSafePostID(in.UserID) || !validUploadFilename(in.Filename) || in.Length <= 0 {
+		return ErrInvalidMutationRequest
+	}
+	var response fileInfoResponse
+	if err := m.client.Get(ctx, "/files/"+url.PathEscape(fileID)+"/info", &response); err != nil {
+		return err
+	}
+	file := uploadFileInfo(response)
+	if file.ID != fileID || file.UserID != in.UserID || file.ChannelID != in.ChannelID || file.PostID != "" || file.Name != in.Filename || file.Size != in.Length ||
+		file.CreateAt <= 0 || file.CreateAt > maxDateMilliseconds || file.UpdateAt < file.CreateAt || file.UpdateAt > maxDateMilliseconds || file.DeleteAt != 0 {
+		return ErrUploadBinding
+	}
+	return nil
 }
 
 type UploadMutationInput struct {
@@ -121,49 +140,9 @@ func (r *uploadResponse) UnmarshalJSON(data []byte) error {
 	if json.Unmarshal(envelope.FileInfos, &infos) != nil || len(infos) != 1 {
 		return ErrInvalidPostResponse
 	}
-	infoRaw, ok := uniqueJSONObject(infos[0])
-	if !ok {
-		return ErrInvalidPostResponse
-	}
-	file := uploadFileInfo{}
-	var fieldsOK bool
-	file.ID, fieldsOK = safePostID(infoRaw["id"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.UserID, fieldsOK = safePostID(infoRaw["user_id"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.ChannelID, fieldsOK = safePostID(infoRaw["channel_id"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	if rawPostID, present := infoRaw["post_id"]; present {
-		file.PostID, fieldsOK = strictString(rawPostID)
-		if !fieldsOK {
-			return ErrInvalidPostResponse
-		}
-	}
-	file.Name, fieldsOK = strictString(infoRaw["name"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.CreateAt, fieldsOK = nonnegativeInteger(infoRaw["create_at"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.UpdateAt, fieldsOK = nonnegativeInteger(infoRaw["update_at"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.DeleteAt, fieldsOK = nonnegativeInteger(infoRaw["delete_at"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
-	}
-	file.Size, fieldsOK = nonnegativeInteger(infoRaw["size"])
-	if !fieldsOK {
-		return ErrInvalidPostResponse
+	file, err := decodeUploadFileInfo(infos[0])
+	if err != nil {
+		return err
 	}
 	clientIDs := []string(nil)
 	if envelope.ClientIDs != nil && string(envelope.ClientIDs) != "null" && json.Unmarshal(envelope.ClientIDs, &clientIDs) != nil {
@@ -171,6 +150,65 @@ func (r *uploadResponse) UnmarshalJSON(data []byte) error {
 	}
 	*r = uploadResponse{[]uploadFileInfo{file}, clientIDs}
 	return nil
+}
+
+type fileInfoResponse uploadFileInfo
+
+func (r *fileInfoResponse) UnmarshalJSON(data []byte) error {
+	file, err := decodeUploadFileInfo(data)
+	if err != nil {
+		return err
+	}
+	*r = fileInfoResponse(file)
+	return nil
+}
+
+func decodeUploadFileInfo(data []byte) (uploadFileInfo, error) {
+	infoRaw, ok := uniqueJSONObject(data)
+	if !ok {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file := uploadFileInfo{}
+	var fieldsOK bool
+	file.ID, fieldsOK = safePostID(infoRaw["id"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.UserID, fieldsOK = safePostID(infoRaw["user_id"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.ChannelID, fieldsOK = safePostID(infoRaw["channel_id"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	if rawPostID, present := infoRaw["post_id"]; present {
+		file.PostID, fieldsOK = strictString(rawPostID)
+		if !fieldsOK {
+			return uploadFileInfo{}, ErrInvalidPostResponse
+		}
+	}
+	file.Name, fieldsOK = strictString(infoRaw["name"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.CreateAt, fieldsOK = nonnegativeInteger(infoRaw["create_at"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.UpdateAt, fieldsOK = nonnegativeInteger(infoRaw["update_at"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.DeleteAt, fieldsOK = nonnegativeInteger(infoRaw["delete_at"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	file.Size, fieldsOK = nonnegativeInteger(infoRaw["size"])
+	if !fieldsOK {
+		return uploadFileInfo{}, ErrInvalidPostResponse
+	}
+	return file, nil
 }
 
 func validUploadFilename(value string) bool {

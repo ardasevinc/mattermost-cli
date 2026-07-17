@@ -264,7 +264,7 @@ Development databases upgraded from a pre-identity schema cannot safely infer th
 
 To close the hash-to-upload race without retaining attachment copies between commands, apply copies every securely opened source into a private `0600` spool file while hashing it before the first remote dispatch. Only a complete spool whose identity, digest, and length match the staged revision may be uploaded. Each completed spool is unlinked while its descriptor remains open; upload reads that descriptor, not the original path. Thus path-backed staging remains low-storage at rest while dispatched bytes are an immutable snapshot of the reviewed file.
 
-Spools are execution-only snapshots and never durable recovery artifacts. Process exit closes their descriptors and leaves no pathname to reconcile. A later explicit recovery securely reopens and respools the staged source; if the exact bound source is unavailable, recovery fails closed until the source is restored or recovery is explicitly abandoned. Validated upload steps recover from their journaled file IDs after fresh remote metadata revalidation, not by uploading the file again.
+Spools are execution-only snapshots and never durable recovery artifacts. Process exit closes their descriptors and leaves no pathname to reconcile. A later explicit recovery securely reopens and respools every staged source before any new dispatch; if any exact bound source is unavailable or changed, recovery fails closed until the source is restored or recovery is explicitly abandoned. A contiguous prefix of directly validated upload steps from terminal attempts on the same stage revision and semantic digest may recover from its journaled file IDs after fresh remote metadata revalidation. Each ordinal binds directly to the attempt that dispatched and validated that upload; reused provenance cannot chain through another recovery attempt. Only the proven-not-applied suffix is uploaded, in original ordinal order, and every reused or newly uploaded file is revalidated again immediately before the final post dispatch.
 
 Attachments are non-empty and limited to five per post. Server per-file upload limits are checked before upload when discoverable; a dispatched `413` is a definitive rejection. Checked arithmetic caps an attempt's aggregate spool bytes at 512 MiB, and apply refuses to begin unless the private state filesystem can retain that snapshot while preserving a 64 MiB free-space reserve. Upload and post creation are separate remote substeps and therefore use the compound-operation journal.
 
@@ -373,7 +373,7 @@ Revise is refused while `applying`, while recovery is `resume_partial`, or after
 
 Ordinary `mm apply <id>@<revision>` requires the exact current revision, lifecycle `open`, and recovery requirement `none`.
 
-`mm apply <id>@<revision> --resume-partial` requires recovery `resume_partial`. It preserves the prior attempt, assigns fresh idempotency/pending IDs to new substep attempts where applicable, revalidates reusable effects, and continues only effects proven not applied. A definitively rejected request is proven not applied and may be retried this way. Resume is forbidden when any attempt in the stage's history remains uncertain.
+`mm apply <id>@<revision> --resume-partial` requires recovery `resume_partial`. It preserves the prior attempt, claims the exact same revision and semantic digest, assigns fresh idempotency/pending IDs to new substep attempts where applicable, and continues only effects proven not applied. Attachment recovery reuses only a contiguous direct validated-upload prefix after exact remote file metadata revalidation; no uncertain or already-reused source step qualifies. A definitively rejected request is proven not applied and may be retried this way. Resume is forbidden when any attempt in the stage's history remains uncertain.
 
 `mm apply <id>@<revision> --force-unknown` requires aggregate recovery `force_unknown`. It:
 
@@ -411,6 +411,7 @@ Receipts include only fields needed to establish:
 - stage ID, revision, and attempt ID;
 - destination and authenticated identity in sanitized narrow form;
 - each planned substep's known state;
+- direct reused-upload provenance as `reusedFrom.attemptId` and the identical source ordinal when partial recovery did not redispatch that upload;
 - canonical post/channel/file identifiers when validated;
 - server creation/update timestamps when validated;
 - overall `succeeded`, `rejected`, `partial`, `unknown`, or `already_satisfied` outcome;

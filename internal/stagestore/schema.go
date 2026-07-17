@@ -499,8 +499,54 @@ BEGIN SELECT RAISE(ABORT, 'stage attachment identity is immutable'); END;
 CREATE TRIGGER stage_attachment_identity_immutable_delete BEFORE DELETE ON stage_attachment_identities
 WHEN EXISTS(SELECT 1 FROM stage_attachments a WHERE a.stage_id=OLD.stage_id AND a.revision=OLD.revision AND a.ordinal=OLD.ordinal)
 BEGIN SELECT RAISE(ABORT, 'stage attachment identity is immutable'); END;
+`}, {version: 10, name: "validated-upload-reuse", sql: `
+DROP TRIGGER apply_step_state_transition_valid;
+CREATE TABLE apply_step_reuse (
+  attempt_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+  source_attempt_id TEXT NOT NULL,
+  source_ordinal INTEGER NOT NULL CHECK (source_ordinal > 0),
+  file_id TEXT NOT NULL CHECK (length(file_id) > 0),
+  PRIMARY KEY (attempt_id,ordinal),
+  FOREIGN KEY (attempt_id,ordinal) REFERENCES apply_steps(attempt_id,ordinal) ON DELETE CASCADE,
+  FOREIGN KEY (source_attempt_id,source_ordinal) REFERENCES apply_steps(attempt_id,ordinal),
+  CHECK (attempt_id != source_attempt_id),
+  CHECK (ordinal = source_ordinal)
+) STRICT;
+CREATE TRIGGER apply_step_reuse_insert_valid BEFORE INSERT ON apply_step_reuse
+WHEN NOT EXISTS(
+  SELECT 1 FROM apply_steps d
+  JOIN apply_attempts da ON da.id=d.attempt_id
+  JOIN apply_steps s ON s.attempt_id=NEW.source_attempt_id AND s.ordinal=NEW.source_ordinal
+  JOIN apply_attempts sa ON sa.id=s.attempt_id
+  WHERE d.attempt_id=NEW.attempt_id AND d.ordinal=NEW.ordinal
+    AND d.kind='upload_attachment' AND d.state='pending' AND da.recovery_mode='resume_partial'
+    AND s.kind='upload_attachment' AND s.state='response_validated'
+    AND json_extract(s.result_json,'$.fileId')=NEW.file_id
+    AND sa.outcome IS NOT NULL
+    AND da.stage_id=sa.stage_id AND da.revision=sa.revision AND da.semantic_digest=sa.semantic_digest
+    AND NOT EXISTS(SELECT 1 FROM apply_step_reuse prior WHERE prior.attempt_id=s.attempt_id AND prior.ordinal=s.ordinal)
+    AND NOT EXISTS(SELECT 1 FROM apply_steps uncertain WHERE uncertain.attempt_id=sa.id AND uncertain.state='outcome_unknown')
+)
+BEGIN SELECT RAISE(ABORT, 'invalid validated upload reuse'); END;
+CREATE TRIGGER apply_step_reuse_immutable_update BEFORE UPDATE ON apply_step_reuse
+BEGIN SELECT RAISE(ABORT, 'validated upload reuse is immutable'); END;
+CREATE TRIGGER apply_step_reuse_immutable_delete BEFORE DELETE ON apply_step_reuse
+BEGIN SELECT RAISE(ABORT, 'validated upload reuse is immutable'); END;
+CREATE TRIGGER apply_step_state_transition_valid BEFORE UPDATE OF state ON apply_steps
+WHEN NOT (
+  OLD.state='pending' AND NEW.state IN ('dispatch_intent','skipped','not_dispatched')
+  OR OLD.state='pending' AND NEW.state='response_validated' AND NEW.kind='upload_attachment'
+    AND EXISTS(SELECT 1 FROM apply_step_reuse r WHERE r.attempt_id=NEW.attempt_id AND r.ordinal=NEW.ordinal AND json_extract(NEW.result_json,'$.fileId')=r.file_id)
+  OR OLD.state='dispatch_intent' AND NEW.state IN ('response_validated','rejected','outcome_unknown')
+)
+BEGIN SELECT RAISE(ABORT, 'invalid apply step transition'); END;
 `}}
 
 func attachmentIdentityAvailable() bool {
 	return len(migrations) >= 9 && migrations[8].version == 9 && migrations[8].name == "attachment-identity-binding"
+}
+
+func validatedUploadReuseAvailable() bool {
+	return len(migrations) >= 10 && migrations[9].version == 10 && migrations[9].name == "validated-upload-reuse"
 }

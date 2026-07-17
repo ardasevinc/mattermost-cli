@@ -10,6 +10,7 @@ import (
 )
 
 type applyReceiptDocument struct {
+	AttemptID    string                  `json:"attemptId"`
 	Operation    string                  `json:"operation"`
 	RecoveryMode string                  `json:"recoveryMode"`
 	Destination  applyReceiptDestination `json:"destination"`
@@ -34,13 +35,19 @@ type applyReceiptDestination struct {
 }
 
 type applyReceiptStep struct {
-	Ordinal   int             `json:"ordinal"`
-	Kind      string          `json:"kind"`
-	Condition string          `json:"condition"`
-	State     string          `json:"state"`
-	Result    json.RawMessage `json:"result"`
-	StartedAt *time.Time      `json:"startedAt"`
-	EndedAt   *time.Time      `json:"endedAt"`
+	Ordinal    int                     `json:"ordinal"`
+	Kind       string                  `json:"kind"`
+	Condition  string                  `json:"condition"`
+	State      string                  `json:"state"`
+	Result     json.RawMessage         `json:"result"`
+	StartedAt  *time.Time              `json:"startedAt"`
+	EndedAt    *time.Time              `json:"endedAt"`
+	ReusedFrom *applyReceiptStepSource `json:"reusedFrom"`
+}
+
+type applyReceiptStepSource struct {
+	AttemptID string `json:"attemptId"`
+	Ordinal   int    `json:"ordinal"`
 }
 
 func validateSemanticDocument(id string, data []byte) error {
@@ -63,7 +70,7 @@ func validateApplyReceiptDocument(receipt applyReceiptDocument) error {
 		if step.Ordinal != i+1 || step.StartedAt != nil && step.StartedAt.Before(receipt.StartedAt) ||
 			step.EndedAt != nil && (step.EndedAt.Before(receipt.StartedAt) || step.EndedAt.After(receipt.RecordedAt)) ||
 			step.StartedAt != nil && step.EndedAt != nil && step.EndedAt.Before(*step.StartedAt) ||
-			!validApplyReceiptResultTarget(step, receipt.Destination) {
+			!validApplyReceiptResultTarget(step, receipt.Destination) || !validApplyReceiptReuse(receipt, step) {
 			return fmt.Errorf("invalid apply receipt step %d", i+1)
 		}
 	}
@@ -72,6 +79,14 @@ func validateApplyReceiptDocument(receipt applyReceiptDocument) error {
 		return errors.New("invalid apply receipt outcome")
 	}
 	return nil
+}
+
+func validApplyReceiptReuse(receipt applyReceiptDocument, step applyReceiptStep) bool {
+	if step.ReusedFrom == nil {
+		return true
+	}
+	return receipt.RecoveryMode == "resume_partial" && step.State == "response_validated" && step.Kind == "upload_attachment" &&
+		step.ReusedFrom.AttemptID != receipt.AttemptID && step.ReusedFrom.Ordinal == step.Ordinal
 }
 
 func validApplyReceiptStepOrder(steps []applyReceiptStep) bool {
