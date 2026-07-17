@@ -33,7 +33,55 @@ func newStageCreationCommands(state *rootState) []*cobra.Command {
 		newStageContentlessPostCommand(state, stagestore.DeletePost),
 		newStageReactionCommand(state, stagestore.React),
 		newStageReactionCommand(state, stagestore.Unreact),
+		newStageConversationCreateCommand(state, stagestore.ResolveDM),
+		newStageConversationCreateCommand(state, stagestore.ResolveGroupDM),
 	}
+}
+
+func newStageConversationCreateCommand(state *rootState, operation stagestore.Operation) *cobra.Command {
+	var dryRun bool
+	var requestID string
+	use, short := "dm-create <username>", "Stage creation or resolution of an exact direct conversation"
+	args := cobra.ExactArgs(1)
+	if operation == stagestore.ResolveGroupDM {
+		use, short = "group-create <username>...", "Stage creation or resolution of an exact group conversation"
+		args = func(_ *cobra.Command, values []string) error {
+			if len(values) < 2 || len(values) > 100 {
+				return invalidFailure("group-create requires between 2 and 100 usernames")
+			}
+			return nil
+		}
+	}
+	command := &cobra.Command{Use: use, Short: short, Args: args}
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "preview without persisting a stage")
+	command.Flags().StringVar(&requestID, "request-id", "", "caller-generated replay key")
+	command.RunE = func(cmd *cobra.Command, values []string) error {
+		if dryRun && requestID != "" {
+			return invalidFailure("--request-id cannot be used with --dry-run")
+		}
+		service, closeStore, err := openStagingService(cmd, state, !dryRun)
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			defer func() { _ = closeStore() }()
+			var preview staging.Preview
+			if operation == stagestore.ResolveDM {
+				preview, err = service.DryRunResolveDM(cmd.Context(), staging.Target{Conversation: staging.Direct, Selector: staging.ByUsername, Value: values[0]})
+			} else {
+				preview, err = service.DryRunResolveGroup(cmd.Context(), values)
+			}
+			return writeStagePreview(state, operation, preview, err)
+		}
+		var result staging.CreatePostResult
+		if operation == stagestore.ResolveDM {
+			result, err = service.ResolveDM(cmd.Context(), staging.ResolveDMInput{RequestID: requestID, Target: staging.Target{Conversation: staging.Direct, Selector: staging.ByUsername, Value: values[0]}})
+		} else {
+			result, err = service.ResolveGroup(cmd.Context(), staging.ResolveGroupInput{RequestID: requestID, Usernames: append([]string(nil), values...)})
+		}
+		return finishStageCreate(state, result, err, closeStore)
+	}
+	return command
 }
 
 func newStageSendCommand(state *rootState) *cobra.Command {
@@ -320,9 +368,6 @@ func runStructuredStage(cmd *cobra.Command, state *rootState) error {
 }
 
 func dispatchStructuredStage(cmd *cobra.Command, state *rootState, request stagerequest.StageRequest) error {
-	if request.Operation == stagerequest.ResolveDM || request.Operation == stagerequest.ResolveGroupDM {
-		return invalidFailure("unsupported stage operation")
-	}
 	service, closeStore, err := openStagingService(cmd, state, request.Persist)
 	if err != nil {
 		return err
@@ -367,6 +412,18 @@ func dispatchStructuredStage(cmd *cobra.Command, state *rootState, request stage
 		} else {
 			result, err = service.Unreact(cmd.Context(), input)
 		}
+	case stagerequest.ResolveDM:
+		target, conversionErr := request.ResolveDMTarget()
+		if conversionErr != nil {
+			return invalidFailure("invalid stage request")
+		}
+		result, err = service.ResolveDM(cmd.Context(), staging.ResolveDMInput{RequestID: *request.RequestID, Target: target})
+	case stagerequest.ResolveGroupDM:
+		usernames, conversionErr := request.ResolveGroupUsernames()
+		if conversionErr != nil {
+			return invalidFailure("invalid stage request")
+		}
+		result, err = service.ResolveGroup(cmd.Context(), staging.ResolveGroupInput{RequestID: *request.RequestID, Usernames: usernames})
 	default:
 		return invalidFailure("unsupported stage operation")
 	}
@@ -410,6 +467,20 @@ func dispatchStructuredPreview(ctx context.Context, state *rootState, service *s
 		} else {
 			preview, err = service.DryRunUnreact(ctx, input)
 		}
+	case stagerequest.ResolveDM:
+		operation = stagestore.ResolveDM
+		target, conversionErr := request.ResolveDMTarget()
+		if conversionErr != nil {
+			return invalidFailure("invalid stage request")
+		}
+		preview, err = service.DryRunResolveDM(ctx, target)
+	case stagerequest.ResolveGroupDM:
+		operation = stagestore.ResolveGroupDM
+		usernames, conversionErr := request.ResolveGroupUsernames()
+		if conversionErr != nil {
+			return invalidFailure("invalid stage request")
+		}
+		preview, err = service.DryRunResolveGroup(ctx, usernames)
 	default:
 		return invalidFailure("unsupported stage operation")
 	}

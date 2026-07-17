@@ -229,3 +229,67 @@ func TestStructuredStageReplayUsesStoredTargetAndConflictingReuseFailsClosed(t *
 		t.Fatalf("conflict re-resolved target: %v", got)
 	}
 }
+
+func TestConversationCreationStagesExactParticipantsWithoutRemoteMutation(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		methods = append(methods, request.Method+" "+request.URL.Path)
+		switch request.URL.Path {
+		case "/api/v4/users/me":
+			writeJSON(t, writer, `{"id":"self","username":"arda"}`)
+		case "/api/v4/users/username/alice":
+			writeJSON(t, writer, `{"id":"z-peer","username":"alice"}`)
+		case "/api/v4/users/username/bob":
+			writeJSON(t, writer, `{"id":"a-peer","username":"bob"}`)
+		case "/api/v4/users/username/hakan":
+			writeJSON(t, writer, `{"id":"h-peer","username":"hakan"}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+	t.Run("structured DM preview", func(t *testing.T) {
+		stateRoot := filepath.Join(t.TempDir(), "state")
+		setStageEnvironment(t, server.URL, stateRoot)
+		request := `{"schema":"mm/v2/stage-request","persist":false,"requestId":null,"operation":"resolve_dm","target":{"kind":"user","username":"hakan"},"body":null,"emoji":null,"attachments":[]}`
+		var stdout, stderr bytes.Buffer
+		code := Execute(t.Context(), []string{"stage", "--from-json"}, strings.NewReader(request), &stdout, &stderr)
+		if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"channelId":null`) || !strings.Contains(stdout.String(), `"channelType":"dm"`) || !strings.Contains(stdout.String(), `"participantIds":["h-peer"]`) {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+		registry, _ := mmSchema.Load()
+		if err := registry.Validate("mm/v2/stage-preview", bytes.NewReader(stdout.Bytes())); err != nil {
+			t.Fatalf("schema: %v\n%s", err, stdout.String())
+		}
+		if _, err := os.Stat(stateRoot); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("preview created state: %v", err)
+		}
+	})
+	t.Run("human group stage", func(t *testing.T) {
+		stateRoot := filepath.Join(t.TempDir(), "state")
+		setStageEnvironment(t, server.URL, stateRoot)
+		stdin := new(failOnRead)
+		var stdout, stderr bytes.Buffer
+		code := Execute(t.Context(), []string{"--json", "stage", "group-create", "alice", "bob", "--request-id", "group-create-1"}, stdin, &stdout, &stderr)
+		if code != 0 || stderr.Len() != 0 || stdin.reads.Load() != 0 || !strings.Contains(stdout.String(), `"operation":"resolve_group_dm"`) || !strings.Contains(stdout.String(), `"participantIds":["a-peer","z-peer"]`) {
+			t.Fatalf("exit=%d reads=%d stdout=%q stderr=%q", code, stdin.reads.Load(), stdout.String(), stderr.String())
+		}
+		registry, _ := mmSchema.Load()
+		if err := registry.Validate("mm/v2/stage-receipt", bytes.NewReader(stdout.Bytes())); err != nil {
+			t.Fatalf("schema: %v\n%s", err, stdout.String())
+		}
+		var receipt stageoutputReceipt
+		if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+			t.Fatal(err)
+		}
+		detail := loadStoredStage(t, stateRoot, receipt.Stage.StageID)
+		if detail.Operation != stagestore.ResolveGroupDM || detail.Body != nil || len(detail.Attachments) != 0 {
+			t.Fatalf("detail=%+v", detail)
+		}
+	})
+	for _, method := range methods {
+		if !strings.HasPrefix(method, http.MethodGet+" ") {
+			t.Fatalf("conversation staging dispatched mutation: %s", method)
+		}
+	}
+}

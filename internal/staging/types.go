@@ -1,7 +1,10 @@
 package staging
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
@@ -68,6 +71,16 @@ type ReactionDryRunInput struct{ PostID, Emoji string }
 
 type DryRunInput struct{ Target Target }
 
+type ResolveDMInput struct {
+	RequestID string
+	Target    Target
+}
+
+type ResolveGroupInput struct {
+	RequestID string
+	Usernames []string
+}
+
 type Destination struct {
 	Kind            string     `json:"kind"`
 	ChannelID       string     `json:"channelId"`
@@ -79,6 +92,77 @@ type Destination struct {
 	Emoji           *string    `json:"emoji"`
 	PostState       *PostState `json:"postState"`
 	ReactionPresent *bool      `json:"reactionPresent"`
+}
+
+// MarshalJSON preserves the public nullable channel identity while keeping the
+// internal resolved-channel API ergonomic. Empty channel fields mean an exact
+// participant set whose conversation still has to be resolved at apply time.
+func (d Destination) MarshalJSON() ([]byte, error) {
+	var channelID, channelType any
+	if d.ChannelID != "" {
+		channelID = d.ChannelID
+	}
+	if d.ChannelType != "" {
+		channelType = d.ChannelType
+	}
+	return json.Marshal(struct {
+		Kind            string     `json:"kind"`
+		ChannelID       any        `json:"channelId"`
+		ChannelType     any        `json:"channelType"`
+		TeamID          *string    `json:"teamId"`
+		PostID          *string    `json:"postId"`
+		RootPostID      *string    `json:"rootPostId"`
+		ParticipantIDs  []string   `json:"participantIds"`
+		Emoji           *string    `json:"emoji"`
+		PostState       *PostState `json:"postState"`
+		ReactionPresent *bool      `json:"reactionPresent"`
+	}{d.Kind, channelID, channelType, d.TeamID, d.PostID, d.RootPostID, d.ParticipantIDs, d.Emoji, d.PostState, d.ReactionPresent})
+}
+
+func (d *Destination) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return errors.New("nil destination")
+	}
+	var raw struct {
+		Kind            json.RawMessage `json:"kind"`
+		ChannelID       json.RawMessage `json:"channelId"`
+		ChannelType     json.RawMessage `json:"channelType"`
+		TeamID          json.RawMessage `json:"teamId"`
+		PostID          json.RawMessage `json:"postId"`
+		RootPostID      json.RawMessage `json:"rootPostId"`
+		ParticipantIDs  json.RawMessage `json:"participantIds"`
+		Emoji           json.RawMessage `json:"emoji"`
+		PostState       json.RawMessage `json:"postState"`
+		ReactionPresent json.RawMessage `json:"reactionPresent"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&raw) != nil || decoder.Decode(new(any)) != io.EOF {
+		return errors.New("invalid destination")
+	}
+	required := []json.RawMessage{raw.Kind, raw.ChannelID, raw.ChannelType, raw.TeamID, raw.PostID, raw.RootPostID, raw.ParticipantIDs, raw.Emoji, raw.PostState, raw.ReactionPresent}
+	for _, value := range required {
+		if len(value) == 0 {
+			return errors.New("incomplete destination")
+		}
+	}
+	var out Destination
+	if json.Unmarshal(raw.Kind, &out.Kind) != nil || decodeNullableString(raw.ChannelID, &out.ChannelID) != nil || decodeNullableString(raw.ChannelType, &out.ChannelType) != nil ||
+		json.Unmarshal(raw.TeamID, &out.TeamID) != nil || json.Unmarshal(raw.PostID, &out.PostID) != nil || json.Unmarshal(raw.RootPostID, &out.RootPostID) != nil ||
+		json.Unmarshal(raw.ParticipantIDs, &out.ParticipantIDs) != nil || out.ParticipantIDs == nil || json.Unmarshal(raw.Emoji, &out.Emoji) != nil ||
+		json.Unmarshal(raw.PostState, &out.PostState) != nil || json.Unmarshal(raw.ReactionPresent, &out.ReactionPresent) != nil {
+		return errors.New("invalid destination")
+	}
+	*d = out
+	return nil
+}
+
+func decodeNullableString(raw json.RawMessage, out *string) error {
+	if bytes.Equal(raw, []byte("null")) {
+		*out = ""
+		return nil
+	}
+	return json.Unmarshal(raw, out)
 }
 
 type PostState struct {
