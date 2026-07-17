@@ -31,6 +31,9 @@ go-cross-build:
 release-artifacts version commit output="dist":
     go run ./scripts/release --version "{{version}}" --commit "{{commit}}" --output "{{output}}"
 
+npm-packages version release_dir="dist" output="npm-dist":
+    go run ./scripts/npm-package --version "{{version}}" --release-dir "{{release_dir}}" --output "{{output}}"
+
 docker-e2e:
     bun run test:e2e
 

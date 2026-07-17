@@ -5,7 +5,10 @@ node_modules
 out
 dist
 bin
+!npm/bin/
+!npm/bin/mm.js
 *.tgz
+npm-dist
 
 # code coverage
 coverage
