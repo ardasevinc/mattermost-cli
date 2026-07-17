@@ -102,9 +102,9 @@ type ChannelMember struct {
 	UserID    string
 }
 
-type groupMemberList []ChannelMember
+type conversationMemberList []ChannelMember
 
-func (l *groupMemberList) UnmarshalJSON(data []byte) error {
+func (l *conversationMemberList) UnmarshalJSON(data []byte) error {
 	var members []ChannelMember
 	if err := json.Unmarshal(data, &members); err != nil || members == nil || len(members) > 8 {
 		return ErrInvalidChannelsResponse
@@ -535,14 +535,29 @@ func (s *Channels) ExistingDirect(ctx context.Context, currentUserID, peerID str
 		}
 		match, found = channel, true
 	}
+	if !found {
+		return Channel{}, false, nil
+	}
+	members, err := s.exactConversationMemberIDs(ctx, match.ID)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	expected := []string{currentUserID}
+	if peerID != currentUserID {
+		expected = append(expected, peerID)
+	}
+	slices.Sort(expected)
+	if !slices.Equal(members, expected) {
+		return Channel{}, false, ErrInvalidChannelsResponse
+	}
 	return match, found, nil
 }
 
-func (s *Channels) exactGroupMemberIDs(ctx context.Context, channelID string) ([]string, error) {
+func (s *Channels) exactConversationMemberIDs(ctx context.Context, channelID string) ([]string, error) {
 	if !isSafePostID(channelID) {
 		return nil, ErrInvalidChannelRequest
 	}
-	var decoded groupMemberList
+	var decoded conversationMemberList
 	path := "/channels/" + url.PathEscape(channelID) + "/members?page=0&per_page=9"
 	if err := s.client.Get(ctx, path, &decoded); err != nil {
 		return nil, err
@@ -598,7 +613,7 @@ func (s *Channels) ExistingGroup(ctx context.Context, currentUserID string, peer
 	if !found {
 		return Channel{}, false, nil
 	}
-	members, err := s.exactGroupMemberIDs(ctx, match.ID)
+	members, err := s.exactConversationMemberIDs(ctx, match.ID)
 	if err != nil {
 		return Channel{}, false, err
 	}

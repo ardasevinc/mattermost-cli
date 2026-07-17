@@ -439,12 +439,15 @@ func TestExistingDirectFindsExactPairInEitherOrder(t *testing.T) {
 	for _, name := range []string{"user__peer", "peer__user"} {
 		t.Run(name, func(t *testing.T) {
 			payload := `[{"id":"other","team_id":"","type":"D","name":"user__someone","display_name":""},{"id":"wanted","team_id":"","type":"D","name":"` + name + `","display_name":""}]`
-			f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": payload}}
+			f := &fakeChannelTransport{responses: map[string]string{
+				"/users/user/channels":                       payload,
+				"/channels/wanted/members?page=0&per_page=9": `[{"channel_id":"wanted","user_id":"peer"},{"channel_id":"wanted","user_id":"user"}]`,
+			}}
 			got, found, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer")
 			if err != nil || !found || got.ID != "wanted" {
 				t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
 			}
-			if !reflect.DeepEqual(f.paths, []string{"/users/user/channels"}) {
+			if !reflect.DeepEqual(f.paths, []string{"/users/user/channels", "/channels/wanted/members?page=0&per_page=9"}) {
 				t.Fatalf("paths=%v", f.paths)
 			}
 		})
@@ -460,10 +463,23 @@ func TestExistingDirectReturnsCleanNone(t *testing.T) {
 }
 
 func TestExistingDirectPreservesCanonicalSelfDM(t *testing.T) {
-	f := &fakeChannelTransport{responses: map[string]string{"/users/user/channels": `[{"id":"self","team_id":"","type":"D","name":"user__user","display_name":""}]`}}
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels":                     `[{"id":"self","team_id":"","type":"D","name":"user__user","display_name":""}]`,
+		"/channels/self/members?page=0&per_page=9": `[{"channel_id":"self","user_id":"user"}]`,
+	}}
 	got, found, err := NewChannels(f).ExistingDirect(context.Background(), "user", "user")
 	if err != nil || !found || got.ID != "self" {
 		t.Fatalf("channel=%#v found=%v error=%v", got, found, err)
+	}
+}
+
+func TestExistingDirectRejectsStaleNameWithMissingPeerMembership(t *testing.T) {
+	f := &fakeChannelTransport{responses: map[string]string{
+		"/users/user/channels":                       `[{"id":"wanted","team_id":"","type":"D","name":"user__peer","display_name":""}]`,
+		"/channels/wanted/members?page=0&per_page=9": `[{"channel_id":"wanted","user_id":"user"}]`,
+	}}
+	if _, _, err := NewChannels(f).ExistingDirect(context.Background(), "user", "peer"); !errors.Is(err, ErrInvalidChannelsResponse) {
+		t.Fatalf("error=%v", err)
 	}
 }
 
