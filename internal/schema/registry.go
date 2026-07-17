@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -100,35 +101,109 @@ func (r *Registry) Show(id string) ([]byte, error) {
 }
 
 func (r *Registry) Validate(id string, input io.Reader) error {
+	_, err := r.ReadAndValidate(id, input)
+	return err
+}
+
+// ReadAndValidate consumes one bounded JSON document, validates it, and returns
+// the exact bytes consumed so callers can decode the already-validated input
+// without reading a potentially non-repeatable source twice.
+func (r *Registry) ReadAndValidate(id string, input io.Reader) ([]byte, error) {
 	compiled, ok := r.compiled[id]
 	if !ok {
-		return fmt.Errorf("unknown schema")
+		return nil, fmt.Errorf("unknown schema")
 	}
 	limited := io.LimitReader(input, maxDocumentBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return &InputReadError{err: err}
+		return nil, &InputReadError{err: err}
 	}
 	if len(data) > maxDocumentBytes {
-		return fmt.Errorf("JSON document exceeds %d bytes", maxDocumentBytes)
+		return nil, fmt.Errorf("JSON document exceeds %d bytes", maxDocumentBytes)
+	}
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("decode JSON document: invalid UTF-8")
+	}
+	if err := rejectUnpairedSurrogateEscapes(data); err != nil {
+		return nil, fmt.Errorf("decode JSON document: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	var document any
 	if err := decoder.Decode(&document); err != nil {
-		return fmt.Errorf("decode JSON document: %w", err)
+		return nil, fmt.Errorf("decode JSON document: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("decode JSON document: trailing JSON value")
+			return nil, fmt.Errorf("decode JSON document: trailing JSON value")
 		}
-		return fmt.Errorf("decode JSON document trailer: %w", err)
+		return nil, fmt.Errorf("decode JSON document trailer: %w", err)
 	}
 	if err := compiled.Validate(document); err != nil {
-		return fmt.Errorf("document does not match %s", id)
+		return nil, fmt.Errorf("document does not match %s", id)
+	}
+	return bytes.Clone(data), nil
+}
+
+// encoding/json replaces unpaired UTF-16 surrogate escapes with U+FFFD. Reject
+// them first so validation never changes the meaning of caller-controlled text.
+func rejectUnpairedSurrogateEscapes(data []byte) error {
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		for i++; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) {
+				return nil // the JSON decoder reports the syntax error
+			}
+			if data[i] != 'u' || i+4 >= len(data) {
+				continue
+			}
+			value, ok := hexQuad(data[i+1 : i+5])
+			if !ok {
+				continue
+			}
+			i += 4
+			if value >= 0xdc00 && value <= 0xdfff {
+				return fmt.Errorf("unpaired UTF-16 surrogate escape")
+			}
+			if value < 0xd800 || value > 0xdbff {
+				continue
+			}
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return fmt.Errorf("unpaired UTF-16 surrogate escape")
+			}
+			low, ok := hexQuad(data[i+3 : i+7])
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired UTF-16 surrogate escape")
+			}
+			i += 6
+		}
 	}
 	return nil
+}
+
+func hexQuad(value []byte) (uint16, bool) {
+	var out uint16
+	for _, c := range value {
+		out <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			out |= uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			out |= uint16(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			out |= uint16(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return out, true
 }
 
 func logicalIdentifier(document map[string]any) (string, bool) {

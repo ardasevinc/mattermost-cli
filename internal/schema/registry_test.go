@@ -4,12 +4,54 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
 
 	publicschemas "github.com/ardasevinc/mattermost-cli/schemas"
 )
+
+func TestReadAndValidateReturnsExactDocument(t *testing.T) {
+	r, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(" \n" + `{"schema":"mm/v2/stage-cancel-request","requestId":"r","stageId":"stg_abcdefghijklmnopqrstuvwxyzABCDEF","expectedRevision":1,"expectedDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}` + "\n")
+	got, err := r.ReadAndValidate("mm/v2/stage-cancel-request", bytes.NewReader(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, document) {
+		t.Fatalf("bytes changed: %q", got)
+	}
+	got[0] = 'x'
+	second, err := r.ReadAndValidate("mm/v2/stage-cancel-request", bytes.NewReader(document))
+	if err != nil || !bytes.Equal(second, document) {
+		t.Fatalf("returned bytes were not independent: %q, %v", second, err)
+	}
+}
+
+func TestValidateRejectsInvalidUnicodeWithoutReplacement(t *testing.T) {
+	r, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := `{"schema":"mm/v2/stage-request","persist":true,"requestId":"r","operation":"edit_post","target":{"kind":"post","postId":"p"},"body":"%s","emoji":null,"attachments":[]}`
+	invalidUTF8 := []byte(fmt.Sprintf(base, "x"))
+	invalidUTF8[bytes.Index(invalidUTF8, []byte(`"x"`))+1] = 0xff
+	for name, document := range map[string][]byte{
+		"raw invalid UTF-8":   invalidUTF8,
+		"lone high surrogate": []byte(fmt.Sprintf(base, `\ud800`)),
+		"lone low surrogate":  []byte(fmt.Sprintf(base, `\udc00`)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := r.Validate("mm/v2/stage-request", bytes.NewReader(document)); err == nil {
+				t.Fatal("invalid Unicode accepted")
+			}
+		})
+	}
+}
 
 func TestEmbeddedExamplesValidate(t *testing.T) {
 	registry, err := Load()
