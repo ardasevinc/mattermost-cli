@@ -54,6 +54,7 @@ func TestStageMachineSchemasRejectContradictionsAndLeaks(t *testing.T) {
 			stageRequest(true, "r1", "resolve_dm", `{"kind":"user","username":"arda"}`, "null", `"wave"`, `[]`),
 			stageRequest(true, "r1", "resolve_group_dm", `{"kind":"users","usernames":["a","a"]}`, "null", "null", `[]`),
 			stageRequest(true, "r1", "resolve_group_dm", `{"kind":"users","usernames":["a"]}`, "null", "null", `[]`),
+			stageRequest(true, "r1", "resolve_group_dm", `{"kind":"users","usernames":["a","b","c","d","e","f","g","h"]}`, "null", "null", `[]`),
 			stageRequest(true, "r1", "create_post", conversationTarget("dm", "username", "arda", "null"), `"hello"`, "null", `[{"path":"/tmp/a","remoteFilename":null,"mediaType":null,"contentDigest":"`+digest+`"}]`),
 		},
 		"mm/v2/stages": {
@@ -102,6 +103,7 @@ func TestStageRequestAcceptsEveryTargetBranch(t *testing.T) {
 		stageRequest(true, "r9", "unreact", `{"kind":"post","postId":"p"}`, "null", `"wave"`, `[]`),
 		stageRequest(true, "r10", "resolve_dm", `{"kind":"user","username":"arda"}`, "null", "null", `[]`),
 		stageRequest(true, "r11", "resolve_group_dm", `{"kind":"users","usernames":["arda","hakan"]}`, "null", "null", `[]`),
+		stageRequest(true, "r12", "resolve_group_dm", `{"kind":"users","usernames":["a","b","c","d","e","f","g"]}`, "null", "null", `[]`),
 		stageRequest(false, "null", "create_post", conversationTarget("channel", "id", "channel-id", "null"), "null", "null", `[]`),
 	}
 	for _, document := range valid {
