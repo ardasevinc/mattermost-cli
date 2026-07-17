@@ -54,6 +54,7 @@ func main() {
 			}, scenario)
 		}
 		finish(scenario.Name, err)
+		return
 	}
 	if len(command) != 0 || *oraclePath == "" || *candidatePath == "" {
 		_, _ = fmt.Fprintln(os.Stderr, "usage: conformance --pair FILE [--cwd DIR] --oracle PATH [--oracle-prefix ARG...] --candidate PATH [--candidate-prefix ARG...]")
