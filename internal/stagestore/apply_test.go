@@ -5,11 +5,13 @@ package stagestore
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func createApplyStage(t *testing.T, s *Store, plan string) CreateRecord {
@@ -314,7 +316,7 @@ func TestApplyValidatedResultsBindTheClaimedRemoteEffect(t *testing.T) {
 		result      string
 	}{
 		{"edit", EditPost, []byte("edited"), `{"kind":"post","postId":"target-post"}`, `{"steps":[{"ordinal":1,"type":"edit_post","condition":"always"}]}`, `{"postId":"other-post","updateAt":1784250000000}`},
-		{"delete", DeletePost, nil, `{"kind":"post","postId":"target-post"}`, `{"steps":[{"ordinal":1,"type":"delete_post","condition":"always"}]}`, `{"postId":"other-post","deleteAt":1784250000000}`},
+		{"delete", DeletePost, nil, `{"kind":"post","postId":"target-post"}`, `{"steps":[{"ordinal":1,"type":"delete_post","condition":"always"}]}`, `{"postId":"other-post"}`},
 		{"reaction", React, nil, `{"kind":"reaction","postId":"target-post"}`, `{"steps":[{"ordinal":1,"type":"add_reaction","condition":"if_missing"}]}`, `{"postId":"other-post"}`},
 		{"conversation", ResolveDM, nil, `{"kind":"conversation","channelId":null,"participantIds":["peer-1"]}`, `{"steps":[{"ordinal":1,"type":"resolve_conversation","condition":"if_missing"}]}`, `{"channelId":"channel-1","participantIds":["other-peer"]}`},
 	} {
@@ -336,6 +338,155 @@ func TestApplyValidatedResultsBindTheClaimedRemoteEffect(t *testing.T) {
 				t.Fatalf("mismatched result=%v", validateErr)
 			}
 		})
+	}
+	deleteStage, err := s.Create(context.Background(), CreateInput{RequestDigest: sha256.Sum256([]byte("valid-delete")), Operation: DeletePost,
+		ServerURL: "https://mattermost.example/api/v4", ServerID: "server-1", UserID: "user-1",
+		Content: RevisionContent{Destination: json.RawMessage(`{"kind":"post","postId":"target-post"}`), Plan: json.RawMessage(`{"steps":[{"ordinal":1,"type":"delete_post","condition":"always"}]}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteAttempt, err := s.ClaimApply(context.Background(), claimInput(deleteStage.Stage, "", RecoveryModeOrdinary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginDispatch(context.Background(), deleteAttempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.MarkStepValidated(context.Background(), deleteAttempt.ID, 1, json.RawMessage(`{"postId":"target-post"}`)); err != nil {
+		t.Fatalf("valid delete result rejected: %v", err)
+	}
+}
+
+func TestStatusConfirmedDeleteResultMigrationUpgradesVersionSixStore(t *testing.T) {
+	path := testPath(t)
+	original := migrations
+	migrations = append([]migration(nil), original[:6]...)
+	t.Cleanup(func() { migrations = original })
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createDelete := func(label string) CreateRecord {
+		t.Helper()
+		created, createErr := s.Create(context.Background(), CreateInput{RequestDigest: sha256.Sum256([]byte(label)), Operation: DeletePost,
+			ServerURL: "https://mattermost.example/api/v4", ServerID: "server-1", UserID: "user-1",
+			Content: RevisionContent{Destination: json.RawMessage(`{"kind":"post","postId":"target-post"}`), Plan: json.RawMessage(`{"steps":[{"ordinal":1,"type":"delete_post","condition":"always"}]}`)}})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return created
+	}
+	created := createDelete("migration-delete-success")
+	attempt, err := s.ClaimApply(context.Background(), claimInput(created.Stage, "", RecoveryModeOrdinary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginDispatch(context.Background(), attempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	var startedRaw string
+	if err = s.db.QueryRow(`SELECT started_at FROM apply_steps WHERE attempt_id=? AND ordinal=1`, attempt.ID).Scan(&startedRaw); err != nil {
+		t.Fatal(err)
+	}
+	started, err := parseTime(startedRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := time.Now().UTC()
+	legacyResult := json.RawMessage(`{"postId":"target-post","deleteAt":1784250000000}`)
+	legacyReceipt := ApplyReceipt{
+		Schema: "mm/v2/apply-receipt", AttemptID: attempt.ID, StageID: attempt.StageID, Revision: attempt.Revision,
+		SemanticDigest: hex.EncodeToString(attempt.SemanticDigest[:]), Operation: DeletePost, RecoveryMode: RecoveryModeOrdinary,
+		Destination: created.Destination, Outcome: OutcomeSucceeded, Recovery: RecoveryForbidden, StartedAt: attempt.StartedAt, RecordedAt: ended,
+		Steps: []ApplyStep{{Ordinal: 1, Kind: "delete_post", Condition: "always", State: StepValidated, Result: legacyResult, StartedAt: &started, EndedAt: &ended}},
+	}
+	legacyReceiptRaw, err := json.Marshal(legacyReceipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	stamp := formatTime(ended)
+	if _, err = tx.Exec(`UPDATE apply_steps SET state='response_validated',result_json=?,ended_at=? WHERE attempt_id=? AND ordinal=1`, string(legacyResult), stamp, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO apply_events(attempt_id,ordinal,event,recorded_at) VALUES(?,1,'response_validated',?)`, attempt.ID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`UPDATE apply_attempts SET outcome='succeeded',ended_at=? WHERE id=?`, stamp, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`UPDATE stages SET lifecycle='completed',recovery='forbidden',claim_attempt_id=NULL,updated_at=? WHERE id=?`, stamp, attempt.StageID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO apply_receipts(attempt_id,receipt_json,recorded_at) VALUES(?,?,?)`, attempt.ID, string(legacyReceiptRaw), stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	rejectedStage := createDelete("migration-delete-rejected")
+	rejectedAttempt, err := s.ClaimApply(context.Background(), claimInput(rejectedStage.Stage, "", RecoveryModeOrdinary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginDispatch(context.Background(), rejectedAttempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.MarkStepRejected(context.Background(), rejectedAttempt.ID, 1, json.RawMessage(`{"status":403}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FinalizeApply(context.Background(), rejectedAttempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	unknownStage := createDelete("migration-delete-unknown")
+	unknownAttempt, err := s.ClaimApply(context.Background(), claimInput(unknownStage.Stage, "", RecoveryModeOrdinary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginDispatch(context.Background(), unknownAttempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.MarkStepUnknown(context.Background(), unknownAttempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FinalizeApply(context.Background(), unknownAttempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrations = original
+	s, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	replayed, err := s.FinalizeApply(context.Background(), attempt.ID)
+	if err != nil || !replayed.Replay || len(replayed.Steps) != 1 || string(replayed.Steps[0].Result) != `{"postId":"target-post"}` {
+		t.Fatalf("normalized replay = %+v / %v", replayed, err)
+	}
+	var storedReceipt string
+	if err = s.db.QueryRow(`SELECT receipt_json FROM apply_receipts WHERE attempt_id=?`, attempt.ID).Scan(&storedReceipt); err != nil || strings.Contains(storedReceipt, "deleteAt") {
+		t.Fatalf("stored legacy receipt = %q / %v", storedReceipt, err)
+	}
+	if _, err = s.db.Exec(`UPDATE apply_receipts SET receipt_json=receipt_json WHERE attempt_id=?`, attempt.ID); err == nil {
+		t.Fatal("receipt immutability trigger was not restored")
+	}
+	for _, preserved := range []struct {
+		name      string
+		attemptID string
+		state     StepState
+		result    string
+	}{{"rejected", rejectedAttempt.ID, StepRejected, `{"status":403}`}, {"unknown", unknownAttempt.ID, StepUnknown, ""}} {
+		replay, replayErr := s.FinalizeApply(context.Background(), preserved.attemptID)
+		if replayErr != nil || !replay.Replay || len(replay.Steps) != 1 || replay.Steps[0].State != preserved.state || string(replay.Steps[0].Result) != preserved.result {
+			t.Fatalf("%s replay = %+v / %v", preserved.name, replay, replayErr)
+		}
 	}
 }
 

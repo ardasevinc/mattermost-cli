@@ -315,4 +315,51 @@ WHEN NEW.current_revision IS NOT OLD.current_revision AND NOT (
   AND EXISTS(SELECT 1 FROM stage_revisions r WHERE r.stage_id=OLD.id AND r.revision=NEW.current_revision AND r.state='current')
 )
 BEGIN SELECT RAISE(ABORT, 'invalid current stage revision transition'); END;
+`}, {version: 7, name: "status-confirmed-delete-results", sql: `
+DROP TRIGGER apply_step_result_transition_valid;
+DROP TRIGGER apply_step_state_transition_required;
+DROP TRIGGER apply_receipts_immutable_update;
+UPDATE apply_steps
+SET result_json=json_object('postId',json_extract(result_json,'$.postId'))
+WHERE state='response_validated' AND kind='delete_post';
+UPDATE apply_receipts
+SET receipt_json=json_set(receipt_json,'$.steps[0].result',json_object('postId',json_extract(receipt_json,'$.steps[0].result.postId')))
+WHERE json_extract(receipt_json,'$.operation')='delete_post'
+  AND json_extract(receipt_json,'$.steps[0].kind')='delete_post'
+  AND json_extract(receipt_json,'$.steps[0].state')='response_validated'
+  AND json_type(receipt_json,'$.steps[0].result.deleteAt')='integer';
+CREATE TRIGGER apply_step_state_transition_required BEFORE UPDATE ON apply_steps
+WHEN NEW.state IS OLD.state
+BEGIN SELECT RAISE(ABORT, 'apply step history is immutable'); END;
+CREATE TRIGGER apply_receipts_immutable_update BEFORE UPDATE ON apply_receipts BEGIN SELECT RAISE(ABORT, 'apply receipts are immutable'); END;
+CREATE TRIGGER apply_step_result_transition_valid BEFORE UPDATE ON apply_steps
+WHEN NEW.state IN ('response_validated','rejected','skipped') AND NOT EXISTS(
+  SELECT 1 FROM apply_attempts a JOIN stages s ON s.id=a.stage_id
+    JOIN stage_revisions r ON r.stage_id=a.stage_id AND r.revision=a.revision
+  WHERE a.id=NEW.attempt_id AND json_type(NEW.result_json)='object' AND (
+    NEW.state='rejected' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.status')='integer' AND json_extract(NEW.result_json,'$.status') BETWEEN 400 AND 499
+    OR NEW.state='skipped' AND NEW.condition='if_missing' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.reason')='text' AND json_extract(NEW.result_json,'$.reason')='already_satisfied'
+    OR NEW.state='response_validated' AND NEW.kind='upload_attachment' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.fileId')='text' AND length(json_extract(NEW.result_json,'$.fileId'))>0
+    OR NEW.state='response_validated' AND NEW.kind='create_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=5
+      AND json_type(NEW.result_json,'$.postId')='text' AND length(json_extract(NEW.result_json,'$.postId'))>0
+      AND json_type(NEW.result_json,'$.createAt')='integer' AND json_extract(NEW.result_json,'$.createAt')>0
+      AND json_extract(NEW.result_json,'$.channelId')=json_extract(r.destination_json,'$.channelId')
+      AND json_extract(NEW.result_json,'$.userId')=s.user_id AND json_extract(NEW.result_json,'$.pendingPostId')=a.pending_post_id
+    OR NEW.state='response_validated' AND NEW.kind='edit_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=2
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+      AND json_type(NEW.result_json,'$.updateAt')='integer' AND json_extract(NEW.result_json,'$.updateAt')>0
+    OR NEW.state='response_validated' AND NEW.kind='delete_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+    OR NEW.state='response_validated' AND NEW.kind IN ('add_reaction','remove_reaction') AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+    OR NEW.state='response_validated' AND NEW.kind='resolve_conversation' AND (SELECT count(*) FROM json_each(NEW.result_json))=2
+      AND json_type(NEW.result_json,'$.channelId')='text' AND length(json_extract(NEW.result_json,'$.channelId'))>0
+      AND (json_extract(r.destination_json,'$.channelId') IS NULL OR json_extract(NEW.result_json,'$.channelId')=json_extract(r.destination_json,'$.channelId'))
+      AND json_extract(NEW.result_json,'$.participantIds')=json_extract(r.destination_json,'$.participantIds')
+  )
+)
+BEGIN SELECT RAISE(ABORT, 'invalid apply step result binding'); END;
 `}}

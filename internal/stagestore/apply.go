@@ -639,10 +639,9 @@ func canonicalStepResult(ctx context.Context, q queryer, attemptID string, ordin
 		return marshalCanonical(result)
 	case "delete_post":
 		var result struct {
-			PostID   string `json:"postId"`
-			DeleteAt int64  `json:"deleteAt"`
+			PostID string `json:"postId"`
 		}
-		if decodeNarrow(canonical, &result) != nil || !validReceiptID(result.PostID) || !validRemoteTimestamp(result.DeleteAt) || destination.PostID == nil || result.PostID != *destination.PostID {
+		if decodeNarrow(canonical, &result) != nil || !validReceiptID(result.PostID) || destination.PostID == nil || result.PostID != *destination.PostID {
 			return nil, ErrInvalid
 		}
 		return marshalCanonical(result)

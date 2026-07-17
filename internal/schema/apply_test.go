@@ -229,6 +229,38 @@ func TestApplyReceiptAcceptsRealisticEditProjection(t *testing.T) {
 	}
 }
 
+func TestApplyReceiptAcceptsStatusConfirmedDeleteProjection(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := fs.ReadFile(publicschemas.FS, "v2/examples/apply-receipt.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	makeDeleteReceipt(doc)
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(encoded)); err != nil {
+		t.Fatalf("rejected status-confirmed delete receipt: %s", encoded)
+	}
+	step := doc["steps"].([]any)[0].(map[string]any)
+	step["result"].(map[string]any)["deleteAt"] = float64(1784253600000)
+	encoded, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(encoded)); err == nil {
+		t.Fatalf("accepted invented delete timestamp: %s", encoded)
+	}
+}
+
 func makeEditReceipt(doc map[string]any, resultPostID string) {
 	doc["operation"] = "edit_post"
 	destination := doc["destination"].(map[string]any)
@@ -240,4 +272,17 @@ func makeEditReceipt(doc map[string]any, resultPostID string) {
 	destination["rootPostId"] = nil
 	destination["postState"] = map[string]any{"authorUserId": "user-1", "updateAt": float64(1784253599000), "contentDigest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	doc["steps"] = []any{map[string]any{"ordinal": float64(1), "kind": "edit_post", "condition": "always", "state": "response_validated", "result": map[string]any{"postId": resultPostID, "updateAt": float64(1784253600000)}, "startedAt": "2026-07-17T02:00:00Z", "endedAt": "2026-07-17T02:00:01Z"}}
+}
+
+func makeDeleteReceipt(doc map[string]any) {
+	doc["operation"] = "delete_post"
+	destination := doc["destination"].(map[string]any)
+	destination["kind"] = "post"
+	destination["channelType"] = "private"
+	destination["teamId"] = "team-1"
+	destination["participantIds"] = []any{}
+	destination["postId"] = "post-1"
+	destination["rootPostId"] = nil
+	destination["postState"] = map[string]any{"authorUserId": "user-1", "updateAt": float64(1784253599000), "contentDigest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	doc["steps"] = []any{map[string]any{"ordinal": float64(1), "kind": "delete_post", "condition": "always", "state": "response_validated", "result": map[string]any{"postId": "post-1"}, "startedAt": "2026-07-17T02:00:00Z", "endedAt": "2026-07-17T02:00:01Z"}}
 }
