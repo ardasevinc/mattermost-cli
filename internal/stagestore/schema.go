@@ -97,4 +97,10 @@ CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests B
 DROP TRIGGER local_requests_immutable_update;
 UPDATE local_requests SET request_schema='mm/v2/legacy-stage-revise-conflict' WHERE request_schema='mm/v2/stage-revise-request';
 CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
+`}, {version: 5, name: "revision-plan-follows-composition", sql: `
+DROP TRIGGER stage_revision_binding_immutable;
+CREATE TRIGGER stage_revision_binding_immutable BEFORE INSERT ON stage_revisions
+WHEN NEW.revision > 1 AND EXISTS(SELECT 1 FROM stage_revisions WHERE stage_id=NEW.stage_id)
+ AND NEW.destination_json != (SELECT destination_json FROM stage_revisions WHERE stage_id=NEW.stage_id ORDER BY revision LIMIT 1)
+BEGIN SELECT RAISE(ABORT, 'stage destination is immutable'); END;
 `}}

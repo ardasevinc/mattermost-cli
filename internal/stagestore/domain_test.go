@@ -40,7 +40,7 @@ func TestFindCreateUsesExactReceiptRevisionAndFailsClosedOnCorruption(t *testing
 		t.Fatal(err)
 	}
 	revised, err := s.Revise(context.Background(), ReviseInput{StageID: created.Stage.ID, RequestID: "revise-exact", ExpectedRevision: 1, ExpectedDigest: created.Stage.SemanticDigest,
-		RequestDigest: sha256.Sum256([]byte("revise-exact")), Composition: Composition{Body: []byte("two"), Attachments: in.Content.Attachments}})
+		RequestDigest: sha256.Sum256([]byte("revise-exact")), Composition: Composition{Body: []byte("two"), Plan: in.Content.Plan, Attachments: in.Content.Attachments}})
 	if err != nil || revised.Stage.Revision != 2 {
 		t.Fatalf("revise = %#v/%v", revised, err)
 	}
@@ -211,13 +211,48 @@ func TestCallerIntentMigrationsTombstoneLegacyCreateAndReviseReceipts(t *testing
 		t.Fatalf("legacy revise ID reuse = %v", err)
 	}
 }
+
+func TestRevisionPlanMigrationAllowsPlanChanges(t *testing.T) {
+	path := testPath(t)
+	original := migrations
+	migrations = append([]migration(nil), original[:4]...)
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.Create(context.Background(), createInput("migration-plan", "one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrations = original
+	t.Cleanup(func() { migrations = original })
+	s, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	in := reviseInput(created.Stage, "migration-revise", "two")
+	in.Composition.Plan = json.RawMessage(`{"steps":[{"kind":"create_post","revision":2}]}`)
+	revised, err := s.Revise(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := s.Show(context.Background(), revised.Stage.ID)
+	if err != nil || string(detail.Plan) != `{"steps":[{"kind":"create_post","revision":2}]}` {
+		t.Fatalf("detail=%+v err=%v", detail, err)
+	}
+}
+
 func reviseInput(stage StageSummary, request, body string) ReviseInput {
 	content := createInput("", body).Content
 	return ReviseInput{StageID: stage.ID, RequestID: request, ExpectedRevision: stage.Revision, ExpectedDigest: stage.SemanticDigest,
-		RequestDigest: sha256.Sum256([]byte(request + "\x00" + body)), Composition: Composition{Body: content.Body, Attachments: content.Attachments}}
+		RequestDigest: sha256.Sum256([]byte(request + "\x00" + body)), Composition: Composition{Body: content.Body, Plan: content.Plan, Attachments: content.Attachments}}
 }
 
-func TestRevisePreservesImmutableDestinationAndPlan(t *testing.T) {
+func TestRevisePreservesImmutableDestinationAndAcceptsDerivedPlan(t *testing.T) {
 	s := openDomainStore(t)
 	input := createInput("", "one")
 	input.Content.Destination = json.RawMessage(`{ "binding": {"postId":"post-1"}, "channelId":"channel-1" }`)
@@ -238,8 +273,8 @@ func TestRevisePreservesImmutableDestinationAndPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(after.Destination) != string(before.Destination) || string(after.Plan) != string(before.Plan) {
-		t.Fatalf("binding changed: destination %s -> %s, plan %s -> %s", before.Destination, after.Destination, before.Plan, after.Plan)
+	if string(after.Destination) != string(before.Destination) || string(after.Plan) != `{"steps":[{"kind":"create_post"}]}` || string(after.Plan) == string(before.Plan) {
+		t.Fatalf("unexpected revision binding: destination %s -> %s, plan %s -> %s", before.Destination, after.Destination, before.Plan, after.Plan)
 	}
 }
 
@@ -257,7 +292,7 @@ func TestReviseCallerIntentReplayIgnoresBoundFileDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry := first
-	retry.Composition = Composition{Body: []byte("different bound bytes"), Attachments: []Attachment{attachment("changed.txt")}}
+	retry.Composition = Composition{Body: []byte("different bound bytes"), Plan: first.Composition.Plan, Attachments: []Attachment{attachment("changed.txt")}}
 	replayed, err := s.Revise(context.Background(), retry)
 	if err != nil || !replayed.Replay || replayed.Stage != revised.Stage {
 		t.Fatalf("replayed=%+v err=%v want=%+v", replayed, err, revised)

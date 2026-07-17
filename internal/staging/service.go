@@ -228,6 +228,13 @@ func attachmentPlan(count int) Plan {
 	return Plan{steps}
 }
 
+func compositionPlan(operation stagestore.Operation, attachmentCount int) Plan {
+	if operation == stagestore.CreatePost || operation == stagestore.Reply {
+		return attachmentPlan(attachmentCount)
+	}
+	return postPlan(operation)
+}
+
 func marshalSemantics(preview Preview) ([]byte, []byte, error) {
 	destination, err := json.Marshal(preview.Destination)
 	if err != nil {

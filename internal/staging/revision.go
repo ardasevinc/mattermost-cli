@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 
 	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
@@ -118,8 +119,12 @@ func (r *Reviser) Revise(ctx context.Context, in ReviseInput) (RevisionResult, e
 	if err := ctx.Err(); err != nil {
 		return RevisionResult{}, err
 	}
+	plan, err := json.Marshal(compositionPlan(detail.Operation, len(attachments)))
+	if err != nil {
+		return RevisionResult{}, ErrStore
+	}
 	stored, err := r.store.Revise(ctx, stagestore.ReviseInput{StageID: in.StageID, RequestID: in.RequestID, ExpectedRevision: in.ExpectedRevision,
-		ExpectedDigest: in.ExpectedDigest, RequestDigest: requestDigest, Revive: in.Revive, Composition: stagestore.Composition{Body: bytes.Clone(body), Attachments: attachments}})
+		ExpectedDigest: in.ExpectedDigest, RequestDigest: requestDigest, Revive: in.Revive, Composition: stagestore.Composition{Body: bytes.Clone(body), Plan: plan, Attachments: attachments}})
 	if err != nil {
 		return RevisionResult{}, mapRevisionStoreError(err)
 	}

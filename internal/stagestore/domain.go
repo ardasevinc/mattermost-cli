@@ -86,8 +86,9 @@ type RevisionContent struct {
 	Attachments []Attachment
 }
 type Composition struct {
-	Body        []byte       `json:"body,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
+	Body        []byte          `json:"body,omitempty"`
+	Plan        json.RawMessage `json:"plan"`
+	Attachments []Attachment    `json:"attachments,omitempty"`
 }
 type CreateInput struct {
 	RequestID                   string
@@ -248,7 +249,7 @@ func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, err
 	if err != nil {
 		return MutationResult{}, ErrInvalid
 	}
-	content := RevisionContent{composition.Body, bytes.Clone(base.Destination), bytes.Clone(base.Plan), composition.Attachments}
+	content := RevisionContent{composition.Body, bytes.Clone(base.Destination), composition.Plan, composition.Attachments}
 	requestDigest := in.RequestDigest
 	if in.RequestID != "" && requestDigest == ([32]byte{}) {
 		return MutationResult{}, ErrInvalid
@@ -580,15 +581,20 @@ func normalizeContent(op Operation, v RevisionContent) (RevisionContent, error) 
 		return v, err
 	}
 	v.Destination, v.Plan = destination, plan
-	composition, err := normalizeComposition(op, Composition{v.Body, v.Attachments})
+	composition, err := normalizeComposition(op, Composition{Body: v.Body, Plan: v.Plan, Attachments: v.Attachments})
 	if err != nil {
 		return v, err
 	}
-	v.Body, v.Attachments = composition.Body, composition.Attachments
+	v.Body, v.Plan, v.Attachments = composition.Body, composition.Plan, composition.Attachments
 	return v, nil
 }
 func normalizeComposition(op Operation, v Composition) (Composition, error) {
 	v.Body = bytes.Clone(v.Body)
+	plan, err := canonicalObject(v.Plan)
+	if err != nil {
+		return v, err
+	}
+	v.Plan = plan
 	v.Attachments = append([]Attachment(nil), v.Attachments...)
 	if len(v.Attachments) > maxAttachments {
 		return v, ErrInvalid

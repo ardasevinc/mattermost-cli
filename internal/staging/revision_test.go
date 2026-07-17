@@ -66,6 +66,9 @@ func TestReviserPreservesBodyAttachmentOrderAndDestinationSnapshot(t *testing.T)
 	if err != nil || store.reviseCalls != 1 || string(store.reviseIn.Composition.Body) != " exact body\n" || store.reviseIn.Composition.Attachments[1].RemoteFilename != "b" {
 		t.Fatalf("unexpected revision: result=%+v err=%v calls=%d input=%+v", result, err, store.reviseCalls, store.reviseIn)
 	}
+	if string(store.reviseIn.Composition.Plan) != `{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"upload_attachment","condition":"always"},{"ordinal":3,"type":"create_post","condition":"always"}]}` {
+		t.Fatalf("revision plan = %s", store.reviseIn.Composition.Plan)
+	}
 	store.detail.Destination[0] = 'x'
 	if string(result.Destination) != `{"kind":"conversation"}` {
 		t.Fatal("result destination aliases store detail")
@@ -147,10 +150,32 @@ func TestReviserNilBodyAndAttachmentsPreserveCurrentComposition(t *testing.T) {
 	if err != nil || string(store.reviseIn.Composition.Body) != "existing body" || len(store.reviseIn.Composition.Attachments) != 1 {
 		t.Fatalf("err=%v input=%+v", err, store.reviseIn)
 	}
+	if string(store.reviseIn.Composition.Plan) != `{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"create_post","condition":"always"}]}` {
+		t.Fatalf("preserved attachment plan = %s", store.reviseIn.Composition.Plan)
+	}
 	store.detail.Body[0] = 'X'
 	store.detail.Attachments[0].SuppliedPath = "/changed"
 	if string(store.reviseIn.Composition.Body) != "existing body" || store.reviseIn.Composition.Attachments[0].SuppliedPath != "/a" {
 		t.Fatal("preserved composition aliases store detail")
+	}
+}
+
+func TestReviserClearingAttachmentsRemovesUploadSteps(t *testing.T) {
+	store, digest := revisionFixture(stagestore.CreatePost)
+	store.detail.Body = []byte("existing body")
+	store.detail.Attachments = []stagestore.Attachment{{SuppliedPath: "/a", CanonicalPath: "/a", RemoteFilename: "a", ByteLength: 1, ContentDigest: [32]byte{1}}}
+	r, _ := NewReviser(nil, store, func(_ context.Context, in []stageinput.Attachment, _ [][]byte) ([]stagestore.Attachment, error) {
+		if len(in) != 0 {
+			t.Fatalf("attachment input = %#v", in)
+		}
+		return []stagestore.Attachment{}, nil
+	})
+	_, err := r.Revise(context.Background(), ReviseInput{StageID: "stage-1", ExpectedRevision: 1, ExpectedDigest: digest, Attachments: []Attachment{}})
+	if err != nil || len(store.reviseIn.Composition.Attachments) != 0 {
+		t.Fatalf("err=%v input=%+v", err, store.reviseIn)
+	}
+	if string(store.reviseIn.Composition.Plan) != `{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}` {
+		t.Fatalf("cleared attachment plan = %s", store.reviseIn.Composition.Plan)
 	}
 }
 
