@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 import path from 'node:path'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -8,6 +10,7 @@ const composeFile = path.join(root, 'tests/e2e/compose.yml')
 const project = `mattermost-cli-e2e-${process.pid}-${randomUUID().slice(0, 8)}`
 const requestedPort = process.env.MM_E2E_PORT || '0'
 const compose = ['compose', '-p', project, '-f', composeFile]
+const goBinary = path.join(os.tmpdir(), `${project}-mm`)
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -98,6 +101,11 @@ try {
   run('bunx', ['vitest', 'run', '--config', 'vitest.e2e.config.ts'], {
     env: { MM_E2E_URL: url, MM_E2E_TOKEN: token },
   })
+  run('go', ['build', '-o', goBinary, './cmd/mm'])
+  run('go', ['test', '-tags=e2e', '-count=1', './tests/e2e'], {
+    env: { MM_E2E_URL: url, MM_E2E_TOKEN: token, MM_E2E_BINARY: goBinary },
+  })
 } finally {
+  rmSync(goBinary, { force: true })
   cleanup()
 }

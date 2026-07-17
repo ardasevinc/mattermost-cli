@@ -21,11 +21,17 @@ go-modules:
 go-build:
     go build -o "${TMPDIR:-/tmp}/mattermost-cli-mm" ./cmd/mm
 
+go-cross-build:
+    @tmp="${TMPDIR:-/tmp}/mattermost-cli-cross"; mkdir -p "$tmp"; for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do os="${target%/*}"; arch="${target#*/}"; echo "building $target"; CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "$tmp/mm-$os-$arch" ./cmd/mm; done
+
+docker-e2e:
+    bun run test:e2e
+
 oracle-smoke:
     git diff --quiet v1.6.0 -- src package.json bun.lock tsconfig.json
     go run ./cmd/conformance --scenario conformance/scenarios/v1/whoami.json --cwd . -- bun src/index.ts
 
-go-gate: go-format-check go-test go-race go-vet go-modules go-build
+go-gate: go-format-check go-test go-race go-vet go-modules go-build go-cross-build
     git diff --check
 
 legacy-gate:
