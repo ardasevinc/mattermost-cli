@@ -95,19 +95,22 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 	if detail.ServerURL != s.serverURL || detail.ServerID != s.serverID {
 		return stagestore.ApplyReceipt{}, ErrTargetDrift
 	}
-	if detail.Operation != stagestore.ResolveDM && detail.Operation != stagestore.ResolveGroupDM && detail.Operation != stagestore.React && detail.Operation != stagestore.Unreact {
+	if !supportedOperation(detail.Operation) {
 		return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
 	}
 	var destination staging.Destination
-	if detail.Operation == stagestore.ResolveDM || detail.Operation == stagestore.ResolveGroupDM {
+	switch detail.Operation {
+	case stagestore.ResolveDM, stagestore.ResolveGroupDM:
 		destination, err = decodeResolveDestination(detail.Operation, detail.Destination, detail.UserID)
-	} else {
+	case stagestore.React, stagestore.Unreact:
 		destination, err = decodeReactionDestination(detail.Destination)
+	default:
+		destination, err = decodePostDestination(detail.Operation, detail.Destination)
 	}
 	if err != nil {
 		return stagestore.ApplyReceipt{}, err
 	}
-	if s.destinationContainsCredential(destination, detail.UserID) {
+	if s.destinationContainsCredential(destination, detail.UserID) || s.rawContainsCredentialValue(detail.Plan) {
 		return stagestore.ApplyReceipt{}, ErrCredential
 	}
 	if in.RequestID != "" {
@@ -125,12 +128,21 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 	if detail.Revision != in.Revision || detail.SemanticDigest != in.ExpectedDigest {
 		return stagestore.ApplyReceipt{}, stagestore.ErrConflict
 	}
+	if s.containsCredential(string(detail.Body)) {
+		return stagestore.ApplyReceipt{}, ErrCredential
+	}
+	if len(detail.Attachments) > 0 {
+		return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
+	}
 	attempt, err := s.store.ClaimApply(ctx, in)
 	if err != nil {
 		return stagestore.ApplyReceipt{}, err
 	}
 	if attempt.Replay {
 		return s.finalizeReceipt(ctx, attempt.ID)
+	}
+	if s.containsCredential(attempt.ID, attempt.PendingPostID) {
+		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, ErrCredential)
 	}
 	current, err := s.users.Current(ctx)
 	if err != nil {
@@ -142,7 +154,18 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 	if detail.Operation == stagestore.React || detail.Operation == stagestore.Unreact {
 		return s.applyReaction(ctx, attempt, detail.Operation, current.ID, destination)
 	}
+	if detail.Operation == stagestore.CreatePost || detail.Operation == stagestore.Reply || detail.Operation == stagestore.EditPost || detail.Operation == stagestore.DeletePost {
+		return s.applyPost(ctx, attempt, detail.Operation, current.ID, destination, detail.Body)
+	}
 	return s.applyConversation(ctx, attempt, detail.Operation, current.ID, destination)
+}
+
+func supportedOperation(operation stagestore.Operation) bool {
+	switch operation {
+	case stagestore.CreatePost, stagestore.Reply, stagestore.EditPost, stagestore.DeletePost, stagestore.React, stagestore.Unreact, stagestore.ResolveDM, stagestore.ResolveGroupDM:
+		return true
+	}
+	return false
 }
 
 func (s *Service) applyConversation(ctx context.Context, attempt stagestore.ApplyAttempt, operation stagestore.Operation, currentUserID string, destination staging.Destination) (stagestore.ApplyReceipt, error) {
@@ -328,6 +351,9 @@ func (s *Service) destinationContainsCredential(destination staging.Destination,
 		if optional != nil {
 			values = append(values, *optional)
 		}
+	}
+	if destination.PostState != nil {
+		values = append(values, destination.PostState.AuthorUserID, destination.PostState.ContentDigest)
 	}
 	return s.containsCredential(values...)
 }

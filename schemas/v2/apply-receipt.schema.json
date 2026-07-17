@@ -68,6 +68,7 @@
       },
       "allOf": [
         { "if": { "properties": { "kind": { "const": "conversation" } } }, "then": { "properties": { "postId": { "type": "null" }, "rootPostId": { "type": "null" }, "emoji": { "type": "null" }, "postState": { "type": "null" }, "reactionPresent": { "type": "null" } } } },
+        { "if": { "properties": { "kind": { "const": "post" } } }, "then": { "properties": { "emoji": { "type": "null" }, "reactionPresent": { "type": "null" } } } },
         { "if": { "properties": { "kind": { "const": "reaction" } } }, "then": { "properties": { "postId": { "$ref": "#/$defs/id" }, "emoji": { "type": "string" }, "postState": { "type": "null" }, "reactionPresent": { "type": "boolean" } } } }
       ]
     },
@@ -104,7 +105,7 @@
         { "if": { "properties": { "state": { "const": "response_validated" } } }, "then": { "properties": { "result": { "not": { "type": "null" } }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
         { "if": { "properties": { "state": { "const": "rejected" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/rejectedResult" }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
         { "if": { "properties": { "state": { "const": "outcome_unknown" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
-        { "if": { "properties": { "state": { "const": "skipped" } } }, "then": { "properties": { "condition": { "const": "if_missing" }, "result": { "$ref": "#/$defs/skippedResult" }, "startedAt": { "type": "null" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "skipped" } } }, "then": { "allOf": [{ "anyOf": [{ "properties": { "condition": { "const": "if_missing" } } }, { "properties": { "kind": { "const": "edit_post" }, "condition": { "const": "always" } } }] }, { "properties": { "result": { "$ref": "#/$defs/skippedResult" }, "startedAt": { "type": "null" }, "endedAt": { "type": "string" } } }] } },
         { "if": { "properties": { "state": { "const": "not_dispatched" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "null" }, "endedAt": { "type": "string" } } } },
         { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "upload_attachment" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/fileResult" } } } },
         { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "create_post" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/createResult" } } } },

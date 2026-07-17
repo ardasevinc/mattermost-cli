@@ -243,7 +243,7 @@ func TestApplySuccessClearsSupersededRevisionPlaintextAndPaths(t *testing.T) {
 	}
 }
 
-func TestApplyReceiptRejectsBroadResultsAndUnconditionalSkip(t *testing.T) {
+func TestApplyReceiptRejectsBroadResultsAndAllowsOnlySatisfiedEditUnconditionalSkip(t *testing.T) {
 	s := openDomainStore(t)
 	created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}`)
 	claim, _ := s.ClaimApply(context.Background(), claimInput(created.Stage, "", RecoveryModeOrdinary))
@@ -273,8 +273,12 @@ func TestApplyReceiptRejectsBroadResultsAndUnconditionalSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.MarkStepSkipped(context.Background(), editClaim.ID, 1, json.RawMessage(`{"reason":"already_satisfied"}`)); !errors.Is(err, ErrNotEligible) {
-		t.Fatalf("unconditional edit skip=%v", err)
+	if err = s.MarkStepSkipped(context.Background(), editClaim.ID, 1, json.RawMessage(`{"reason":"already_satisfied"}`)); err != nil {
+		t.Fatalf("satisfied edit skip=%v", err)
+	}
+	receipt, err := s.FinalizeApply(context.Background(), editClaim.ID)
+	if err != nil || receipt.Outcome != OutcomeAlreadySatisfied || receipt.Steps[0].Condition != "always" || receipt.Steps[0].State != StepSkipped {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 }
 

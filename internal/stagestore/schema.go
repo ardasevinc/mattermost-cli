@@ -362,4 +362,127 @@ WHEN NEW.state IN ('response_validated','rejected','skipped') AND NOT EXISTS(
   )
 )
 BEGIN SELECT RAISE(ABORT, 'invalid apply step result binding'); END;
+`}, {version: 8, name: "already-satisfied-edit-apply", sql: `
+DROP TRIGGER apply_step_identity_immutable;
+DROP TRIGGER apply_step_state_transition_valid;
+DROP TRIGGER apply_step_state_transition_required;
+DROP TRIGGER apply_step_result_transition_valid;
+DROP TRIGGER apply_steps_history_immutable_delete;
+DROP TRIGGER stage_apply_claim_release_valid;
+DROP TRIGGER stage_lifecycle_recovery_transition_valid;
+DROP TRIGGER apply_attempt_history_immutable_delete;
+DROP TRIGGER apply_events_history_immutable_delete;
+DROP TRIGGER apply_requests_history_immutable_delete;
+CREATE TABLE apply_steps_v8 (
+  attempt_id TEXT NOT NULL REFERENCES apply_attempts(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+  kind TEXT NOT NULL,
+  condition TEXT NOT NULL CHECK (condition IN ('always','if_missing')),
+  state TEXT NOT NULL CHECK (state IN ('pending','dispatch_intent','response_validated','rejected','outcome_unknown','skipped','not_dispatched')),
+  result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+  started_at TEXT,
+  ended_at TEXT,
+  PRIMARY KEY (attempt_id, ordinal),
+  CHECK (
+    state='pending' AND result_json IS NULL AND started_at IS NULL AND ended_at IS NULL
+    OR state='dispatch_intent' AND result_json IS NULL AND started_at IS NOT NULL AND ended_at IS NULL
+    OR state IN ('response_validated','rejected') AND result_json IS NOT NULL AND started_at IS NOT NULL AND ended_at IS NOT NULL
+    OR state='outcome_unknown' AND result_json IS NULL AND started_at IS NOT NULL AND ended_at IS NOT NULL
+    OR state='skipped' AND (condition='if_missing' OR kind='edit_post' AND condition='always') AND result_json IS NOT NULL AND started_at IS NULL AND ended_at IS NOT NULL
+    OR state='not_dispatched' AND result_json IS NULL AND started_at IS NULL AND ended_at IS NOT NULL
+  )
+) STRICT;
+INSERT INTO apply_steps_v8(attempt_id,ordinal,kind,condition,state,result_json,started_at,ended_at)
+SELECT attempt_id,ordinal,kind,condition,state,result_json,started_at,ended_at FROM apply_steps;
+DROP TABLE apply_steps;
+ALTER TABLE apply_steps_v8 RENAME TO apply_steps;
+CREATE TRIGGER apply_step_identity_immutable BEFORE UPDATE ON apply_steps
+WHEN NEW.attempt_id IS NOT OLD.attempt_id OR NEW.ordinal IS NOT OLD.ordinal
+ OR NEW.kind IS NOT OLD.kind OR NEW.condition IS NOT OLD.condition
+BEGIN SELECT RAISE(ABORT, 'apply step identity is immutable'); END;
+CREATE TRIGGER apply_step_state_transition_valid BEFORE UPDATE OF state ON apply_steps
+WHEN NOT (
+  OLD.state='pending' AND NEW.state IN ('dispatch_intent','skipped','not_dispatched')
+  OR OLD.state='dispatch_intent' AND NEW.state IN ('response_validated','rejected','outcome_unknown')
+)
+BEGIN SELECT RAISE(ABORT, 'invalid apply step transition'); END;
+CREATE TRIGGER apply_step_state_transition_required BEFORE UPDATE ON apply_steps
+WHEN NEW.state IS OLD.state
+BEGIN SELECT RAISE(ABORT, 'apply step history is immutable'); END;
+CREATE TRIGGER apply_step_result_transition_valid BEFORE UPDATE ON apply_steps
+WHEN NEW.state IN ('response_validated','rejected','skipped') AND NOT EXISTS(
+  SELECT 1 FROM apply_attempts a JOIN stages s ON s.id=a.stage_id
+    JOIN stage_revisions r ON r.stage_id=a.stage_id AND r.revision=a.revision
+  WHERE a.id=NEW.attempt_id AND json_type(NEW.result_json)='object' AND (
+    NEW.state='rejected' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.status')='integer' AND json_extract(NEW.result_json,'$.status') BETWEEN 400 AND 499
+    OR NEW.state='skipped' AND (NEW.condition='if_missing' OR NEW.kind='edit_post' AND NEW.condition='always') AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.reason')='text' AND json_extract(NEW.result_json,'$.reason')='already_satisfied'
+    OR NEW.state='response_validated' AND NEW.kind='upload_attachment' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_type(NEW.result_json,'$.fileId')='text' AND length(json_extract(NEW.result_json,'$.fileId'))>0
+    OR NEW.state='response_validated' AND NEW.kind='create_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=5
+      AND json_type(NEW.result_json,'$.postId')='text' AND length(json_extract(NEW.result_json,'$.postId'))>0
+      AND json_type(NEW.result_json,'$.createAt')='integer' AND json_extract(NEW.result_json,'$.createAt')>0
+      AND json_extract(NEW.result_json,'$.channelId')=json_extract(r.destination_json,'$.channelId')
+      AND json_extract(NEW.result_json,'$.userId')=s.user_id AND json_extract(NEW.result_json,'$.pendingPostId')=a.pending_post_id
+    OR NEW.state='response_validated' AND NEW.kind='edit_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=2
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+      AND json_type(NEW.result_json,'$.updateAt')='integer' AND json_extract(NEW.result_json,'$.updateAt')>0
+    OR NEW.state='response_validated' AND NEW.kind='delete_post' AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+    OR NEW.state='response_validated' AND NEW.kind IN ('add_reaction','remove_reaction') AND (SELECT count(*) FROM json_each(NEW.result_json))=1
+      AND json_extract(NEW.result_json,'$.postId')=json_extract(r.destination_json,'$.postId')
+    OR NEW.state='response_validated' AND NEW.kind='resolve_conversation' AND (SELECT count(*) FROM json_each(NEW.result_json))=2
+      AND json_type(NEW.result_json,'$.channelId')='text' AND length(json_extract(NEW.result_json,'$.channelId'))>0
+      AND (json_extract(r.destination_json,'$.channelId') IS NULL OR json_extract(NEW.result_json,'$.channelId')=json_extract(r.destination_json,'$.channelId'))
+      AND json_extract(NEW.result_json,'$.participantIds')=json_extract(r.destination_json,'$.participantIds')
+  )
+)
+BEGIN SELECT RAISE(ABORT, 'invalid apply step result binding'); END;
+CREATE TRIGGER apply_steps_history_immutable_delete BEFORE DELETE ON apply_steps
+WHEN OLD.state!='pending' OR NOT EXISTS(
+  SELECT 1 FROM apply_attempts a JOIN stages s ON s.id=a.stage_id
+  WHERE a.id=OLD.attempt_id AND a.outcome IS NULL AND s.lifecycle='open' AND s.claim_attempt_id IS NULL
+)
+BEGIN SELECT RAISE(ABORT, 'dispatched apply steps are immutable'); END;
+CREATE TRIGGER stage_apply_claim_release_valid BEFORE UPDATE OF lifecycle,claim_attempt_id ON stages
+WHEN OLD.lifecycle='applying' AND NEW.lifecycle!='applying' AND EXISTS(
+  SELECT 1 FROM apply_attempts a WHERE a.id=OLD.claim_attempt_id AND a.outcome IS NULL
+    AND EXISTS(SELECT 1 FROM apply_steps p WHERE p.attempt_id=a.id AND p.state!='pending')
+)
+BEGIN SELECT RAISE(ABORT, 'dispatched apply claim cannot be released'); END;
+CREATE TRIGGER stage_lifecycle_recovery_transition_valid BEFORE UPDATE OF lifecycle,recovery ON stages
+WHEN (NEW.lifecycle IS NOT OLD.lifecycle OR NEW.recovery IS NOT OLD.recovery) AND NOT (
+  OLD.lifecycle='open' AND NEW.lifecycle='applying' AND NEW.recovery=OLD.recovery AND NEW.claim_attempt_id IS NOT NULL
+    AND EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=NEW.claim_attempt_id AND a.stage_id=OLD.id AND a.outcome IS NULL)
+  OR OLD.lifecycle='applying' AND NEW.lifecycle='open' AND NEW.recovery=OLD.recovery AND NEW.claim_attempt_id IS NULL
+    AND EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=OLD.claim_attempt_id AND a.outcome IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM apply_steps p WHERE p.attempt_id=OLD.claim_attempt_id AND p.state!='pending')
+  OR OLD.lifecycle='applying' AND NEW.claim_attempt_id IS NULL AND EXISTS(
+    SELECT 1 FROM apply_attempts a WHERE a.id=OLD.claim_attempt_id AND a.outcome IS NOT NULL AND (
+      a.outcome IN ('succeeded','already_satisfied') AND NEW.lifecycle='completed' AND NEW.recovery='forbidden'
+      OR a.outcome='rejected' AND NEW.lifecycle='open' AND NEW.recovery=a.prior_recovery
+      OR a.outcome='partial' AND NEW.lifecycle='open' AND NEW.recovery=CASE WHEN a.prior_recovery='force_unknown' THEN 'force_unknown' ELSE 'resume_partial' END
+      OR a.outcome='unknown' AND NEW.lifecycle='open' AND NEW.recovery='force_unknown'
+    )
+  )
+  OR OLD.lifecycle='open' AND NEW.lifecycle='canceled' AND NEW.recovery='forbidden' AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL
+  OR OLD.lifecycle='open' AND OLD.recovery='none' AND NEW.lifecycle='expired' AND NEW.recovery='forbidden' AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL
+  OR OLD.lifecycle='expired' AND OLD.recovery='forbidden' AND NEW.lifecycle='open' AND NEW.recovery='none'
+    AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL AND NEW.current_revision=OLD.current_revision+1
+    AND EXISTS(SELECT 1 FROM stage_revisions r WHERE r.stage_id=OLD.id AND r.revision=OLD.current_revision AND r.state='superseded')
+    AND EXISTS(SELECT 1 FROM stage_revisions r WHERE r.stage_id=OLD.id AND r.revision=NEW.current_revision AND r.state='current')
+)
+BEGIN SELECT RAISE(ABORT, 'invalid stage lifecycle or recovery transition'); END;
+CREATE TRIGGER apply_attempt_history_immutable_delete BEFORE DELETE ON apply_attempts
+WHEN OLD.outcome IS NOT NULL OR EXISTS(SELECT 1 FROM apply_steps WHERE attempt_id=OLD.id AND state!='pending')
+BEGIN SELECT RAISE(ABORT, 'dispatched apply history is immutable'); END;
+CREATE TRIGGER apply_events_history_immutable_delete BEFORE DELETE ON apply_events
+WHEN NOT EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=OLD.attempt_id AND a.outcome IS NULL)
+ OR EXISTS(SELECT 1 FROM apply_steps WHERE attempt_id=OLD.attempt_id AND state!='pending')
+BEGIN SELECT RAISE(ABORT, 'dispatched apply events are immutable'); END;
+CREATE TRIGGER apply_requests_history_immutable_delete BEFORE DELETE ON apply_requests
+WHEN NOT EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=OLD.attempt_id AND a.outcome IS NULL)
+ OR EXISTS(SELECT 1 FROM apply_steps WHERE attempt_id=OLD.attempt_id AND state!='pending')
+BEGIN SELECT RAISE(ABORT, 'dispatched apply requests are immutable'); END;
 `}}

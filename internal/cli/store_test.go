@@ -36,7 +36,7 @@ func TestStoreDoctorAbsentIsReadOnlyAndSchemaValid(t *testing.T) {
 	if err := registry.Validate("mm/v2/store-doctor", bytes.NewReader(stdout.Bytes())); err != nil {
 		t.Fatalf("schema: %v\n%s", err, stdout.String())
 	}
-	for _, fact := range []string{`"filesystemSafe":null`, `"applicationId":null`, `"integrity":null`, `"applied":null`, `"latest":7`, `"valid":null`, `"journalMode":null`} {
+	for _, fact := range []string{`"filesystemSafe":null`, `"applicationId":null`, `"integrity":null`, `"applied":null`, `"latest":8`, `"valid":null`, `"journalMode":null`} {
 		if !strings.Contains(stdout.String(), fact) {
 			t.Fatalf("absent report omitted %s: %s", fact, stdout.String())
 		}
@@ -110,7 +110,7 @@ func TestStoreMigrationsIsOfflineAndSchemaValid(t *testing.T) {
 	if err := registry.Validate("mm/v2/store-migrations", bytes.NewReader(stdout.Bytes())); err != nil {
 		t.Fatalf("schema: %v\n%s", err, stdout.String())
 	}
-	want := "{\"schema\":\"mm/v2/store-migrations\",\"latest\":7,\"migrations\":[{\"version\":1,\"name\":\"core-stage-state\",\"checksum\":\"e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f\"},{\"version\":2,\"name\":\"immutable-local-request-receipts\",\"checksum\":\"ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c\"},{\"version\":3,\"name\":\"caller-intent-stage-create-replay\",\"checksum\":\"237315b734e034951a7394ef708273af5f91ea6a44abe9927537571fbcee78d5\"},{\"version\":4,\"name\":\"caller-intent-stage-revise-replay\",\"checksum\":\"c4076ad9dba0494142f0a9cddd94e1ddcfb9c6384729f5a5f54098c8eb24f9e4\"},{\"version\":5,\"name\":\"revision-plan-follows-composition\",\"checksum\":\"fd14281b59cc1887375e125b6b782a1e4b1eff200b9e78286ec067d0286851e0\"},{\"version\":6,\"name\":\"durable-apply-journal\",\"checksum\":\"4a87ce0c406f1145b6f03a18d931681afa40dbe94ea69a89f655aa15de6bbd56\"},{\"version\":7,\"name\":\"status-confirmed-delete-results\",\"checksum\":\"bf980f24ff24fdf9d6a3a28b9ded97b51336fa1c8ef290d1bdcf91f1b593c5ce\"}]}\n"
+	want := "{\"schema\":\"mm/v2/store-migrations\",\"latest\":8,\"migrations\":[{\"version\":1,\"name\":\"core-stage-state\",\"checksum\":\"e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f\"},{\"version\":2,\"name\":\"immutable-local-request-receipts\",\"checksum\":\"ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c\"},{\"version\":3,\"name\":\"caller-intent-stage-create-replay\",\"checksum\":\"237315b734e034951a7394ef708273af5f91ea6a44abe9927537571fbcee78d5\"},{\"version\":4,\"name\":\"caller-intent-stage-revise-replay\",\"checksum\":\"c4076ad9dba0494142f0a9cddd94e1ddcfb9c6384729f5a5f54098c8eb24f9e4\"},{\"version\":5,\"name\":\"revision-plan-follows-composition\",\"checksum\":\"fd14281b59cc1887375e125b6b782a1e4b1eff200b9e78286ec067d0286851e0\"},{\"version\":6,\"name\":\"durable-apply-journal\",\"checksum\":\"4a87ce0c406f1145b6f03a18d931681afa40dbe94ea69a89f655aa15de6bbd56\"},{\"version\":7,\"name\":\"status-confirmed-delete-results\",\"checksum\":\"bf980f24ff24fdf9d6a3a28b9ded97b51336fa1c8ef290d1bdcf91f1b593c5ce\"},{\"version\":8,\"name\":\"already-satisfied-edit-apply\",\"checksum\":\"cff30dd4fcc987876e092e2de1f5afd21ebeadbcb792fd550a56eb4c221edd10\"}]}\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout does not match golden migration contract: %q", stdout.String())
 	}
@@ -310,7 +310,7 @@ func TestStoreHumanOutputStatesBounds(t *testing.T) {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
 	stdout.Reset()
-	if code := Execute(context.Background(), []string{"store", "migrations"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "latest: 7\n1 core-stage-state ") {
+	if code := Execute(context.Background(), []string{"store", "migrations"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "latest: 8\n1 core-stage-state ") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

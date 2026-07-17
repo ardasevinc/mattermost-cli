@@ -252,11 +252,11 @@ OR EXISTS(SELECT 1 FROM apply_steps later WHERE later.attempt_id=current.attempt
 			return ErrNotEligible
 		}
 		if to == StepSkipped {
-			var condition string
-			if err = tx.QueryRowContext(ctx, `SELECT condition FROM apply_steps WHERE attempt_id=? AND ordinal=?`, attemptID, ordinal).Scan(&condition); err != nil {
+			var kind, condition string
+			if err = tx.QueryRowContext(ctx, `SELECT kind,condition FROM apply_steps WHERE attempt_id=? AND ordinal=?`, attemptID, ordinal).Scan(&kind, &condition); err != nil {
 				return localError(err)
 			}
-			if condition != "if_missing" {
+			if condition != "if_missing" && !(kind == "edit_post" && condition == "always") {
 				return ErrNotEligible
 			}
 		}
@@ -768,7 +768,7 @@ func validApplyStep(step ApplyStep) bool {
 	case StepValidated, StepRejected:
 		return step.StartedAt != nil && step.EndedAt != nil && step.Result != nil && !step.EndedAt.Before(*step.StartedAt)
 	case StepSkipped:
-		return step.Condition == "if_missing" && step.StartedAt == nil && step.EndedAt != nil && step.Result != nil
+		return (step.Condition == "if_missing" || step.Kind == "edit_post" && step.Condition == "always") && step.StartedAt == nil && step.EndedAt != nil && step.Result != nil
 	case StepUnknown:
 		return step.StartedAt != nil && step.EndedAt != nil && step.Result == nil && !step.EndedAt.Before(*step.StartedAt)
 	case StepNotSent:

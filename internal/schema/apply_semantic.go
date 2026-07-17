@@ -28,7 +28,9 @@ type applyReceiptDestination struct {
 	PostID         *string         `json:"postId"`
 	RootPostID     *string         `json:"rootPostId"`
 	ParticipantIDs []string        `json:"participantIds"`
+	Emoji          json.RawMessage `json:"emoji"`
 	PostState      json.RawMessage `json:"postState"`
+	ReactionState  json.RawMessage `json:"reactionPresent"`
 }
 
 type applyReceiptStep struct {
@@ -159,11 +161,11 @@ func validApplyReceiptPlan(operation string, destination applyReceiptDestination
 	case "create_post":
 		return validResolvedConversation(destination) && validCreateSteps(steps)
 	case "reply":
-		return validChannelDestination(destination) && destination.Kind == "post" && destination.PostID != nil && destination.RootPostID != nil && isJSONNull(destination.PostState) && validCreateSteps(steps)
+		return validChannelDestination(destination) && validPostOnlyDestination(destination) && destination.PostID != nil && destination.RootPostID != nil && isJSONNull(destination.PostState) && validCreateSteps(steps)
 	case "edit_post":
-		return validChannelDestination(destination) && destination.Kind == "post" && destination.PostID != nil && !isJSONNull(destination.PostState) && single("edit_post", "always")
+		return validChannelDestination(destination) && validPostOnlyDestination(destination) && destination.PostID != nil && !isJSONNull(destination.PostState) && single("edit_post", "always")
 	case "delete_post":
-		return validChannelDestination(destination) && destination.Kind == "post" && destination.PostID != nil && !isJSONNull(destination.PostState) && single("delete_post", "always")
+		return validChannelDestination(destination) && validPostOnlyDestination(destination) && destination.PostID != nil && !isJSONNull(destination.PostState) && single("delete_post", "always")
 	case "react":
 		return validChannelDestination(destination) && destination.Kind == "reaction" && destination.PostID != nil && single("add_reaction", "if_missing")
 	case "unreact":
@@ -175,6 +177,10 @@ func validApplyReceiptPlan(operation string, destination applyReceiptDestination
 	default:
 		return false
 	}
+}
+
+func validPostOnlyDestination(destination applyReceiptDestination) bool {
+	return destination.Kind == "post" && isJSONNull(destination.Emoji) && isJSONNull(destination.ReactionState)
 }
 
 func validCreateSteps(steps []applyReceiptStep) bool {

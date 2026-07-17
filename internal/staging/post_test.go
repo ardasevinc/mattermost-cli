@@ -186,6 +186,14 @@ func TestPostDigestUsesCanonicalUTF8JSONAndPreservesFileOrder(t *testing.T) {
 	}
 }
 
+func TestPostDigestCannotVerifyCredentialBearingFileID(t *testing.T) {
+	first := mattermost.Post{Message: "safe", FileIDs: []string{"token-a"}}
+	second := mattermost.Post{Message: "safe", FileIDs: []string{"token-b"}}
+	if left, right := PostContentDigest(first, [][]byte{[]byte("token-a")}), PostContentDigest(second, [][]byte{[]byte("token-b")}); left != right {
+		t.Fatalf("credential-elided file IDs produced distinct digests: %s/%s", left, right)
+	}
+}
+
 func TestInvalidPostIDsAreZeroNetwork(t *testing.T) {
 	service, _, calls := postService(t, ordinaryPost(), mattermost.Channel{ID: "channel-1", Type: "G", Name: "group"}, &recordingStore{})
 	for _, id := range []string{"bad/id", "bad\u202e", strings.Repeat("a", 129)} {

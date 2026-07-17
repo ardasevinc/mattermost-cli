@@ -241,7 +241,9 @@ func (s *Service) resolvePostFor(ctx context.Context, op postOperation, current 
 	if post.ID != op.postID || !validResolvedPost(post) {
 		return Preview{}, ErrTarget
 	}
-	if contaminated(s.credentials, post.ID, post.ChannelID, post.UserID, post.RootID) {
+	postIdentity := []string{post.ID, post.ChannelID, post.UserID, post.RootID}
+	postIdentity = append(postIdentity, post.FileIDs...)
+	if contaminated(s.credentials, postIdentity...) {
 		return Preview{}, ErrCredential
 	}
 	if (op.operation == stagestore.EditPost || op.operation == stagestore.DeletePost) && (post.UserID != current.ID || post.Type != "") {
@@ -357,13 +359,15 @@ func (s *Service) findCreate(ctx context.Context, userID, requestID string) (sta
 	return stagestore.CreateRecord{}, false, ErrStore
 }
 
-func digestPost(post mattermost.Post, credentials [][]byte) string {
+// PostContentDigest binds the exact mutable Mattermost post content while
+// eliding active credentials so the digest cannot become an offline verifier.
+func PostContentDigest(post mattermost.Post, credentials [][]byte) string {
 	canonical := struct {
-		Message any      `json:"message"`
-		FileIDs []string `json:"fileIds"`
-		RootID  string   `json:"rootId"`
-		Type    string   `json:"type"`
-	}{credentialSafePostMessage(post.Message, credentials), post.FileIDs, post.RootID, post.Type}
+		Message any    `json:"message"`
+		FileIDs []any  `json:"fileIds"`
+		RootID  string `json:"rootId"`
+		Type    string `json:"type"`
+	}{credentialSafePostMessage(post.Message, credentials), credentialSafeStrings(post.FileIDs, credentials), post.RootID, post.Type}
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
@@ -372,6 +376,18 @@ func digestPost(post mattermost.Post, credentials [][]byte) string {
 	encoded = restoreJSONLineSeparators(encoded)
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+func credentialSafeStrings(values []string, credentials [][]byte) []any {
+	out := make([]any, len(values))
+	for index, value := range values {
+		out[index] = credentialSafePostMessage(value, credentials)
+	}
+	return out
+}
+
+func digestPost(post mattermost.Post, credentials [][]byte) string {
+	return PostContentDigest(post, credentials)
 }
 
 func credentialSafePostMessage(message string, credentials [][]byte) any {

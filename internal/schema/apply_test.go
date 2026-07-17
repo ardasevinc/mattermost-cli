@@ -227,6 +227,18 @@ func TestApplyReceiptAcceptsRealisticEditProjection(t *testing.T) {
 	if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(encoded)); err != nil {
 		t.Fatalf("rejected realistic edit receipt: %s", encoded)
 	}
+	for field, hostile := range map[string]any{"emoji": "eyes", "reactionPresent": true} {
+		destination := doc["destination"].(map[string]any)
+		destination[field] = hostile
+		encoded, err = json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Validate("mm/v2/apply-receipt", bytes.NewReader(encoded)); err == nil {
+			t.Fatalf("accepted post receipt with %s: %s", field, encoded)
+		}
+		destination[field] = nil
+	}
 }
 
 func TestApplyReceiptAcceptsStatusConfirmedDeleteProjection(t *testing.T) {
