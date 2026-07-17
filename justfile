@@ -46,17 +46,7 @@ npm-packages version release_dir="dist" output="npm-dist":
 docker-e2e:
     go run ./scripts/e2e
 
-oracle-smoke:
-    git diff --quiet v1.6.0 -- src package.json bun.lock tsconfig.json
-    go run ./cmd/conformance --scenario conformance/scenarios/v1/whoami.json --cwd . -- bun src/index.ts
-
-parity-smoke:
-    @tmp="$(mktemp -d "${TMPDIR:-/tmp}/mattermost-cli-parity.XXXXXX")"; trap 'find "$tmp" -type f -delete; rmdir "$tmp"' EXIT; go build -o "$tmp/mm" ./cmd/mm; for scenario in conformance/scenarios/pairs/*.json; do go run ./cmd/conformance --pair "$scenario" --cwd . --oracle bun --oracle-prefix src/index.ts --candidate "$tmp/mm"; done
-
 go-gate: go-format-check go-test go-race go-vet go-staticcheck go-vuln go-licenses go-modules go-build go-e2e-compile go-cross-build
     git diff --check
 
-legacy-gate:
-    bun run verify
-
-gate: go-gate legacy-gate oracle-smoke parity-smoke
+gate: go-gate

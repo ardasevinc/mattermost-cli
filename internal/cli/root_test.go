@@ -20,7 +20,7 @@ func TestExecuteVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if got, want := stdout.String(), "mm version 2.0.0-dev (dev)\n"; got != want {
+	if got, want := stdout.String(), "mm version 2.0.0 (dev)\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.Len() != 0 {
