@@ -450,10 +450,16 @@ func (s *Store) FinalizeApply(ctx context.Context, attemptID string) (ApplyRecei
 	}
 	now := time.Now().UTC()
 	stamp := formatTime(now)
+	material := recoveryMaterialFor(lifecycle, recovery)
 	if _, err = tx.ExecContext(ctx, `UPDATE apply_attempts SET outcome=?,ended_at=? WHERE id=? AND outcome IS NULL`, outcome, stamp, attemptID); err != nil {
 		return ApplyReceipt{}, localError(err)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE stages SET lifecycle=?,recovery=?,claim_attempt_id=NULL,updated_at=? WHERE id=? AND lifecycle='applying' AND claim_attempt_id=?`, lifecycle, recovery, stamp, attempt.StageID, attemptID)
+	var res sql.Result
+	if retentionLifecycleAvailable() {
+		res, err = tx.ExecContext(ctx, `UPDATE stages SET lifecycle=?,recovery=?,recovery_material=?,claim_attempt_id=NULL,updated_at=? WHERE id=? AND lifecycle='applying' AND claim_attempt_id=?`, lifecycle, recovery, material, stamp, attempt.StageID, attemptID)
+	} else {
+		res, err = tx.ExecContext(ctx, `UPDATE stages SET lifecycle=?,recovery=?,claim_attempt_id=NULL,updated_at=? WHERE id=? AND lifecycle='applying' AND claim_attempt_id=?`, lifecycle, recovery, stamp, attempt.StageID, attemptID)
+	}
 	if err != nil {
 		return ApplyReceipt{}, localError(err)
 	}

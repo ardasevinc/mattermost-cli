@@ -115,6 +115,33 @@ func resolveStoreRedaction(state *rootState, cmd *cobra.Command) error {
 	return nil
 }
 
+func resolveStageOptions(state *rootState, cmd *cobra.Command) error {
+	if err := resolveStoreRedaction(state, cmd); err != nil {
+		return err
+	}
+	home, err := state.deps.homeDir()
+	if err != nil {
+		return configFailure("could not resolve the home directory")
+	}
+	paths, err := config.ResolvePaths(home, state.deps.lookupEnv)
+	if err != nil {
+		return configFailure(err.Error())
+	}
+	file := config.Load(paths)
+	if file.Error == config.FileErrorRead || file.Unsafe != "" {
+		return configFailure("could not safely read the Mattermost configuration")
+	}
+	if file.Error == config.FileErrorParse {
+		return configFailure("could not parse the Mattermost configuration")
+	}
+	if file.InsecurePermissions && file.Config.Token != "" {
+		return configFailure("Mattermost configuration containing a token must not be accessible by other users")
+	}
+	state.stageTTLSeconds = file.Config.StageTTLSeconds
+	state.stagePruneSeconds = file.Config.StagePruneAfterSeconds
+	return nil
+}
+
 func storePaths(state *rootState) (stagestore.Paths, error) {
 	home, err := state.deps.homeDir()
 	if err != nil {

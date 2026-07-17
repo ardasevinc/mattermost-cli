@@ -26,6 +26,7 @@ const (
 	StageSchema  = "mm/v2/stage-request"
 	ReviseSchema = "mm/v2/stage-revise-request"
 	CancelSchema = "mm/v2/stage-cancel-request"
+	PruneSchema  = "mm/v2/stage-prune-request"
 	ApplySchema  = "mm/v2/apply-request"
 )
 
@@ -135,6 +136,15 @@ type CancelRequest struct {
 	ExpectedDigest   string     `json:"expectedDigest"`
 }
 
+type PruneRequest struct {
+	Schema           string     `json:"schema"`
+	RequestID        string     `json:"requestId"`
+	StageID          string     `json:"stageId"`
+	ExpectedRevision ExactInt64 `json:"expectedRevision"`
+	ExpectedDigest   string     `json:"expectedDigest"`
+	AbandonRecovery  bool       `json:"abandonRecovery"`
+}
+
 type ApplyRequest struct {
 	Schema         string     `json:"schema"`
 	RequestID      string     `json:"requestId"`
@@ -187,6 +197,10 @@ func (d *Decoder) DecodeRevise(input io.Reader) (ReviseRequest, error) {
 
 func (d *Decoder) DecodeCancel(input io.Reader) (CancelRequest, error) {
 	return decode[CancelRequest](d, CancelSchema, input)
+}
+
+func (d *Decoder) DecodePrune(input io.Reader) (PruneRequest, error) {
+	return decode[PruneRequest](d, PruneSchema, input)
 }
 
 func (d *Decoder) DecodeApply(input io.Reader) (ApplyRequest, error) {
@@ -468,6 +482,14 @@ func (r CancelRequest) CancelInput() (staging.CancelInput, error) {
 		return staging.CancelInput{}, ErrInvalid
 	}
 	return staging.CancelInput{StageID: r.StageID, RequestID: r.RequestID, ExpectedRevision: int64(r.ExpectedRevision), ExpectedDigest: digest}, nil
+}
+
+func (r PruneRequest) PruneInput() (stagestore.PruneInput, error) {
+	digest, err := decodeDigest(r.ExpectedDigest)
+	if err != nil || digest == ([32]byte{}) || validateConversion(PruneSchema, r) != nil {
+		return stagestore.PruneInput{}, ErrInvalid
+	}
+	return stagestore.PruneInput{StageID: r.StageID, RequestID: r.RequestID, ExpectedRevision: int64(r.ExpectedRevision), ExpectedDigest: digest, AbandonRecovery: r.AbandonRecovery}, nil
 }
 
 // ApplyClaimInput converts the public request and derives caller-intent replay

@@ -163,6 +163,19 @@ func TestReceiptsAndListsEnforceEmittedTimestampOrderAndUniqueIDs(t *testing.T) 
 	}
 }
 
+func TestNewPruneResultUsesBoundedMillisecondContract(t *testing.T) {
+	recorded := time.Date(2026, 7, 17, 12, 0, 0, 999999999, time.UTC)
+	document, err := NewPruneResult(stagestore.BulkPruneResult{
+		Schema: "mm/v2/stage-prune-result", Action: "pruned", Cutoff: recorded.Add(-720 * time.Hour), PrunedCount: 3, RecordedAt: recorded,
+	}, nil)
+	if err != nil || document.PrunedCount != 3 || document.RecordedAt != "2026-07-17T12:00:00.999Z" {
+		t.Fatalf("document=%+v err=%v", document, err)
+	}
+	if _, err = NewPruneResult(stagestore.BulkPruneResult{Schema: "mm/v2/stage-prune-result", Action: "pruned", Cutoff: recorded, RecordedAt: recorded}, nil); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("nonpositive age accepted: %v", err)
+	}
+}
+
 func conversationDestination() staging.Destination {
 	team := "team-1"
 	return staging.Destination{Kind: "conversation", ChannelID: "channel-1", ChannelType: "public", TeamID: &team, ParticipantIDs: []string{}}

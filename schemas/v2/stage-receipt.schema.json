@@ -19,7 +19,8 @@
       "enum": [
         "created",
         "revised",
-        "canceled"
+        "canceled",
+        "pruned"
       ]
     },
     "revived": {
@@ -113,6 +114,25 @@
               "recovery": {
                 "const": "forbidden"
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "pruned"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "stage": {
+            "properties": {
+              "lifecycle": { "const": "pruned" },
+              "recovery": { "const": "forbidden" }
             }
           }
         }

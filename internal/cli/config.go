@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -92,6 +93,11 @@ func configMachineStatus(action string, file config.FileState, created *bool) ou
 	if file.InsecurePermissions {
 		permissions = "insecure"
 	}
+	var stageTTLSeconds, stagePruneAfterSeconds *int64
+	if file.Error != config.FileErrorParse && file.Error != config.FileErrorRead {
+		stageTTLSeconds = pointer(file.Config.StageTTLSeconds)
+		stagePruneAfterSeconds = pointer(file.Config.StagePruneAfterSeconds)
+	}
 	var readPath *string
 	if file.Exists {
 		readPathValue := file.ReadPath
@@ -109,7 +115,8 @@ func configMachineStatus(action string, file config.FileState, created *bool) ou
 	return output.ConfigEnvelope{
 		Schema: "mm/v2/config", Action: action, SelectedPath: file.SelectedPath, ReadPath: readPath,
 		Migration: pointer(migration), Exists: pointer(file.Exists), URLConfigured: pointer(file.Config.URL != ""),
-		TokenConfigured: pointer(file.Config.Token != ""), Permissions: pointer(permissions), ReadStatus: pointer(readStatus),
+		TokenConfigured: pointer(file.Config.Token != ""), StageTTLSeconds: stageTTLSeconds,
+		StagePruneAfterSeconds: stagePruneAfterSeconds, Permissions: pointer(permissions), ReadStatus: pointer(readStatus),
 		ParseStatus: pointer(parseStatus), UnsafeReason: unsafeReason, Created: created, Warning: warning,
 	}
 }
@@ -175,6 +182,8 @@ func writeConfigHuman(state *rootState, status output.ConfigEnvelope) error {
 		"Exists: " + yesNo(valueOr(status.Exists, false)),
 		"URL configured: " + yesNo(valueOr(status.URLConfigured, false)),
 		"Token configured: " + yesNo(valueOr(status.TokenConfigured, false)),
+		"Stage TTL seconds: " + strconv.FormatInt(valueOr(status.StageTTLSeconds, int64(0)), 10),
+		"Stage prune after seconds: " + strconv.FormatInt(valueOr(status.StagePruneAfterSeconds, int64(0)), 10),
 		"Permissions: " + valueOr(status.Permissions, "not_applicable"),
 		"Read status: " + valueOr(status.ReadStatus, "not_attempted"),
 		"Parse status: " + valueOr(status.ParseStatus, "not_attempted"),

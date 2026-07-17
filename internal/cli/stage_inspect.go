@@ -42,11 +42,11 @@ func newStageCommand(state *rootState) *cobra.Command {
 	command.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if fromJSON {
 			state.flags.json = true
-			if cmd != command && cmd.Name() != "revise" && cmd.Name() != "cancel" {
+			if cmd != command && cmd.Name() != "revise" && cmd.Name() != "cancel" && cmd.Name() != "prune" {
 				return invalidFailure("--from-json cannot be combined with a stage subcommand")
 			}
 		}
-		return resolveStoreRedaction(state, cmd)
+		return resolveStageOptions(state, cmd)
 	}
 	command.PersistentFlags().BoolVar(&fromJSON, "from-json", false, "read one versioned stage request from stdin")
 	command.AddCommand(newStageListCommand(state), newStageShowCommand(state))

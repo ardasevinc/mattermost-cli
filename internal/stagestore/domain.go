@@ -266,7 +266,7 @@ func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, err
 		return MutationResult{}, ErrConflict
 	}
 	recovery := base.Recovery
-	if in.Revive {
+	if in.Revive && retentionLifecycleAvailable() {
 		if base.Lifecycle != LifecycleExpired || base.Recovery != RecoveryForbidden {
 			return MutationResult{}, ErrNotEligible
 		}
@@ -290,6 +290,12 @@ func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, err
 	}
 	if err = insertAttachments(ctx, tx, in.StageID, next, content.Attachments); err != nil {
 		return MutationResult{}, err
+	}
+	if in.Revive {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO stage_retention_events(stage_id,revision,semantic_digest,event,from_lifecycle,from_recovery,recovery_material,policy_seconds,request_id,recorded_at)
+			VALUES(?,?,?,'revived',?,?, 'none',NULL,NULL,?)`, base.ID, base.Revision, base.SemanticDigest[:], base.Lifecycle, base.Recovery, stamp); err != nil {
+			return MutationResult{}, localError(err)
+		}
 	}
 	resultSQL, err = tx.ExecContext(ctx, `UPDATE stages SET updated_at=?,lifecycle='open',recovery=?,current_revision=? WHERE id=? AND current_revision=? AND lifecycle=? AND recovery=?`, stamp, recovery, next, in.StageID, in.ExpectedRevision, base.Lifecycle, base.Recovery)
 	if err != nil {
@@ -908,7 +914,7 @@ func findCreate(ctx context.Context, q queryer, server, user, id string) (Create
 	if err != nil {
 		return CreateRecord{}, false, localError(err)
 	}
-	if schemaName == "mm/v2/legacy-stage-request-conflict" || schemaName == "mm/v2/legacy-stage-revise-conflict" || schemaName == "mm/v2/legacy-request-conflict" || schemaName == "mm/v2/stage-revise-request" || schemaName == "mm/v2/stage-cancel-request" {
+	if schemaName == "mm/v2/legacy-stage-request-conflict" || schemaName == "mm/v2/legacy-stage-revise-conflict" || schemaName == "mm/v2/legacy-request-conflict" || schemaName == "mm/v2/stage-revise-request" || schemaName == "mm/v2/stage-cancel-request" || schemaName == "mm/v2/stage-prune-request" {
 		return CreateRecord{}, false, ErrConflict
 	}
 	if schemaName != "mm/v2/stage-request" || len(digest) != 32 {
@@ -959,7 +965,7 @@ func findCreate(ctx context.Context, q queryer, server, user, id string) (Create
 // apply, plaintext and attachment paths are intentionally erased, so the
 // immutable historical digest becomes the only possible content binding.
 func replayContentProjection(operation Operation, lifecycle Lifecycle, recovery Recovery, body []byte, destination, plan json.RawMessage, attachments []Attachment) (RevisionContent, bool, error) {
-	if lifecycle != LifecycleCompleted || recovery != RecoveryForbidden {
+	if lifecycle != LifecycleCompleted && lifecycle != LifecyclePruned || recovery != RecoveryForbidden {
 		content, err := normalizeContent(operation, RevisionContent{body, destination, plan, attachments})
 		return content, false, err
 	}
@@ -1017,7 +1023,7 @@ func persistCreate(ctx context.Context, tx *sql.Tx, server, user, id string, rec
 	return localError(err)
 }
 func validReplayResult(result MutationResult, requestSchema, server, user string) bool {
-	action := map[string]string{"mm/v2/stage-request": "create", "mm/v2/stage-revise-request": "revise", "mm/v2/stage-cancel-request": "cancel"}[requestSchema]
+	action := map[string]string{"mm/v2/stage-request": "create", "mm/v2/stage-revise-request": "revise", "mm/v2/stage-cancel-request": "cancel", "mm/v2/stage-prune-request": "prune"}[requestSchema]
 	stage := result.Stage
 	return action != "" && result.Schema == "mm/v2/stage-mutation-receipt" && result.Action == action && stage.ServerURL == server && stage.UserID == user &&
 		bounded(stage.ID, maxIdentityBytes) && validOperation(stage.Operation) && stage.Revision > 0 && stage.SemanticDigest != ([32]byte{}) && validLifecycle(stage.Lifecycle) && validRecovery(stage.Recovery) &&

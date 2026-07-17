@@ -156,6 +156,8 @@ token = "  fixture-token  "
 redact = false
 mention_names = [" Arda ", "", 42, "arda.sevinc"]
 unknown = "ignored"
+stage_ttl_seconds = 3600
+stage_prune_after_seconds = 86400
 `, 0o600)
 
 	state := Load(Paths{ConfigPath: path, LegacyPath: path})
@@ -171,6 +173,29 @@ unknown = "ignored"
 	}
 	if !slices.Equal(state.Config.MentionNames, []string{"Arda", "arda.sevinc"}) {
 		t.Fatalf("MentionNames = %q", state.Config.MentionNames)
+	}
+	if state.Config.StageTTLSeconds != 3600 || state.Config.StagePruneAfterSeconds != 86400 {
+		t.Fatalf("retention = %d/%d", state.Config.StageTTLSeconds, state.Config.StagePruneAfterSeconds)
+	}
+}
+
+func TestLoadRejectsUnsafeRetentionPolicyValues(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{"wrong type", `"3600"`},
+		{"negative", `-1`},
+		{"duration overflow", `9223372037`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			writeConfig(t, path, "stage_ttl_seconds = "+test.value, 0o600)
+			state := Load(Paths{ConfigPath: path, LegacyPath: path})
+			if state.Error != FileErrorParse || state.Config.StageTTLSeconds != 0 {
+				t.Fatalf("state=%+v", state)
+			}
+		})
 	}
 }
 
@@ -231,7 +256,7 @@ func TestResolvePreservesPrecedenceAndRedactSemantics(t *testing.T) {
 	fileRedact := false
 	file := FileState{Config: File{
 		URL: "https://file.example", Token: "file-token", Redact: &fileRedact,
-		MentionNames: []string{"Arda"},
+		MentionNames: []string{"Arda"}, StageTTLSeconds: 7, StagePruneAfterSeconds: 11,
 	}}
 	env := map[string]string{
 		"MM_URL": "https://env.example", "MM_TOKEN": "env-token", "MM_REDACT": "",
@@ -244,6 +269,9 @@ func TestResolvePreservesPrecedenceAndRedactSemantics(t *testing.T) {
 	}
 	if resolved.URL != "https://cli.example" || resolved.Token != "env-token" || resolved.Redact {
 		t.Fatalf("Resolve() = %+v", resolved)
+	}
+	if resolved.StageTTLSeconds != 7 || resolved.StagePruneAfterSeconds != 11 {
+		t.Fatalf("retention policy lost: %+v", resolved)
 	}
 
 	resolved = Resolve(Options{}, mapLookup(env), file)

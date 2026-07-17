@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -18,7 +20,11 @@ const Template = `# Mattermost CLI Configuration
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
 # mention_names = ["Arda", "arda.sevinc"]
+# stage_ttl_seconds = 0
+# stage_prune_after_seconds = 0
 `
+
+const MaxRetentionSeconds = int64(math.MaxInt64) / int64(time.Second)
 
 type Source string
 
@@ -55,10 +61,12 @@ const (
 )
 
 type File struct {
-	URL          string
-	Token        string
-	Redact       *bool
-	MentionNames []string
+	URL                    string
+	Token                  string
+	Redact                 *bool
+	MentionNames           []string
+	StageTTLSeconds        int64
+	StagePruneAfterSeconds int64
 }
 
 type FileState struct {
@@ -80,14 +88,16 @@ type Options struct {
 }
 
 type Resolved struct {
-	URL          string
-	Token        string
-	Redact       bool
-	URLSource    Source
-	TokenSource  Source
-	RedactSource Source
-	MentionNames []string
-	File         FileState
+	URL                    string
+	Token                  string
+	Redact                 bool
+	URLSource              Source
+	TokenSource            Source
+	RedactSource           Source
+	MentionNames           []string
+	StageTTLSeconds        int64
+	StagePruneAfterSeconds int64
+	File                   FileState
 }
 
 func Load(paths Paths) FileState {
@@ -165,14 +175,16 @@ func Resolve(options Options, lookup LookupEnv, file FileState) Resolved {
 	token, tokenSource := first(options.Token, envNonempty(lookup, "MM_TOKEN"), file.Config.Token)
 	redact, redactSource := resolveRedact(options.Redact, lookup, file.Config.Redact)
 	return Resolved{
-		URL:          url,
-		Token:        token,
-		Redact:       redact,
-		URLSource:    urlSource,
-		TokenSource:  tokenSource,
-		RedactSource: redactSource,
-		MentionNames: append([]string(nil), file.Config.MentionNames...),
-		File:         file,
+		URL:                    url,
+		Token:                  token,
+		Redact:                 redact,
+		URLSource:              urlSource,
+		TokenSource:            tokenSource,
+		RedactSource:           redactSource,
+		MentionNames:           append([]string(nil), file.Config.MentionNames...),
+		StageTTLSeconds:        file.Config.StageTTLSeconds,
+		StagePruneAfterSeconds: file.Config.StagePruneAfterSeconds,
+		File:                   file,
 	}
 }
 
@@ -228,7 +240,26 @@ func parse(data []byte) (File, error) {
 			}
 		}
 	}
+	var err error
+	if result.StageTTLSeconds, err = retentionSeconds(raw, "stage_ttl_seconds"); err != nil {
+		return File{}, err
+	}
+	if result.StagePruneAfterSeconds, err = retentionSeconds(raw, "stage_prune_after_seconds"); err != nil {
+		return File{}, err
+	}
 	return result, nil
+}
+
+func retentionSeconds(raw map[string]any, key string) (int64, error) {
+	value, exists := raw[key]
+	if !exists {
+		return 0, nil
+	}
+	seconds, ok := value.(int64)
+	if !ok || seconds < 0 || seconds > MaxRetentionSeconds {
+		return 0, fmt.Errorf("invalid %s", key)
+	}
+	return seconds, nil
 }
 
 func first(cli string, envValue string, file string) (string, Source) {

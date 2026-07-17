@@ -301,6 +301,10 @@ func openStagingService(cmd *cobra.Command, state *rootState, persist bool) (*st
 		if err != nil {
 			return nil, func() error { return nil }, localStateFailure{fmt.Errorf("could not safely open stage store")}
 		}
+		if err = expireConfiguredStages(cmd, state, store); err != nil {
+			_ = store.Close()
+			return nil, func() error { return nil }, err
+		}
 		storeDependency = store
 	}
 	closeStore := func() error {
@@ -552,6 +556,14 @@ func classifyStageError(err error) error {
 		return readFailure(errors.New("stage operation canceled before persistence"))
 	}
 	switch {
+	case errors.Is(err, stagestore.ErrInvalid):
+		return invalidFailure("invalid stage request")
+	case errors.Is(err, stagestore.ErrConflict):
+		return localStateFailure{errors.New("stage request conflicts with durable local state")}
+	case errors.Is(err, stagestore.ErrNotFound):
+		return localStateFailure{errors.New("stage not found")}
+	case errors.Is(err, stagestore.ErrNotEligible):
+		return localStateFailure{errors.New("stage lifecycle transition is not allowed")}
 	case errors.Is(err, staging.ErrInvalid):
 		return invalidFailure("invalid stage request")
 	case errors.Is(err, staging.ErrInput):

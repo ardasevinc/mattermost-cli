@@ -85,6 +85,21 @@ type Stages struct {
 	Stages     []Summary `json:"stages"`
 	NextCursor *string   `json:"nextCursor"`
 }
+type PruneResult struct {
+	Schema      string `json:"schema"`
+	Action      string `json:"action"`
+	Cutoff      string `json:"cutoff"`
+	PrunedCount int64  `json:"prunedCount"`
+	RecordedAt  string `json:"recordedAt"`
+}
+
+func NewPruneResult(in stagestore.BulkPruneResult, credentials []string) (PruneResult, error) {
+	if in.Schema != "mm/v2/stage-prune-result" || in.Action != "pruned" || in.PrunedCount < 0 || in.PrunedCount > 9_007_199_254_740_991 || in.Cutoff.IsZero() || in.RecordedAt.IsZero() || !in.Cutoff.Before(in.RecordedAt) {
+		return PruneResult{}, ErrInvalid
+	}
+	out := PruneResult{in.Schema, in.Action, stamp(in.Cutoff), in.PrunedCount, stamp(in.RecordedAt)}
+	return out, validate("mm/v2/stage-prune-result", out, credentials)
+}
 
 func NewPreview(operation stagestore.Operation, in staging.Preview, credentials []string) (Preview, error) {
 	out := Preview{"mm/v2/stage-preview", false, string(operation), binding(in.ServerURL, in.ServerID, in.UserID), cloneDestination(in.Destination), clonePlan(in.Plan), false}
@@ -111,7 +126,7 @@ func NewReceipt(in stagestore.MutationResult, destination json.RawMessage, crede
 }
 
 func newReceipt(in stagestore.MutationResult, d staging.Destination, credentials []string) (Receipt, error) {
-	actions := map[string]string{"create": "created", "revise": "revised", "cancel": "canceled"}
+	actions := map[string]string{"create": "created", "revise": "revised", "cancel": "canceled", "prune": "pruned"}
 	if !validSummaryTimes(in.Stage) || in.RecordedAt.IsZero() || emittedTime(in.RecordedAt).Before(emittedTime(in.Stage.UpdatedAt)) {
 		return Receipt{}, ErrInvalid
 	}

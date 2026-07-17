@@ -656,7 +656,8 @@ func TestSimultaneousMutationCAS(t *testing.T) {
 func TestReviveOnlyLegalExpiredForbidden(t *testing.T) {
 	s := openDomainStore(t)
 	created, _ := s.Create(context.Background(), createInput("", "one"))
-	if _, err := s.db.Exec(`UPDATE stages SET lifecycle='expired',recovery='forbidden' WHERE id=?`, created.Stage.ID); err != nil {
+	recorded := time.Now().UTC().Add(2 * time.Second)
+	if count, err := s.ExpireEligible(context.Background(), recorded.Add(-time.Second), recorded); err != nil || count != 1 {
 		t.Fatal(err)
 	}
 	input := reviseInput(created.Stage, "revive", "two")

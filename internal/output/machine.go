@@ -125,20 +125,22 @@ type ErrorEnvelope struct {
 }
 
 type ConfigEnvelope struct {
-	Schema          string  `json:"schema"`
-	Action          string  `json:"action"`
-	SelectedPath    string  `json:"selectedPath"`
-	ReadPath        *string `json:"readPath"`
-	Migration       *string `json:"migration"`
-	Exists          *bool   `json:"exists"`
-	URLConfigured   *bool   `json:"urlConfigured"`
-	TokenConfigured *bool   `json:"tokenConfigured"`
-	Permissions     *string `json:"permissions"`
-	ReadStatus      *string `json:"readStatus"`
-	ParseStatus     *string `json:"parseStatus"`
-	UnsafeReason    *string `json:"unsafeReason"`
-	Created         *bool   `json:"created"`
-	Warning         *string `json:"warning"`
+	Schema                 string  `json:"schema"`
+	Action                 string  `json:"action"`
+	SelectedPath           string  `json:"selectedPath"`
+	ReadPath               *string `json:"readPath"`
+	Migration              *string `json:"migration"`
+	Exists                 *bool   `json:"exists"`
+	URLConfigured          *bool   `json:"urlConfigured"`
+	TokenConfigured        *bool   `json:"tokenConfigured"`
+	StageTTLSeconds        *int64  `json:"stageTtlSeconds"`
+	StagePruneAfterSeconds *int64  `json:"stagePruneAfterSeconds"`
+	Permissions            *string `json:"permissions"`
+	ReadStatus             *string `json:"readStatus"`
+	ParseStatus            *string `json:"parseStatus"`
+	UnsafeReason           *string `json:"unsafeReason"`
+	Created                *bool   `json:"created"`
+	Warning                *string `json:"warning"`
 }
 
 type DoctorCheck struct {

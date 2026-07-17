@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mmSchema "github.com/ardasevinc/mattermost-cli/internal/schema"
 	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
@@ -127,11 +129,104 @@ func TestStageMutationFromJSONRejectsHumanFlagMixingAsMachineError(t *testing.T)
 	for _, args := range [][]string{
 		{"stage", "revise", "--from-json", "--message", "nope"},
 		{"stage", "cancel", "--from-json", "--request-id", "nope"},
+		{"stage", "prune", "--from-json", "--older-than", "720h"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := Execute(t.Context(), args, strings.NewReader(`{}`), &stdout, &stderr)
 		if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `"schema":"mm/v2/error"`) || !strings.Contains(stderr.String(), `"code":"invalid_input"`) {
 			t.Fatalf("args=%v exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestStructuredExactPruneIsReplayableAndErasesRetainedContent(t *testing.T) {
+	home, stateRoot := t.TempDir(), filepath.Join(t.TempDir(), "state")
+	stageID := createInspectionStage(t, home, stateRoot, "# retained\n\n**markdown**")
+	setOfflineStageEnvironment(t, stateRoot)
+	var stdout, stderr bytes.Buffer
+	if code := Execute(t.Context(), []string{"stage", "cancel", stageID}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("cancel exit=%d stderr=%q", code, stderr.String())
+	}
+	canceled := loadStoredStage(t, stateRoot, stageID)
+	request := map[string]any{
+		"schema": "mm/v2/stage-prune-request", "requestId": "prune-structured-1", "stageId": stageID,
+		"expectedRevision": canceled.Revision, "expectedDigest": hex.EncodeToString(canceled.SemanticDigest[:]), "abandonRecovery": false,
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		stdout.Reset()
+		stderr.Reset()
+		code := Execute(t.Context(), []string{"stage", "prune", "--from-json"}, bytes.NewReader(raw), &stdout, &stderr)
+		if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"action":"pruned"`) || !strings.Contains(stdout.String(), `"replayed":`+[]string{"false", "true"}[attempt]) {
+			t.Fatalf("attempt=%d exit=%d stdout=%q stderr=%q", attempt, code, stdout.String(), stderr.String())
+		}
+	}
+	pruned := loadStoredStage(t, stateRoot, stageID)
+	if pruned.Lifecycle != stagestore.LifecyclePruned || pruned.Body != nil || len(pruned.Attachments) != 0 {
+		t.Fatalf("pruned=%+v body=%q attachments=%d", pruned.StageSummary, pruned.Body, len(pruned.Attachments))
+	}
+}
+
+func TestBulkPruneFailsClosedWithoutAgeAndUsesConfiguredAge(t *testing.T) {
+	home, stateRoot, configRoot := t.TempDir(), filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "config")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+	t.Setenv("MM_URL", "")
+	t.Setenv("MM_TOKEN", "")
+	var stdout, stderr bytes.Buffer
+	code := Execute(t.Context(), []string{"stage", "prune"}, nil, &stdout, &stderr)
+	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "bulk prune requires") {
+		t.Fatalf("disabled exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	configPath := filepath.Join(configRoot, "mattermost-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("stage_prune_after_seconds = 3600\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Execute(t.Context(), []string{"--json", "stage", "prune"}, nil, &stdout, &stderr)
+	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"schema":"mm/v2/stage-prune-result"`) || !strings.Contains(stdout.String(), `"prunedCount":0`) {
+		t.Fatalf("configured exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestConfiguredTTLIsOpportunisticAndReadOnlyInspectionDoesNotMutate(t *testing.T) {
+	home, stateRoot, configRoot := t.TempDir(), filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "config")
+	stageID := createInspectionStage(t, home, stateRoot, "still reviewable")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+	t.Setenv("MM_URL", "")
+	t.Setenv("MM_TOKEN", "")
+	configPath := filepath.Join(configRoot, "mattermost-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("stage_ttl_seconds = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	var stdout, stderr bytes.Buffer
+	if code := Execute(t.Context(), []string{"stage", "list"}, nil, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("list exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if detail := loadStoredStage(t, stateRoot, stageID); detail.Lifecycle != stagestore.LifecycleOpen {
+		t.Fatalf("read-only list expired stage: %+v", detail.StageSummary)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := Execute(t.Context(), []string{"stage", "cancel", stageID}, nil, &stdout, &stderr)
+	if code != 6 || stdout.Len() != 0 {
+		t.Fatalf("cancel exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if detail := loadStoredStage(t, stateRoot, stageID); detail.Lifecycle != stagestore.LifecycleExpired || detail.Body == nil {
+		t.Fatalf("writable operation did not expire safely: %+v body=%q", detail.StageSummary, detail.Body)
 	}
 }

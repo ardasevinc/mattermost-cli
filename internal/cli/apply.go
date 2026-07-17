@@ -63,7 +63,7 @@ func newApplyCommand(state *rootState) *cobra.Command {
 			} else if flagChanged(cmd, "request-id") && !applyRequestIDPattern.MatchString(requestID) {
 				return invalidFailure("invalid --request-id")
 			}
-			return nil
+			return resolveStageOptions(state, cmd)
 		},
 	}
 	command.Flags().BoolVar(&fromJSON, "from-json", false, "read one versioned apply request from stdin")

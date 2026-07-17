@@ -1,0 +1,1 @@
+{"schema":"mm/v2/stage-prune-request","requestId":"agent-20260717-004","stageId":"stg_0123456789abcdefghijklmnopqrstuv","expectedRevision":3,"expectedDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","abandonRecovery":false}

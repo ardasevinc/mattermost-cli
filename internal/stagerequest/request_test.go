@@ -164,6 +164,15 @@ func TestReviseAndCancelDecodeAndStoreConversions(t *testing.T) {
 	if err != nil || cancelInput.ExpectedDigest != reviseInput.ExpectedDigest || cancelInput.ExpectedRevision != 3 {
 		t.Fatalf("cancel conversion: %#v %v", cancelInput, err)
 	}
+	pruneJSON := `{"schema":"mm/v2/stage-prune-request","requestId":"p","stageId":"stg_abcdefghijklmnopqrstuvwxyzABCDEF","expectedRevision":4,"expectedDigest":"` + digestText + `","abandonRecovery":true}`
+	prune, err := decoder(t).DecodePrune(strings.NewReader(pruneJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pruneInput, err := prune.PruneInput()
+	if err != nil || pruneInput.ExpectedRevision != 4 || pruneInput.ExpectedDigest != reviseInput.ExpectedDigest || !pruneInput.AbandonRecovery {
+		t.Fatalf("prune conversion: %#v %v", pruneInput, err)
+	}
 
 	cancel.ExpectedDigest = strings.ToUpper(digestText)
 	if _, err := cancel.CancelInput(); !errors.Is(err, ErrInvalid) {
@@ -172,6 +181,27 @@ func TestReviseAndCancelDecodeAndStoreConversions(t *testing.T) {
 	revise.Attachments = []Attachment{{Path: "/tmp/a"}}
 	if _, err := revise.ReviseInput(); err != nil {
 		t.Fatalf("raw attachment rejected: %v", err)
+	}
+}
+
+func TestPruneDecodeRejectsUnknownFieldsDuplicateMembersAndZeroDigest(t *testing.T) {
+	base := `{"schema":"mm/v2/stage-prune-request","requestId":"p","stageId":"stg_abcdefghijklmnopqrstuvwxyzABCDEF","expectedRevision":1,"expectedDigest":"` + strings.Repeat("01", 32) + `","abandonRecovery":false}`
+	for name, raw := range map[string]string{
+		"unknown":   strings.Replace(base, `"abandonRecovery":false`, `"abandonRecovery":false,"extra":true`, 1),
+		"duplicate": strings.Replace(base, `"requestId":"p"`, `"requestId":"p","requestId":"q"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decoder(t).DecodePrune(strings.NewReader(raw)); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("accepted: %v", err)
+			}
+		})
+	}
+	request, err := decoder(t).DecodePrune(strings.NewReader(strings.Replace(base, strings.Repeat("01", 32), strings.Repeat("0", 64), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = request.PruneInput(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero digest accepted: %v", err)
 	}
 }
 

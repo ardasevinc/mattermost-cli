@@ -74,6 +74,8 @@ type rootState struct {
 	pendingWarnings   []machineWarning
 	semanticExit      int
 	disableHeuristics bool
+	stageTTLSeconds   int64
+	stagePruneSeconds int64
 }
 
 type runtimeFlags struct {

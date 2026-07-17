@@ -541,6 +541,111 @@ WHEN NOT (
   OR OLD.state='dispatch_intent' AND NEW.state IN ('response_validated','rejected','outcome_unknown')
 )
 BEGIN SELECT RAISE(ABORT, 'invalid apply step transition'); END;
+`}, {version: 11, name: "retention-lifecycle-audit", sql: `
+ALTER TABLE stages ADD COLUMN recovery_material TEXT NOT NULL DEFAULT 'none'
+  CHECK (recovery_material IN ('none','resume_partial','force_unknown'));
+UPDATE stages SET recovery_material=CASE
+  WHEN lifecycle IN ('completed','expired','pruned') THEN 'none'
+  WHEN recovery='force_unknown' THEN 'force_unknown'
+  WHEN recovery='resume_partial' THEN 'resume_partial'
+  WHEN lifecycle='canceled' AND EXISTS(
+    SELECT 1 FROM apply_attempts a WHERE a.stage_id=stages.id
+      AND (a.outcome='unknown' OR a.prior_recovery='force_unknown')
+  ) THEN 'force_unknown'
+  WHEN lifecycle='canceled' AND EXISTS(
+    SELECT 1 FROM apply_attempts a WHERE a.stage_id=stages.id AND a.outcome='partial'
+  ) THEN 'resume_partial'
+  ELSE 'none'
+END;
+CREATE TABLE stage_retention_events (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  stage_id TEXT NOT NULL REFERENCES stages(id),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  semantic_digest BLOB NOT NULL CHECK (length(semantic_digest) = 32),
+  event TEXT NOT NULL CHECK (event IN ('expired','revived','pruned','abandoned_recovery')),
+  from_lifecycle TEXT NOT NULL CHECK (from_lifecycle IN ('open','applying','completed','canceled','expired','pruned')),
+  from_recovery TEXT NOT NULL CHECK (from_recovery IN ('none','resume_partial','force_unknown','forbidden')),
+  recovery_material TEXT NOT NULL CHECK (recovery_material IN ('none','resume_partial','force_unknown')),
+  policy_seconds INTEGER CHECK (policy_seconds IS NULL OR policy_seconds > 0),
+  request_id TEXT,
+  recorded_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX stages_expiry_eligible ON stages(updated_at,id)
+  WHERE lifecycle='open' AND recovery='none' AND recovery_material='none' AND claim_attempt_id IS NULL;
+CREATE INDEX stage_retention_events_stage ON stage_retention_events(stage_id,sequence);
+CREATE TRIGGER stage_retention_events_insert_valid BEFORE INSERT ON stage_retention_events
+WHEN NOT EXISTS(
+  SELECT 1 FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=s.current_revision
+  WHERE s.id=NEW.stage_id AND s.current_revision=NEW.revision AND r.semantic_digest=NEW.semantic_digest
+    AND s.lifecycle=NEW.from_lifecycle AND s.recovery=NEW.from_recovery AND s.recovery_material=NEW.recovery_material
+    AND (
+      NEW.event='expired' AND s.lifecycle='open' AND s.recovery='none' AND s.recovery_material='none'
+        AND s.claim_attempt_id IS NULL AND NEW.policy_seconds IS NOT NULL AND NEW.request_id IS NULL
+      OR NEW.event='revived' AND s.lifecycle='expired' AND s.recovery='forbidden' AND s.recovery_material='none'
+        AND s.claim_attempt_id IS NULL AND NEW.policy_seconds IS NULL AND NEW.request_id IS NULL
+      OR NEW.event='pruned' AND s.lifecycle IN ('completed','canceled','expired') AND s.recovery='forbidden'
+        AND s.recovery_material='none' AND s.claim_attempt_id IS NULL
+      OR NEW.event='abandoned_recovery' AND s.lifecycle!='applying' AND s.recovery_material IN ('resume_partial','force_unknown')
+        AND s.claim_attempt_id IS NULL AND NEW.policy_seconds IS NULL
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'invalid stage retention event'); END;
+CREATE TRIGGER stage_retention_events_immutable_update BEFORE UPDATE ON stage_retention_events
+BEGIN SELECT RAISE(ABORT, 'stage retention events are immutable'); END;
+CREATE TRIGGER stage_retention_events_immutable_delete BEFORE DELETE ON stage_retention_events
+BEGIN SELECT RAISE(ABORT, 'stage retention events are immutable'); END;
+DROP TRIGGER stage_lifecycle_recovery_transition_valid;
+CREATE TRIGGER stage_lifecycle_recovery_transition_valid BEFORE UPDATE OF lifecycle,recovery,recovery_material ON stages
+WHEN (NEW.lifecycle IS NOT OLD.lifecycle OR NEW.recovery IS NOT OLD.recovery OR NEW.recovery_material IS NOT OLD.recovery_material) AND NOT (
+  OLD.lifecycle='open' AND NEW.lifecycle='applying' AND NEW.recovery=OLD.recovery AND NEW.recovery_material=OLD.recovery_material AND NEW.claim_attempt_id IS NOT NULL
+    AND EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=NEW.claim_attempt_id AND a.stage_id=OLD.id AND a.outcome IS NULL)
+  OR OLD.lifecycle='applying' AND NEW.lifecycle='open' AND NEW.recovery=OLD.recovery AND NEW.recovery_material=OLD.recovery_material AND NEW.claim_attempt_id IS NULL
+    AND EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=OLD.claim_attempt_id AND a.outcome IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM apply_steps p WHERE p.attempt_id=OLD.claim_attempt_id AND p.state!='pending')
+  OR OLD.lifecycle='applying' AND NEW.claim_attempt_id IS NULL AND EXISTS(
+    SELECT 1 FROM apply_attempts a WHERE a.id=OLD.claim_attempt_id AND a.outcome IS NOT NULL AND (
+      a.outcome IN ('succeeded','already_satisfied') AND NEW.lifecycle='completed' AND NEW.recovery='forbidden' AND NEW.recovery_material='none'
+      OR a.outcome='rejected' AND NEW.lifecycle='open' AND NEW.recovery=a.prior_recovery
+        AND NEW.recovery_material=CASE WHEN a.prior_recovery='force_unknown' THEN 'force_unknown' WHEN a.prior_recovery='resume_partial' THEN 'resume_partial' ELSE 'none' END
+      OR a.outcome='partial' AND NEW.lifecycle='open' AND NEW.recovery=CASE WHEN a.prior_recovery='force_unknown' THEN 'force_unknown' ELSE 'resume_partial' END
+        AND NEW.recovery_material=CASE WHEN a.prior_recovery='force_unknown' THEN 'force_unknown' ELSE 'resume_partial' END
+      OR a.outcome='unknown' AND NEW.lifecycle='open' AND NEW.recovery='force_unknown' AND NEW.recovery_material='force_unknown'
+    )
+  )
+  OR OLD.lifecycle='open' AND NEW.lifecycle='canceled' AND NEW.recovery='forbidden' AND NEW.recovery_material=OLD.recovery_material
+    AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL
+  OR OLD.lifecycle='open' AND OLD.recovery='none' AND OLD.recovery_material='none'
+    AND NEW.lifecycle='expired' AND NEW.recovery='forbidden' AND NEW.recovery_material='none'
+    AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL
+    AND EXISTS(SELECT 1 FROM stage_retention_events e WHERE e.stage_id=OLD.id AND e.revision=OLD.current_revision
+      AND e.semantic_digest=(SELECT semantic_digest FROM stage_revisions WHERE stage_id=OLD.id AND revision=OLD.current_revision)
+      AND e.event='expired' AND e.from_lifecycle=OLD.lifecycle AND e.from_recovery=OLD.recovery
+      AND e.recovery_material=OLD.recovery_material)
+  OR OLD.lifecycle='expired' AND OLD.recovery='forbidden' AND OLD.recovery_material='none'
+    AND NEW.lifecycle='open' AND NEW.recovery='none' AND NEW.recovery_material='none'
+    AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL AND NEW.current_revision=OLD.current_revision+1
+    AND EXISTS(SELECT 1 FROM stage_retention_events e WHERE e.stage_id=OLD.id AND e.revision=OLD.current_revision
+      AND e.event='revived' AND e.from_lifecycle=OLD.lifecycle AND e.from_recovery=OLD.recovery AND e.recovery_material=OLD.recovery_material)
+    AND EXISTS(SELECT 1 FROM stage_revisions r WHERE r.stage_id=OLD.id AND r.revision=OLD.current_revision AND r.state='superseded')
+    AND EXISTS(SELECT 1 FROM stage_revisions r WHERE r.stage_id=OLD.id AND r.revision=NEW.current_revision AND r.state='current')
+  OR OLD.lifecycle!='applying' AND NEW.lifecycle='pruned' AND NEW.recovery='forbidden' AND NEW.recovery_material='none'
+    AND OLD.claim_attempt_id IS NULL AND NEW.claim_attempt_id IS NULL
+    AND EXISTS(SELECT 1 FROM stage_retention_events e WHERE e.stage_id=OLD.id AND e.revision=OLD.current_revision
+      AND e.semantic_digest=(SELECT semantic_digest FROM stage_revisions WHERE stage_id=OLD.id AND revision=OLD.current_revision)
+      AND e.event=CASE WHEN OLD.recovery_material='none' THEN 'pruned' ELSE 'abandoned_recovery' END
+      AND e.from_lifecycle=OLD.lifecycle AND e.from_recovery=OLD.recovery AND e.recovery_material=OLD.recovery_material)
+)
+BEGIN SELECT RAISE(ABORT, 'invalid stage lifecycle, recovery, or retained material transition'); END;
+DROP TRIGGER stage_revision_body_erasure_only;
+CREATE TRIGGER stage_revision_body_erasure_only BEFORE UPDATE OF body ON stage_revisions
+WHEN NEW.body IS NOT OLD.body AND NOT (OLD.body IS NOT NULL AND NEW.body IS NULL AND EXISTS(
+  SELECT 1 FROM stages s WHERE s.id=OLD.stage_id AND s.lifecycle IN ('completed','pruned') AND s.recovery='forbidden'
+))
+BEGIN SELECT RAISE(ABORT, 'stage revision body is immutable'); END;
+DROP TRIGGER stage_attachment_delete_after_completion;
+CREATE TRIGGER stage_attachment_delete_after_completion BEFORE DELETE ON stage_attachments
+WHEN NOT EXISTS(SELECT 1 FROM stages s WHERE s.id=OLD.stage_id AND s.lifecycle IN ('completed','pruned') AND s.recovery='forbidden')
+BEGIN SELECT RAISE(ABORT, 'stage attachment bindings are immutable'); END;
 `}}
 
 func attachmentIdentityAvailable() bool {
@@ -549,4 +654,8 @@ func attachmentIdentityAvailable() bool {
 
 func validatedUploadReuseAvailable() bool {
 	return len(migrations) >= 10 && migrations[9].version == 10 && migrations[9].name == "validated-upload-reuse"
+}
+
+func retentionLifecycleAvailable() bool {
+	return len(migrations) >= 11 && migrations[10].version == 11 && migrations[10].name == "retention-lifecycle-audit"
 }
