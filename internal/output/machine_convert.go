@@ -296,7 +296,7 @@ func machineChannel(channel Channel) (MachineChannel, error) {
 	if (channel.Type == "unknown") != (channel.MetadataStatus == "unavailable") {
 		return MachineChannel{}, fmt.Errorf("machine channel type %q and metadata status %q are inconsistent", channel.Type, channel.MetadataStatus)
 	}
-	return MachineChannel{ID: channel.ID, Type: channel.Type, Name: channel.Name, DisplayName: channel.DisplayName, MetadataStatus: channel.MetadataStatus}, nil
+	return MachineChannel(channel), nil
 }
 
 func validMachineCompleteness(value MachineCompleteness) bool {

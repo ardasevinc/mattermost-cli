@@ -165,10 +165,6 @@ func machineStageRef(err error) string {
 	return ""
 }
 
-func newRoot(s streams) *cobra.Command {
-	return newRootWithState(&rootState{streams: s, deps: defaultDependencies(s.out)})
-}
-
 func newRootWithState(state *rootState) *cobra.Command {
 	s := state.streams
 	cmd := &cobra.Command{

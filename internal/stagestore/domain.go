@@ -472,29 +472,6 @@ const currentDetailSQL = `SELECT s.id,s.server_url,coalesce(s.server_id,''),s.us
 
 type rowScanner interface{ Scan(...any) error }
 
-func scanSummary(row rowScanner) (StageSummary, error) {
-	var v StageSummary
-	var digest []byte
-	var created, updated string
-	err := row.Scan(&v.ID, &v.ServerURL, &v.ServerID, &v.UserID, &v.Operation, &v.Lifecycle, &v.Recovery, &v.Revision, &digest, &created, &updated)
-	if errors.Is(err, sql.ErrNoRows) {
-		return v, ErrNotFound
-	}
-	if err != nil {
-		return v, localError(err)
-	}
-	if len(digest) != 32 {
-		return v, localError(errors.New("digest"))
-	}
-	copy(v.SemanticDigest[:], digest)
-	if v.CreatedAt, err = parseTime(created); err != nil {
-		return v, err
-	}
-	if v.UpdatedAt, err = parseTime(updated); err != nil {
-		return v, err
-	}
-	return v, nil
-}
 func scanDetail(row rowScanner) (StageDetail, error) {
 	var v StageDetail
 	var digest, body []byte

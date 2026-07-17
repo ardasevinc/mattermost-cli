@@ -180,17 +180,6 @@ type Channels struct{ client channelTransport }
 
 func NewChannels(client channelTransport) *Channels { return &Channels{client: client} }
 
-type channelList []Channel
-
-func (l *channelList) UnmarshalJSON(data []byte) error {
-	var channels []Channel
-	if err := json.Unmarshal(data, &channels); err != nil || channels == nil {
-		return ErrInvalidChannelsResponse
-	}
-	*l = channels
-	return nil
-}
-
 type selectedChannelList struct {
 	wanted   map[string]bool
 	channels []Channel

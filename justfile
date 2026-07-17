@@ -15,6 +15,15 @@ go-race:
 go-vet:
     go vet ./...
 
+go-staticcheck:
+    go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
+
+go-vuln:
+    go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+go-licenses:
+    go run ./scripts/licenses
+
 go-modules:
     go mod verify
 
@@ -44,7 +53,7 @@ oracle-smoke:
 parity-smoke:
     @tmp="$(mktemp -d "${TMPDIR:-/tmp}/mattermost-cli-parity.XXXXXX")"; trap 'find "$tmp" -type f -delete; rmdir "$tmp"' EXIT; go build -o "$tmp/mm" ./cmd/mm; for scenario in conformance/scenarios/pairs/*.json; do go run ./cmd/conformance --pair "$scenario" --cwd . --oracle bun --oracle-prefix src/index.ts --candidate "$tmp/mm"; done
 
-go-gate: go-format-check go-test go-race go-vet go-modules go-build go-e2e-compile go-cross-build
+go-gate: go-format-check go-test go-race go-vet go-staticcheck go-vuln go-licenses go-modules go-build go-e2e-compile go-cross-build
     git diff --check
 
 legacy-gate:

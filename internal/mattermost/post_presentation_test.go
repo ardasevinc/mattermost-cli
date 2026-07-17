@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 )
@@ -117,7 +118,7 @@ func TestECMAScriptNumberString(t *testing.T) {
 		{1e-6, "0.000001"},
 		{1e20, "100000000000000000000"},
 		{1e-7, "1e-7"},
-		{-0.0, "0"},
+		{math.Copysign(0, -1), "0"},
 		{1e21, "1e+21"},
 		{-1e-7, "-1e-7"},
 	} {
