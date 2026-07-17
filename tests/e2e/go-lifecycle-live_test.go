@@ -102,6 +102,7 @@ type livePost struct {
 	RootID    string   `json:"root_id"`
 	Message   string   `json:"message"`
 	FileIDs   []string `json:"file_ids"`
+	CreateAt  int64    `json:"create_at"`
 	DeleteAt  int64    `json:"delete_at"`
 }
 

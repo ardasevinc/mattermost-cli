@@ -274,6 +274,12 @@ func runConnection(ctx context.Context, options WatchOptions, state *watchState,
 	pongDeadline := time.Time{}
 	var pendingPing int64 = -1
 	stable := false
+	markReady := func() {
+		if state.authenticated && state.hello && heartbeatAt.IsZero() {
+			heartbeatAt = options.Now().Add(options.HeartbeatInterval)
+			notifyWatchReady()
+		}
+	}
 	for {
 		deadline := handshakeDeadline
 		if state.authenticated && state.hello {
@@ -350,6 +356,7 @@ func runConnection(ctx context.Context, options WatchOptions, state *watchState,
 					heartbeatAt = options.Now().Add(options.HeartbeatInterval)
 				}
 			}
+			markReady()
 			if frame.Event == "" {
 				continue
 			}
@@ -395,9 +402,7 @@ func runConnection(ctx context.Context, options WatchOptions, state *watchState,
 				}
 				state.nextServer++
 			}
-			if state.authenticated && state.hello && heartbeatAt.IsZero() {
-				heartbeatAt = options.Now().Add(options.HeartbeatInterval)
-			}
+			markReady()
 			if !state.authenticated || !state.hello || frame.Event != "posted" {
 				continue
 			}

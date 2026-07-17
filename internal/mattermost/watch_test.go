@@ -143,6 +143,42 @@ func TestWatchAuthWireInterleavingDuplicateSequenceAndCancellation(t *testing.T)
 		t.Fatalf("auth=%s", wire)
 	}
 }
+func TestWatchHelloBeforeAuthSchedulesFullHeartbeatInterval(t *testing.T) {
+	socket := newFakeSocket()
+	socket.reads <- readResult{type_: transport.MessageText, data: []byte(`{"event":"hello","seq":0,"data":{"connection_id":"one"}}`)}
+	socket.reads <- readResult{type_: transport.MessageText, data: []byte(`{"status":"OK","seq_reply":1}`)}
+	now := time.Unix(100, 0).UTC()
+	durations := make(chan time.Duration, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Watch(ctx, WatchOptions{
+			URL: "https://mm.example.com", Token: "secret", Sink: &recordingSink{},
+			HandshakeTimeout: 30 * time.Second, HeartbeatInterval: 10 * time.Second,
+			Now: func() time.Time { return now },
+			NewTimer: func(duration time.Duration) WatchTimer {
+				durations <- duration
+				return instantTimer{make(chan time.Time)}
+			},
+			Dial: func(context.Context, string) (transport.WebSocket, error) { return socket, nil },
+		})
+	}()
+	want := []time.Duration{30 * time.Second, 30 * time.Second, 10 * time.Second}
+	for i, expected := range want {
+		select {
+		case got := <-durations:
+			if got != expected {
+				t.Fatalf("timer %d duration=%s, want %s", i, got, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timer %d was not scheduled", i)
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
 func TestWatchSinkErrorIsTerminalWithoutReconnect(t *testing.T) {
 	socket := newFakeSocket()
 	sink := &recordingSink{err: errors.New("hostile")}
