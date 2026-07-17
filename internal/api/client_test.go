@@ -93,6 +93,22 @@ func TestPreparedMutationRejectsLocalFailuresBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestPreparedMutationFreezesExactExpectedStatus(t *testing.T) {
+	transport := &statusTransport{status: http.StatusOK}
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PreparePostStatus("/posts", map[string]string{"message": "hi"}, http.StatusCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown *OutcomeUnknownError
+	if err = prepared.Execute(context.Background(), new(map[string]any)); !errors.As(err, &unknown) {
+		t.Fatalf("unexpected status = %v", err)
+	}
+	if _, err = c.PrepareDeleteStatus("/posts/id", http.StatusBadRequest); err == nil {
+		t.Fatal("accepted non-success expected status")
+	}
+}
+
 func TestPreparedMutationIsOneShotAcrossConcurrentCallers(t *testing.T) {
 	var attempts atomic.Int32
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {

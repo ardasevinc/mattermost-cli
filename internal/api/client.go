@@ -107,11 +107,12 @@ type Client struct {
 // transport, response, or cancellation failure is conservatively outcome
 // unknown; callers must never retry the same effect automatically.
 type PreparedMutation struct {
-	client   *Client
-	method   string
-	endpoint *url.URL
-	payload  []byte
-	state    *preparedMutationState
+	client         *Client
+	method         string
+	endpoint       *url.URL
+	payload        []byte
+	expectedStatus int
+	state          *preparedMutationState
 }
 
 type preparedMutationState struct {
@@ -177,22 +178,37 @@ func (c *Client) Delete(ctx context.Context, path string, out any) error {
 }
 
 func (c *Client) PreparePost(path string, body any) (*PreparedMutation, error) {
-	return c.prepareMutation(http.MethodPost, path, body)
+	return c.prepareMutation(http.MethodPost, path, body, 0)
 }
 
 func (c *Client) PreparePut(path string, body any) (*PreparedMutation, error) {
-	return c.prepareMutation(http.MethodPut, path, body)
+	return c.prepareMutation(http.MethodPut, path, body, 0)
 }
 
 func (c *Client) PrepareDelete(path string) (*PreparedMutation, error) {
-	return c.prepareMutation(http.MethodDelete, path, nil)
+	return c.prepareMutation(http.MethodDelete, path, nil, 0)
 }
 
-func (c *Client) prepareMutation(method, path string, body any) (*PreparedMutation, error) {
+func (c *Client) PreparePostStatus(path string, body any, expectedStatus int) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodPost, path, body, expectedStatus)
+}
+
+func (c *Client) PreparePutStatus(path string, body any, expectedStatus int) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodPut, path, body, expectedStatus)
+}
+
+func (c *Client) PrepareDeleteStatus(path string, expectedStatus int) (*PreparedMutation, error) {
+	return c.prepareMutation(http.MethodDelete, path, nil, expectedStatus)
+}
+
+func (c *Client) prepareMutation(method, path string, body any, expectedStatus int) (*PreparedMutation, error) {
 	c.lifecycle.RLock()
 	defer c.lifecycle.RUnlock()
 	if c.closed {
 		return nil, ErrClientClosed
+	}
+	if expectedStatus != 0 && (expectedStatus < 200 || expectedStatus >= 300) {
+		return nil, errors.New("invalid expected Mattermost status")
 	}
 	endpoint, err := c.endpoint(path)
 	if err != nil {
@@ -202,7 +218,7 @@ func (c *Client) prepareMutation(method, path string, body any) (*PreparedMutati
 	if err != nil {
 		return nil, errors.New("unable to encode Mattermost request")
 	}
-	return &PreparedMutation{client: c, method: method, endpoint: endpoint, payload: bytes.Clone(payload), state: &preparedMutationState{}}, nil
+	return &PreparedMutation{client: c, method: method, endpoint: endpoint, payload: bytes.Clone(payload), expectedStatus: expectedStatus, state: &preparedMutationState{}}, nil
 }
 
 // Execute consumes the prepared mutation before inspecting cancellation or
@@ -233,6 +249,9 @@ func (p *PreparedMutation) Execute(ctx context.Context, out any) error {
 		return &APIError{Status: status}
 	}
 	if status < 200 || status >= 300 {
+		return &OutcomeUnknownError{}
+	}
+	if p.expectedStatus != 0 && status != p.expectedStatus {
 		return &OutcomeUnknownError{}
 	}
 	decodeTarget := out
