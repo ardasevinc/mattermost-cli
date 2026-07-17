@@ -31,6 +31,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Pin trusted-publishing npm client
+        run: npm install --global npm@11.17.0
       - name: Validate release identity
         id: version
         shell: bash
@@ -88,8 +91,7 @@ jobs:
           for tarball in npm-packs/*.tgz; do
             name="$(tar -xOzf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')"
             version="${{ steps.version.outputs.version }}"
-            remote="$(npm view "$name@$version" dist.integrity --json 2>/dev/null || true)"
-            if [[ -n "$remote" ]]; then
+            if remote="$(npm view "$name@$version" dist.integrity --json 2>/dev/null)"; then
               remote="$(node -p 'JSON.parse(process.argv[1])' "$remote")"
               local_integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w 0)"
               test "$remote" = "$local_integrity"
@@ -115,3 +117,30 @@ jobs:
           else
             npm publish "$tarball" --access public --provenance
           fi
+      - name: Verify exact registry artifacts
+        shell: bash
+        run: |
+          for tarball in npm-packs/*.tgz; do
+            name="$(tar -xOzf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')"
+            version="${{ steps.version.outputs.version }}"
+            local_shasum="$(sha1sum "$tarball" | awk '{print $1}')"
+            local_integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w 0)"
+            remote=""
+            for attempt in {1..12}; do
+              if remote="$(npm view --prefer-online "$name@$version" dist --json 2>/dev/null)"; then break; fi
+              remote=""
+              if [[ "$attempt" -lt 12 ]]; then sleep 5; fi
+            done
+            test -n "$remote"
+            test "$(node -p 'JSON.parse(process.argv[1]).shasum' "$remote")" = "$local_shasum"
+            test "$(node -p 'JSON.parse(process.argv[1]).integrity' "$remote")" = "$local_integrity"
+          done
+      - name: Smoke exact package from npm registry
+        run: |
+          mkdir "$RUNNER_TEMP/npm-registry-smoke"
+          cd "$RUNNER_TEMP/npm-registry-smoke"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund --prefer-online \
+            "mattermost-cli@${{ steps.version.outputs.version }}" >/dev/null
+          test "$(./node_modules/.bin/mm --version)" = "mm version ${{ steps.version.outputs.version }} (${{ steps.version.outputs.commit }})"
+          ./node_modules/.bin/mm --help

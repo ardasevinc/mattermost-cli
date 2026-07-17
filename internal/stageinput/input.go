@@ -82,6 +82,10 @@ func Preflight(inputs []Attachment) ([]MetadataIntent, error) {
 // upload; a changed path must conflict with this recorded identity and digest.
 // Bind returns no partial result and never returns contaminated values.
 func Bind(ctx context.Context, inputs []Attachment, credentials [][]byte) ([]stagestore.Attachment, error) {
+	return bind(ctx, inputs, credentials, nil)
+}
+
+func bind(ctx context.Context, inputs []Attachment, credentials [][]byte, afterOpen func(string) error) ([]stagestore.Attachment, error) {
 	if ctx == nil {
 		return nil, ErrInvalid
 	}
@@ -115,6 +119,12 @@ func Bind(ctx context.Context, inputs []Attachment, credentials [][]byte) ([]sta
 		file, before, err := openSecure(input.canonical)
 		if err != nil {
 			return nil, err
+		}
+		if afterOpen != nil {
+			if hookErr := afterOpen(input.canonical); hookErr != nil {
+				_ = file.Close()
+				return nil, hookErr
+			}
 		}
 		digest, length, prefix, scanErr := scanFile(ctx, file, scanner.stream())
 		after, statErr := fileIdentityOf(file)
