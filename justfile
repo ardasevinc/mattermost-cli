@@ -4,7 +4,7 @@ default:
     @just --list
 
 go-format-check:
-    @unformatted="$(gofmt -l cmd internal tests/e2e)"; if [[ -n "$unformatted" ]]; then print -r -- "$unformatted"; exit 1; fi
+    @unformatted="$(gofmt -l cmd internal scripts tests/e2e)"; if [[ -n "$unformatted" ]]; then print -r -- "$unformatted"; exit 1; fi
 
 go-test:
     go test ./...
@@ -27,6 +27,9 @@ go-e2e-compile:
 
 go-cross-build:
     @tmp="$(mktemp -d "${TMPDIR:-/tmp}/mattermost-cli-cross.XXXXXX")"; trap 'find "$tmp" -type f -delete; rmdir "$tmp"' EXIT; for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do os="${target%/*}"; arch="${target#*/}"; echo "building $target"; CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "$tmp/mm-$os-$arch" ./cmd/mm; done
+
+release-artifacts version commit output="dist":
+    go run ./scripts/release --version "{{version}}" --commit "{{commit}}" --output "{{output}}"
 
 docker-e2e:
     bun run test:e2e
