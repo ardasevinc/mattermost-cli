@@ -137,7 +137,7 @@ try {
     '--email-verified',
     '--disable-welcome-email',
   ])
-  for (const username of ['alice', 'bob']) {
+  for (const username of ['alice', 'bob', 'carol', 'dave']) {
     await mmctl([
       '--quiet',
       'user',
@@ -153,7 +153,18 @@ try {
     ])
   }
   await mmctl(['--quiet', 'team', 'create', '--name', 'e2e', '--display-name', 'E2E'])
-  await mmctl(['--quiet', 'team', 'users', 'add', 'e2e', 'sender', 'alice', 'bob'])
+  await mmctl([
+    '--quiet',
+    'team',
+    'users',
+    'add',
+    'e2e',
+    'sender',
+    'alice',
+    'bob',
+    'carol',
+    'dave',
+  ])
   await mmctl([
     '--quiet',
     'team',
