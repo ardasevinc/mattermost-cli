@@ -468,7 +468,7 @@ The rewrite is accepted by evidence, not source resemblance.
 ### 17.1 Frozen oracle
 
 - Tag `v1.6.0` and commit `eccfc50` are immutable oracle inputs.
-- Current evidence baseline: 33 Vitest files, 517 tests, shared-state `--no-isolate` pass, Biome/typecheck/build pass, dependency audit pass, exact npm tarball smoke, and disposable Mattermost 11.8.3 E2E pass.
+- Current evidence baseline: 34 Vitest/E2E files, 517 Vitest tests, shared-state `--no-isolate` pass, Biome/typecheck/build pass, dependency audit pass, exact npm tarball smoke, and disposable Mattermost 11.8.3 E2E pass.
 - The existing tests are inventoried into a language-neutral parity matrix before removal.
 - The matrix explicitly disposes every current command, flag, environment variable, TOML key, output mode, exit behavior, warning, agent-detected default, and release smoke. It must include `mention_names`, `MM_REDACT`, relative-time agent detection, `--dry-run`, no-color format selection, version checks, and config permission behavior even when they lack broad E2E coverage.
 
