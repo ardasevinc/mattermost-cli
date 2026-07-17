@@ -143,6 +143,9 @@ func (r *Registry) ReadAndValidate(id string, input io.Reader) ([]byte, error) {
 	if err := compiled.Validate(document); err != nil {
 		return nil, fmt.Errorf("document does not match %s", id)
 	}
+	if err := validateSemanticDocument(id, data); err != nil {
+		return nil, fmt.Errorf("document does not match %s", id)
+	}
 	return bytes.Clone(data), nil
 }
 

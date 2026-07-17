@@ -73,19 +73,21 @@ type ApplyAttempt struct {
 }
 
 type ApplyReceipt struct {
-	Schema         string          `json:"schema"`
-	AttemptID      string          `json:"attemptId"`
-	StageID        string          `json:"stageId"`
-	Revision       int64           `json:"revision"`
-	SemanticDigest string          `json:"semanticDigest"`
-	Operation      Operation       `json:"operation"`
-	Destination    json.RawMessage `json:"destination"`
-	Outcome        AttemptOutcome  `json:"outcome"`
-	Recovery       Recovery        `json:"recovery"`
-	StartedAt      time.Time       `json:"startedAt"`
-	RecordedAt     time.Time       `json:"recordedAt"`
-	Steps          []ApplyStep     `json:"steps"`
-	Replay         bool            `json:"-"`
+	Schema              string          `json:"schema"`
+	AttemptID           string          `json:"attemptId"`
+	StageID             string          `json:"stageId"`
+	Revision            int64           `json:"revision"`
+	SemanticDigest      string          `json:"semanticDigest"`
+	Operation           Operation       `json:"operation"`
+	RecoveryMode        RecoveryMode    `json:"recoveryMode"`
+	ForcedDuplicateRisk bool            `json:"forcedDuplicateRisk"`
+	Destination         json.RawMessage `json:"destination"`
+	Outcome             AttemptOutcome  `json:"outcome"`
+	Recovery            Recovery        `json:"recovery"`
+	StartedAt           time.Time       `json:"startedAt"`
+	RecordedAt          time.Time       `json:"recordedAt"`
+	Steps               []ApplyStep     `json:"steps"`
+	Replay              bool            `json:"-"`
 }
 
 type persistedPlan struct {
@@ -347,7 +349,7 @@ func (s *Store) FinalizeApply(ctx context.Context, attemptID string) (ApplyRecei
 		}
 	}
 	attempt.Outcome, attempt.EndedAt = &outcome, &now
-	receipt := ApplyReceipt{"mm/v2/apply-receipt", attempt.ID, attempt.StageID, attempt.Revision, hex.EncodeToString(attempt.SemanticDigest[:]), operation, json.RawMessage(destination), outcome, recovery, attempt.StartedAt, now, attempt.Steps, false}
+	receipt := ApplyReceipt{"mm/v2/apply-receipt", attempt.ID, attempt.StageID, attempt.Revision, hex.EncodeToString(attempt.SemanticDigest[:]), operation, attempt.RecoveryMode, attempt.ForcedDuplicateRisk, json.RawMessage(destination), outcome, recovery, attempt.StartedAt, now, attempt.Steps, false}
 	raw, err := marshalCanonical(receipt)
 	if err != nil {
 		return ApplyReceipt{}, localError(err)
@@ -777,7 +779,7 @@ func validApplyStep(step ApplyStep) bool {
 }
 
 func validReceiptForAttempt(receipt ApplyReceipt, attempt ApplyAttempt) bool {
-	if receipt.Schema != "mm/v2/apply-receipt" || receipt.AttemptID != attempt.ID || receipt.StageID != attempt.StageID || receipt.Revision != attempt.Revision || receipt.SemanticDigest != hex.EncodeToString(attempt.SemanticDigest[:]) ||
+	if receipt.Schema != "mm/v2/apply-receipt" || receipt.AttemptID != attempt.ID || receipt.StageID != attempt.StageID || receipt.Revision != attempt.Revision || receipt.SemanticDigest != hex.EncodeToString(attempt.SemanticDigest[:]) || receipt.RecoveryMode != attempt.RecoveryMode || receipt.ForcedDuplicateRisk != attempt.ForcedDuplicateRisk ||
 		attempt.Outcome == nil || receipt.Outcome != *attempt.Outcome || attempt.EndedAt == nil || !receipt.StartedAt.Equal(attempt.StartedAt) || !receipt.RecordedAt.Equal(*attempt.EndedAt) ||
 		!validOperation(receipt.Operation) || !validRecovery(receipt.Recovery) || len(receipt.Steps) != len(attempt.Steps) {
 		return false

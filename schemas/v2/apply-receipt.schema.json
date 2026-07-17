@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:apply-receipt",
+  "$comment": "mm schema validate also enforces terminal outcome derivation, operation plan ordering, destination shape, timestamp ordering, and result-to-target equality because JSON Schema cannot express all cross-field equalities.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "attemptId", "stageId", "revision", "semanticDigest", "operation", "recoveryMode", "forcedDuplicateRisk", "destination", "outcome", "recovery", "startedAt", "recordedAt", "steps"],
+  "properties": {
+    "schema": { "const": "mm/v2/apply-receipt" },
+    "attemptId": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{32}$" },
+    "stageId": { "type": "string", "pattern": "^stg_[A-Za-z0-9_-]{32}$" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "semanticDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "operation": { "enum": ["create_post", "reply", "edit_post", "delete_post", "react", "unreact", "resolve_dm", "resolve_group_dm"] },
+    "recoveryMode": { "enum": ["ordinary", "resume_partial", "force_unknown"] },
+    "forcedDuplicateRisk": { "type": "boolean" },
+    "destination": { "$ref": "#/$defs/destination" },
+    "outcome": { "enum": ["succeeded", "already_satisfied", "rejected", "partial", "unknown"] },
+    "recovery": { "enum": ["none", "resume_partial", "force_unknown", "forbidden"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 102,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "recoveryMode": { "const": "force_unknown" } } }, "then": { "properties": { "forcedDuplicateRisk": { "const": true } } }, "else": { "properties": { "forcedDuplicateRisk": { "const": false } } } },
+    { "if": { "properties": { "outcome": { "enum": ["succeeded", "already_satisfied"] } } }, "then": { "properties": { "recovery": { "const": "forbidden" } } } },
+    { "if": { "properties": { "outcome": { "const": "unknown" } } }, "then": { "properties": { "recovery": { "const": "force_unknown" }, "steps": { "contains": { "properties": { "state": { "const": "outcome_unknown" } } }, "minContains": 1 } } } },
+    { "if": { "properties": { "outcome": { "const": "succeeded" } } }, "then": { "properties": { "steps": { "items": { "properties": { "state": { "enum": ["response_validated", "skipped"] } } }, "contains": { "properties": { "state": { "const": "response_validated" } } }, "minContains": 1 } } } },
+    { "if": { "properties": { "outcome": { "const": "already_satisfied" } } }, "then": { "properties": { "steps": { "items": { "properties": { "state": { "const": "skipped" } } } } } } },
+    { "if": { "properties": { "outcome": { "const": "rejected" } } }, "then": { "properties": { "recovery": { "enum": ["none", "resume_partial", "force_unknown"] }, "steps": { "items": { "properties": { "state": { "enum": ["rejected", "not_dispatched"] } } }, "contains": { "properties": { "state": { "const": "rejected" } } }, "minContains": 1 } } } },
+    { "if": { "properties": { "outcome": { "const": "partial" } } }, "then": { "properties": { "recovery": { "enum": ["resume_partial", "force_unknown"] }, "steps": { "items": { "properties": { "state": { "enum": ["response_validated", "skipped", "rejected", "not_dispatched"] } } }, "allOf": [{ "contains": { "properties": { "state": { "const": "response_validated" } } }, "minContains": 1 }, { "contains": { "properties": { "state": { "enum": ["rejected", "not_dispatched"] } } }, "minContains": 1 }] } } } },
+    { "if": { "properties": { "operation": { "enum": ["create_post", "reply"] } } }, "then": { "properties": { "steps": { "items": { "properties": { "kind": { "enum": ["upload_attachment", "create_post"] }, "condition": { "const": "always" } }, "allOf": [{ "if": { "properties": { "kind": { "const": "upload_attachment" } } }, "then": { "properties": { "kind": { "const": "upload_attachment" } } } }] }, "contains": { "properties": { "kind": { "const": "create_post" } } }, "minContains": 1, "maxContains": 1 } } } },
+    { "if": { "properties": { "operation": { "const": "create_post" } } }, "then": { "properties": { "destination": { "properties": { "kind": { "const": "conversation" } } } } } },
+    { "if": { "properties": { "operation": { "const": "reply" } } }, "then": { "properties": { "destination": { "properties": { "kind": { "const": "post" }, "postState": { "type": "null" } } } } } },
+    { "if": { "properties": { "operation": { "const": "edit_post" } } }, "then": { "$ref": "#/$defs/editOperation" } },
+    { "if": { "properties": { "operation": { "const": "delete_post" } } }, "then": { "$ref": "#/$defs/deleteOperation" } },
+    { "if": { "properties": { "operation": { "const": "react" } } }, "then": { "$ref": "#/$defs/reactOperation" } },
+    { "if": { "properties": { "operation": { "const": "unreact" } } }, "then": { "$ref": "#/$defs/unreactOperation" } },
+    { "if": { "properties": { "operation": { "enum": ["resolve_dm", "resolve_group_dm"] } } }, "then": { "$ref": "#/$defs/resolveOperation" } }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "channelId", "channelType", "teamId", "postId", "rootPostId", "participantIds", "emoji", "postState", "reactionPresent"],
+      "properties": {
+        "kind": { "enum": ["conversation", "post", "reaction"] },
+        "channelId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "channelType": { "enum": ["dm", "group", "public", "private", null] },
+        "teamId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "postId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "rootPostId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "participantIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "emoji": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_+-]+$" }, { "type": "null" }] },
+        "postState": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "object", "additionalProperties": false, "required": ["authorUserId", "updateAt", "contentDigest"], "properties": { "authorUserId": { "$ref": "#/$defs/id" }, "updateAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "contentDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }
+          ]
+        },
+        "reactionPresent": { "type": ["boolean", "null"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "conversation" } } }, "then": { "properties": { "postId": { "type": "null" }, "rootPostId": { "type": "null" }, "emoji": { "type": "null" }, "postState": { "type": "null" }, "reactionPresent": { "type": "null" } } } },
+        { "if": { "properties": { "kind": { "const": "reaction" } } }, "then": { "properties": { "postId": { "$ref": "#/$defs/id" }, "emoji": { "type": "string" }, "postState": { "type": "null" }, "reactionPresent": { "type": "boolean" } } } }
+      ]
+    },
+    "fileResult": { "type": "object", "additionalProperties": false, "required": ["fileId"], "properties": { "fileId": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
+    "createResult": { "type": "object", "additionalProperties": false, "required": ["postId", "createAt", "channelId", "userId", "pendingPostId"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "createAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "channelId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "userId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "pendingPostId": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
+    "editResult": { "type": "object", "additionalProperties": false, "required": ["postId", "updateAt"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "updateAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
+    "deleteResult": { "type": "object", "additionalProperties": false, "required": ["postId", "deleteAt"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "deleteAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
+    "postResult": { "type": "object", "additionalProperties": false, "required": ["postId"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
+    "conversationResult": { "type": "object", "additionalProperties": false, "required": ["channelId", "participantIds"], "properties": { "channelId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "participantIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } } } },
+    "rejectedResult": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "type": "integer", "minimum": 400, "maximum": 499 } } },
+    "skippedResult": { "type": "object", "additionalProperties": false, "required": ["reason"], "properties": { "reason": { "const": "already_satisfied" } } },
+    "result": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/fileResult" }, { "$ref": "#/$defs/createResult" }, { "$ref": "#/$defs/editResult" }, { "$ref": "#/$defs/deleteResult" },
+        { "$ref": "#/$defs/postResult" }, { "$ref": "#/$defs/conversationResult" }, { "$ref": "#/$defs/rejectedResult" }, { "$ref": "#/$defs/skippedResult" }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordinal", "kind", "condition", "state", "result", "startedAt", "endedAt"],
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 102 },
+        "kind": { "enum": ["upload_attachment", "create_post", "edit_post", "delete_post", "add_reaction", "remove_reaction", "resolve_conversation"] },
+        "condition": { "enum": ["always", "if_missing"] },
+        "state": { "enum": ["pending", "dispatch_intent", "response_validated", "rejected", "outcome_unknown", "skipped", "not_dispatched"] },
+        "result": { "$ref": "#/$defs/result" },
+        "startedAt": { "type": ["string", "null"], "format": "date-time" },
+        "endedAt": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "pending" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "null" }, "endedAt": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "dispatch_intent" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "string" }, "endedAt": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" } } }, "then": { "properties": { "result": { "not": { "type": "null" } }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "rejected" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/rejectedResult" }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "outcome_unknown" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "string" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "skipped" } } }, "then": { "properties": { "condition": { "const": "if_missing" }, "result": { "$ref": "#/$defs/skippedResult" }, "startedAt": { "type": "null" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "not_dispatched" } } }, "then": { "properties": { "result": { "type": "null" }, "startedAt": { "type": "null" }, "endedAt": { "type": "string" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "upload_attachment" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/fileResult" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "create_post" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/createResult" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "edit_post" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/editResult" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "delete_post" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/deleteResult" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "enum": ["add_reaction", "remove_reaction"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/postResult" } } } },
+        { "if": { "properties": { "state": { "const": "response_validated" }, "kind": { "const": "resolve_conversation" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/conversationResult" } } } }
+      ]
+    },
+    "singleStep": { "properties": { "steps": { "minItems": 1, "maxItems": 1 } } },
+    "editOperation": { "allOf": [{ "$ref": "#/$defs/singleStep" }, { "properties": { "destination": { "properties": { "kind": { "const": "post" }, "postState": { "type": "object" } } }, "steps": { "items": { "properties": { "kind": { "const": "edit_post" }, "condition": { "const": "always" } } } } } }] },
+    "deleteOperation": { "allOf": [{ "$ref": "#/$defs/singleStep" }, { "properties": { "destination": { "properties": { "kind": { "const": "post" }, "postState": { "type": "object" } } }, "steps": { "items": { "properties": { "kind": { "const": "delete_post" }, "condition": { "const": "always" } } } } } }] },
+    "reactOperation": { "allOf": [{ "$ref": "#/$defs/singleStep" }, { "properties": { "destination": { "properties": { "kind": { "const": "reaction" } } }, "steps": { "items": { "properties": { "kind": { "const": "add_reaction" }, "condition": { "const": "if_missing" } } } } } }] },
+    "unreactOperation": { "allOf": [{ "$ref": "#/$defs/singleStep" }, { "properties": { "destination": { "properties": { "kind": { "const": "reaction" } } }, "steps": { "items": { "properties": { "kind": { "const": "remove_reaction" }, "condition": { "const": "if_missing" } } } } } }] },
+    "resolveOperation": { "allOf": [{ "$ref": "#/$defs/singleStep" }, { "properties": { "destination": { "properties": { "kind": { "const": "conversation" } } }, "steps": { "items": { "properties": { "kind": { "const": "resolve_conversation" }, "condition": { "const": "if_missing" } } } } } }] }
+  }
+}
