@@ -5,9 +5,13 @@ package stagestore
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -911,6 +915,142 @@ func TestWritableOpenRecoversInterruptedApplyFromJournalEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyJournalSurvivesProcessDeath(t *testing.T) {
+	const (
+		helperActionEnv = "MM_TEST_CRASH_APPLY_ACTION"
+		helperPathEnv   = "MM_TEST_CRASH_APPLY_PATH"
+		helperStageEnv  = "MM_TEST_CRASH_APPLY_STAGE"
+		helperExitCode  = 91
+		requestID       = "process-death-request"
+	)
+	if action := os.Getenv(helperActionEnv); action != "" {
+		path, stageID := os.Getenv(helperPathEnv), os.Getenv(helperStageEnv)
+		s, err := Open(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		detail, err := s.Show(context.Background(), stageID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, err := s.ClaimApply(context.Background(), claimInput(detail.StageSummary, requestID, RecoveryModeOrdinary))
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch action {
+		case "claimed":
+		case "dispatch_intent":
+			err = s.BeginDispatch(context.Background(), attempt.ID, 1)
+		case "response_validated":
+			if err = s.BeginDispatch(context.Background(), attempt.ID, 1); err == nil {
+				err = s.MarkStepValidated(context.Background(), attempt.ID, 1, createPostResult(t, attempt, "post-after-crash"))
+			}
+		default:
+			t.Fatalf("unknown crash helper action %q", action)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Exit(helperExitCode)
+	}
+
+	for _, tc := range []struct {
+		action        string
+		persistedStep StepState
+		wantRecovery  Recovery
+		wantLifecycle Lifecycle
+		wantOutcome   *AttemptOutcome
+		wantFound     bool
+		wantBody      bool
+	}{
+		{action: "claimed", persistedStep: StepPending, wantRecovery: RecoveryNone, wantLifecycle: LifecycleOpen, wantFound: false, wantBody: true},
+		{action: "dispatch_intent", persistedStep: StepDispatch, wantRecovery: RecoveryUnknown, wantLifecycle: LifecycleOpen, wantOutcome: outcomePointer(OutcomeUnknown), wantFound: true, wantBody: true},
+		{action: "response_validated", persistedStep: StepValidated, wantRecovery: RecoveryForbidden, wantLifecycle: LifecycleCompleted, wantOutcome: outcomePointer(OutcomeSucceeded), wantFound: true, wantBody: false},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			path := testPath(t)
+			s, err := Open(context.Background(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}`)
+			input := claimInput(created.Stage, requestID, RecoveryModeOrdinary)
+			if err = s.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			command := exec.Command(os.Args[0], "-test.run=^TestApplyJournalSurvivesProcessDeath$")
+			command.Env = append(os.Environ(), helperActionEnv+"="+tc.action, helperPathEnv+"="+path, helperStageEnv+"="+created.Stage.ID)
+			output, runErr := command.CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != helperExitCode {
+				t.Fatalf("crash helper exit=%v, output=%q", runErr, output)
+			}
+			assertInterruptedApplyEvidence(t, path, created.Stage.ID, tc.persistedStep)
+
+			s, err = Open(context.Background(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			detail, err := s.Show(context.Background(), created.Stage.ID)
+			if err != nil || detail.Recovery != tc.wantRecovery || detail.Lifecycle != tc.wantLifecycle || (detail.Body != nil) != tc.wantBody {
+				t.Fatalf("detail=%+v err=%v", detail, err)
+			}
+			recovered, found, err := s.FindApply(context.Background(), created.Stage.ServerURL, created.Stage.UserID, requestID, input.RequestDigest)
+			if err != nil || found != tc.wantFound {
+				t.Fatalf("found=%v attempt=%+v err=%v", found, recovered, err)
+			}
+			if tc.wantOutcome != nil && (recovered.Outcome == nil || *recovered.Outcome != *tc.wantOutcome) {
+				t.Fatalf("outcome=%v want=%v", recovered.Outcome, *tc.wantOutcome)
+			}
+		})
+	}
+}
+
+func assertInterruptedApplyEvidence(t *testing.T, path, stageID string, wantStep StepState) {
+	t.Helper()
+	probePath := cloneCrashedStore(t, path)
+	db, err := sql.Open("sqlite", sqliteURI(probePath, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	var lifecycle, recovery, step string
+	var outcomePending, claimedEvents, requests int
+	err = db.QueryRow(`SELECT s.lifecycle,s.recovery,a.outcome IS NULL,p.state,
+		(SELECT COUNT(*) FROM apply_events e WHERE e.attempt_id=a.id AND e.event='claimed'),
+		(SELECT COUNT(*) FROM apply_requests r WHERE r.attempt_id=a.id)
+		FROM stages s JOIN apply_attempts a ON a.id=s.claim_attempt_id
+		JOIN apply_steps p ON p.attempt_id=a.id AND p.ordinal=1 WHERE s.id=?`, stageID).
+		Scan(&lifecycle, &recovery, &outcomePending, &step, &claimedEvents, &requests)
+	if err != nil || lifecycle != string(LifecycleApplying) || recovery != string(RecoveryNone) || outcomePending != 1 || step != string(wantStep) || claimedEvents != 1 || requests != 1 {
+		t.Fatalf("persisted interrupted apply lifecycle=%q recovery=%q pending=%d step=%q events=%d requests=%d err=%v", lifecycle, recovery, outcomePending, step, claimedEvents, requests, err)
+	}
+}
+
+func cloneCrashedStore(t *testing.T, path string) string {
+	t.Helper()
+	clone := filepath.Join(t.TempDir(), "state", "mattermost-cli", DatabaseFilename)
+	if err := os.MkdirAll(filepath.Dir(clone), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		data, err := os.ReadFile(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(clone+suffix, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return clone
 }
 
 func outcomePointer(value AttemptOutcome) *AttemptOutcome { return &value }
