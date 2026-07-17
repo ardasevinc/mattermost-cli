@@ -15,7 +15,7 @@
         "exists": { "type": "boolean" }, "filesystemSafe": {}, "applicationId": {}, "integrity": {}, "integrityTruncated": {},
         "foreignKeyIssues": {}, "foreignKeyRows": {}, "foreignKeyTruncated": {}, "journalMode": {}, "synchronous": {}, "secureDelete": {},
         "foreignKeys": {}, "trustedSchema": {}, "queryOnly": {}, "walFallback": {},
-        "migrations": { "type": "object", "additionalProperties": false, "required": ["applied", "latest", "valid"], "properties": { "applied": {}, "latest": { "const": 8 }, "valid": {} } },
+        "migrations": { "type": "object", "additionalProperties": false, "required": ["applied", "latest", "valid"], "properties": { "applied": {}, "latest": { "const": 9 }, "valid": {} } },
         "permissionModelLimitations": { "type": "array", "items": { "$ref": "#/$defs/safeString" } }
       },
       "allOf": [
@@ -23,14 +23,14 @@
           "filesystemSafe": { "const": null }, "applicationId": { "const": null }, "integrity": { "const": null }, "integrityTruncated": { "const": null },
           "foreignKeyIssues": { "const": null }, "foreignKeyRows": { "const": null }, "foreignKeyTruncated": { "const": null }, "journalMode": { "const": null },
           "synchronous": { "const": null }, "secureDelete": { "const": null }, "foreignKeys": { "const": null }, "trustedSchema": { "const": null }, "queryOnly": { "const": null }, "walFallback": { "const": null },
-          "migrations": { "properties": { "applied": { "const": null }, "latest": { "const": 8 }, "valid": { "const": null } } }
+          "migrations": { "properties": { "applied": { "const": null }, "latest": { "const": 9 }, "valid": { "const": null } } }
         } } },
         { "if": { "properties": { "exists": { "const": true } }, "required": ["exists"] }, "then": { "properties": {
           "filesystemSafe": { "const": true }, "applicationId": { "const": 1296913970 }, "integrity": { "$ref": "#/$defs/nonemptyBoundedStrings" }, "integrityTruncated": { "type": "boolean" },
           "foreignKeyIssues": { "type": "integer", "minimum": 0, "maximum": 21 }, "foreignKeyRows": { "$ref": "#/$defs/boundedStrings" }, "foreignKeyTruncated": { "type": "boolean" },
           "journalMode": { "enum": ["wal", "delete", "truncate", "persist"] }, "synchronous": { "type": "integer" }, "secureDelete": { "type": "integer" },
           "foreignKeys": { "const": true }, "trustedSchema": { "const": false }, "queryOnly": { "const": true }, "walFallback": { "type": "boolean" },
-          "migrations": { "properties": { "applied": { "const": 8 }, "latest": { "const": 8 }, "valid": { "const": true } } }
+          "migrations": { "properties": { "applied": { "const": 9 }, "latest": { "const": 9 }, "valid": { "const": true } } }
         }, "allOf": [
           { "oneOf": [
             { "properties": { "integrity": { "const": ["ok"] }, "integrityTruncated": { "const": false } } },

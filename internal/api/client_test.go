@@ -75,6 +75,60 @@ func TestPreparedEmptyDeleteRemainsNonReplayable(t *testing.T) {
 	}
 }
 
+func TestPreparedRawMutationOwnsExactOneShotBody(t *testing.T) {
+	payload := []byte{0, 1, 2, 0xff, '\n'}
+	body := &trackedReadCloser{Reader: bytes.NewReader(payload)}
+	var got []byte
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.GetBody != nil || request.ContentLength != int64(len(payload)) || request.Header.Get("Content-Type") != "application/octet-stream" {
+			t.Fatalf("GetBody=%v length=%d type=%q", request.GetBody != nil, request.ContentLength, request.Header.Get("Content-Type"))
+		}
+		got, _ = io.ReadAll(request.Body)
+		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PrepareRawPostStatus("/files?channel_id=channel&filename=a.bin", "application/octet-stream", body, int64(len(payload)), http.StatusCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		OK bool `json:"ok"`
+	}
+	if err = prepared.Execute(context.Background(), &response); err != nil || !response.OK || !bytes.Equal(got, payload) || !body.closed.Load() {
+		t.Fatalf("response=%+v exact=%v closed=%v err=%v", response, bytes.Equal(got, payload), body.closed.Load(), err)
+	}
+	if err = prepared.Execute(context.Background(), &response); !errors.Is(err, ErrMutationUsed) {
+		t.Fatalf("replay=%v", err)
+	}
+}
+
+func TestPreparedRawMutationCanBeDiscardedWithoutDispatch(t *testing.T) {
+	body := &trackedReadCloser{Reader: strings.NewReader("x")}
+	transport := &countingTransport{err: errors.New("must not dispatch")}
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	prepared, err := c.PrepareRawPostStatus("/files", "text/plain", body, 1, http.StatusCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = prepared.Close(); err != nil || !body.closed.Load() || transport.count.Load() != 0 {
+		t.Fatalf("closed=%v attempts=%d err=%v", body.closed.Load(), transport.count.Load(), err)
+	}
+}
+
+func TestPreparedRawMutationClosesBodyWhenClientClosedBeforeExecute(t *testing.T) {
+	body := &trackedReadCloser{Reader: strings.NewReader("x")}
+	c := newTestClient(t, "https://mattermost.example")
+	prepared, err := c.PrepareRawPostStatus("/files", "text/plain", body, 1, http.StatusCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	var unknown *OutcomeUnknownError
+	if err = prepared.Execute(context.Background(), &struct{}{}); !errors.As(err, &unknown) || !body.closed.Load() {
+		t.Fatalf("closed=%v err=%v", body.closed.Load(), err)
+	}
+}
+
 func TestPreparedMutationRejectsLocalFailuresBeforeDispatch(t *testing.T) {
 	transport := &countingTransport{err: errors.New("must not be called")}
 	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
@@ -687,6 +741,16 @@ type sequenceTransport struct {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+type trackedReadCloser struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+func (b *trackedReadCloser) Close() error {
+	b.closed.Store(true)
+	return nil
+}
 
 type trackingBody struct {
 	reads  atomic.Int32

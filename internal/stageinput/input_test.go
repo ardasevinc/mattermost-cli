@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 )
 
 func TestTokenScannerEveryChunkBoundary(t *testing.T) {
@@ -57,6 +59,43 @@ func TestBindCapturesMetadataAndRejectsMetadataCredential(t *testing.T) {
 		if result, err := Bind(context.Background(), []Attachment{input}, [][]byte{[]byte("active-token")}); !errors.Is(err, ErrCredential) || result != nil {
 			t.Fatalf("result=%v error=%v", result, err)
 		}
+	}
+}
+
+func TestBindRejectsEmptyAndMoreThanFiveAttachments(t *testing.T) {
+	dir := localTempDir(t)
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := Bind(context.Background(), []Attachment{{Path: empty}}, nil); !errors.Is(err, ErrInvalid) || result != nil {
+		t.Fatalf("empty result=%v err=%v", result, err)
+	}
+	inputs := make([]Attachment, MaxAttachments+1)
+	for i := range inputs {
+		inputs[i] = Attachment{Path: empty}
+	}
+	if result, err := Bind(context.Background(), inputs, nil); !errors.Is(err, ErrTooMany) || result != nil {
+		t.Fatalf("too many result=%v err=%v", result, err)
+	}
+}
+
+func TestValidateSpoolBudgetChecksServerAggregateAndFreeSpace(t *testing.T) {
+	directory := localTempDir(t)
+	attachment := func(length int64) stagestore.Attachment {
+		return stagestore.Attachment{ByteLength: length}
+	}
+	if err := ValidateSpoolBudget([]stagestore.Attachment{attachment(1), attachment(2)}, directory, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSpoolBudget([]stagestore.Attachment{attachment(3)}, directory, 2); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("server limit error=%v", err)
+	}
+	if err := ValidateSpoolBudget([]stagestore.Attachment{attachment(MaxSpoolBytes), attachment(1)}, directory, 0); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("aggregate error=%v", err)
+	}
+	if err := ValidateSpoolBudget([]stagestore.Attachment{attachment(1)}, filepath.Join(directory, "missing"), 0); !errors.Is(err, ErrNoSpoolSpace) {
+		t.Fatalf("space error=%v", err)
 	}
 }
 
@@ -106,6 +145,79 @@ func TestBindCanonicalizesMediaType(t *testing.T) {
 	}
 	if got[0].MediaType != "text/plain; charset=UTF-8" {
 		t.Fatalf("media type=%q", got[0].MediaType)
+	}
+}
+
+func TestSnapshotRevalidatesExactBindingAndLeavesNoResidue(t *testing.T) {
+	dir := localTempDir(t)
+	path := filepath.Join(dir, "payload.bin")
+	content := append(bytes.Repeat([]byte("chunk-"), 9000), []byte("tail")...)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := Bind(context.Background(), []Attachment{{Path: path}}, [][]byte{[]byte("absent-token")})
+	if err != nil || bound[0].FileIdentity == ([32]byte{}) {
+		t.Fatalf("bound=%+v err=%v", bound, err)
+	}
+	spool, err := Snapshot(context.Background(), bound[0], [][]byte{[]byte("absent-token")}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(spool)
+	if readErr != nil || !bytes.Equal(got, content) || spool.Length != int64(len(content)) || spool.RemoteFilename != "payload.bin" {
+		t.Fatalf("length=%d name=%q read=%v exact=%v", spool.Length, spool.RemoteFilename, readErr, bytes.Equal(got, content))
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "payload.bin" {
+		t.Fatalf("spool residue=%v err=%v", entries, err)
+	}
+	if err = spool.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotRejectsReplacementDriftAndCredentialBytes(t *testing.T) {
+	for name, mutate := range map[string]func(string) error{
+		"replacement same bytes": func(path string) error {
+			replacement := path + ".new"
+			if err := os.WriteFile(replacement, []byte("original"), 0o600); err != nil {
+				return err
+			}
+			return os.Rename(replacement, path)
+		},
+		"changed bytes": func(path string) error { return os.WriteFile(path, []byte("different"), 0o600) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := localTempDir(t)
+			path := filepath.Join(dir, "payload")
+			if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bound, err := Bind(context.Background(), []Attachment{{Path: path}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = mutate(path); err != nil {
+				t.Fatal(err)
+			}
+			if spool, snapshotErr := Snapshot(context.Background(), bound[0], nil, dir); !errors.Is(snapshotErr, ErrFileChanged) || spool != nil {
+				t.Fatalf("spool=%v err=%v", spool, snapshotErr)
+			}
+		})
+	}
+
+	dir := localTempDir(t)
+	path := filepath.Join(dir, "credential")
+	if err := os.WriteFile(path, []byte("safe-original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := Bind(context.Background(), []Attachment{{Path: path}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := []byte("safe-original")
+	if spool, snapshotErr := Snapshot(context.Background(), bound[0], [][]byte{credential}, dir); !errors.Is(snapshotErr, ErrCredential) || spool != nil {
+		t.Fatalf("spool=%v err=%v", spool, snapshotErr)
 	}
 }
 

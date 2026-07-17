@@ -26,7 +26,20 @@ func openDomainStore(t *testing.T) *Store {
 	return s
 }
 func attachment(name string) Attachment {
-	return Attachment{"/tmp/" + name, "/private/tmp/" + name, name, 3, "text/plain", sha256.Sum256([]byte(name))}
+	return Attachment{SuppliedPath: "/tmp/" + name, CanonicalPath: "/private/tmp/" + name, RemoteFilename: name, ByteLength: 3, MediaType: "text/plain", ContentDigest: sha256.Sum256([]byte(name)), FileIdentity: [32]byte{1}}
+}
+
+func TestSemanticDigestBindsAttachmentFileIdentity(t *testing.T) {
+	in := createInput("identity-digest", "body")
+	first, err := ComputeSemanticDigest(in.Operation, in.ServerURL, in.ServerID, in.UserID, in.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Content.Attachments[0].FileIdentity[0]++
+	second, err := ComputeSemanticDigest(in.Operation, in.ServerURL, in.ServerID, in.UserID, in.Content)
+	if err != nil || first == second {
+		t.Fatalf("first=%x second=%x err=%v", first, second, err)
+	}
 }
 func createInput(request, body string) CreateInput {
 	return CreateInput{request, sha256.Sum256([]byte(body)), CreatePost, "https://mattermost.example/api/v4", "server-1", "user-1", RevisionContent{[]byte(body), json.RawMessage(`{"kind":"O","channelId":"channel-1"}`), json.RawMessage(`{"steps":[{"ordinal":1,"type":"upload_attachment","condition":"always"},{"ordinal":2,"type":"upload_attachment","condition":"always"},{"ordinal":3,"type":"create_post","condition":"always"}]}`), []Attachment{attachment("a.txt"), attachment("b.txt")}}}
@@ -209,6 +222,49 @@ func TestCallerIntentMigrationsTombstoneLegacyCreateAndReviseReceipts(t *testing
 	}
 	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, "revise-kept"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("legacy revise ID reuse = %v", err)
+	}
+}
+
+func TestAttachmentIdentityMigrationRequiresOrdinaryRevisionRebind(t *testing.T) {
+	path := testPath(t)
+	original := migrations
+	migrations = append([]migration(nil), original[:8]...)
+	in := createInput("legacy-attachment-identity", "body")
+	for i := range in.Content.Attachments {
+		in.Content.Attachments[i].FileIdentity = [32]byte{}
+	}
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrations = original
+	t.Cleanup(func() { migrations = original })
+	s, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	detail, err := s.Show(context.Background(), created.Stage.ID)
+	if err != nil || len(detail.Attachments) != 2 || detail.Attachments[0].FileIdentity != ([32]byte{}) {
+		t.Fatalf("legacy detail=%+v err=%v", detail.StageSummary, err)
+	}
+	rebound := []Attachment{attachment("a.txt"), attachment("b.txt")}
+	revised, err := s.Revise(context.Background(), ReviseInput{StageID: created.Stage.ID, RequestID: "rebind-legacy-attachments", ExpectedRevision: created.Stage.Revision,
+		ExpectedDigest: created.Stage.SemanticDigest, RequestDigest: sha256.Sum256([]byte("rebind-legacy-attachments")),
+		Composition: Composition{Body: []byte("body"), Plan: in.Content.Plan, Attachments: rebound}})
+	if err != nil || revised.Stage.Revision != 2 {
+		t.Fatalf("revised=%+v err=%v", revised, err)
+	}
+	detail, err = s.Show(context.Background(), created.Stage.ID)
+	if err != nil || detail.Attachments[0].FileIdentity == ([32]byte{}) {
+		t.Fatalf("rebound detail=%+v err=%v", detail.StageSummary, err)
 	}
 }
 
@@ -629,9 +685,8 @@ func TestReviveOnlyLegalExpiredForbidden(t *testing.T) {
 		t.Fatal(err)
 	}
 	normal := reviseInput(partial.Stage, "partial", "q")
-	got, err := s.Revise(context.Background(), normal)
-	if err != nil || got.Stage.Recovery != RecoveryPartial {
-		t.Fatalf("monotonic=%#v err=%v", got, err)
+	if _, err := s.Revise(context.Background(), normal); !errors.Is(err, ErrNotEligible) {
+		t.Fatalf("partial revision=%v", err)
 	}
 }
 

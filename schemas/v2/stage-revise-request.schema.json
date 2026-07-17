@@ -46,7 +46,7 @@
       "anyOf": [
         {
           "type": "array",
-          "maxItems": 100,
+          "maxItems": 5,
           "items": {
             "$ref": "#/$defs/attachment"
           }

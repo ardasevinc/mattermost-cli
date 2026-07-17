@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 
 	"github.com/ardasevinc/mattermost-cli/internal/api"
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
 	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 	"github.com/ardasevinc/mattermost-cli/internal/staging"
 )
@@ -22,6 +24,7 @@ var (
 	ErrUnsupportedOperation = errors.New("apply: operation is not implemented")
 	ErrJournal              = errors.New("apply: durable journal update failed")
 	ErrCredential           = errors.New("apply: active credential in outbound content")
+	ErrAttachmentBudget     = errors.New("apply: attachment exceeds the safe spool or server budget")
 )
 
 // ConfirmedEffectError means Mattermost confirmed the effect but its durable
@@ -43,6 +46,7 @@ type Store interface {
 	MarkStepRejected(context.Context, string, int, json.RawMessage) error
 	MarkStepUnknown(context.Context, string, int) error
 	MarkStepSkipped(context.Context, string, int, json.RawMessage) error
+	SealRemainingNotDispatched(context.Context, string) error
 	FinalizeApply(context.Context, string) (stagestore.ApplyReceipt, error)
 }
 
@@ -70,15 +74,35 @@ type Service struct {
 	posts               PostTargets
 	writes              *mattermost.ConversationMutations
 	postWrites          *mattermost.PostMutations
+	fileWrites          *mattermost.FileMutations
+	spoolDirectory      string
 	credentials         [][]byte
 }
 
-func New(serverURL, serverID string, credentials [][]byte, store Store, users CurrentUser, channels Conversations, posts PostTargets, writes *mattermost.ConversationMutations, postWrites *mattermost.PostMutations) (*Service, error) {
+type Option func(*Service) error
+
+func WithAttachmentExecution(directory string, writes *mattermost.FileMutations) Option {
+	return func(service *Service) error {
+		if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || writes == nil {
+			return ErrInvalid
+		}
+		service.spoolDirectory, service.fileWrites = directory, writes
+		return nil
+	}
+}
+
+func New(serverURL, serverID string, credentials [][]byte, store Store, users CurrentUser, channels Conversations, posts PostTargets, writes *mattermost.ConversationMutations, postWrites *mattermost.PostMutations, options ...Option) (*Service, error) {
 	protected, validCredentials := cloneCredentials(credentials)
 	if serverURL == "" || !validCredentials || store == nil || users == nil || channels == nil || posts == nil || writes == nil || postWrites == nil {
 		return nil, ErrInvalid
 	}
-	return &Service{serverURL: serverURL, serverID: serverID, store: store, users: users, channels: channels, posts: posts, writes: writes, postWrites: postWrites, credentials: protected}, nil
+	service := &Service{serverURL: serverURL, serverID: serverID, store: store, users: users, channels: channels, posts: posts, writes: writes, postWrites: postWrites, credentials: protected}
+	for _, option := range options {
+		if option == nil || option(service) != nil {
+			return nil, ErrInvalid
+		}
+	}
+	return service, nil
 }
 
 func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (stagestore.ApplyReceipt, error) {
@@ -132,7 +156,21 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 		return stagestore.ApplyReceipt{}, ErrCredential
 	}
 	if len(detail.Attachments) > 0 {
-		return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
+		if detail.Operation != stagestore.CreatePost && detail.Operation != stagestore.Reply || s.fileWrites == nil || s.spoolDirectory == "" {
+			return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
+		}
+		if s.attachmentsContainCredential(detail.Attachments) {
+			return stagestore.ApplyReceipt{}, ErrCredential
+		}
+		for _, attachment := range detail.Attachments {
+			if attachment.FileIdentity == ([32]byte{}) || attachment.ByteLength <= 0 {
+				return stagestore.ApplyReceipt{}, ErrTargetDrift
+			}
+		}
+		serverMax, _ := s.fileWrites.DiscoverMaxUploadBytes(ctx)
+		if err := stageinput.ValidateSpoolBudget(detail.Attachments, s.spoolDirectory, serverMax); err != nil {
+			return stagestore.ApplyReceipt{}, errors.Join(ErrAttachmentBudget, err)
+		}
 	}
 	attempt, err := s.store.ClaimApply(ctx, in)
 	if err != nil {
@@ -155,9 +193,18 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 		return s.applyReaction(ctx, attempt, detail.Operation, current.ID, destination)
 	}
 	if detail.Operation == stagestore.CreatePost || detail.Operation == stagestore.Reply || detail.Operation == stagestore.EditPost || detail.Operation == stagestore.DeletePost {
-		return s.applyPost(ctx, attempt, detail.Operation, current.ID, destination, detail.Body)
+		return s.applyPost(ctx, attempt, detail.Operation, current.ID, destination, detail.Body, detail.Attachments)
 	}
 	return s.applyConversation(ctx, attempt, detail.Operation, current.ID, destination)
+}
+
+func (s *Service) attachmentsContainCredential(values []stagestore.Attachment) bool {
+	for _, value := range values {
+		if s.containsCredential(value.SuppliedPath, value.CanonicalPath, value.RemoteFilename, value.MediaType) {
+			return true
+		}
+	}
+	return false
 }
 
 func supportedOperation(operation stagestore.Operation) bool {
@@ -192,7 +239,7 @@ func (s *Service) applyConversation(ctx context.Context, attempt stagestore.Appl
 	}
 	result, remoteErr := prepared.Execute(ctx)
 	if remoteErr != nil {
-		return s.recordRemoteFailure(ctx, attempt.ID, remoteErr)
+		return s.recordRemoteFailure(ctx, attempt.ID, 1, remoteErr)
 	}
 	validated, found, validationErr := s.findConversation(ctx, operation, currentUserID, destination.ParticipantIDs)
 	if validationErr != nil || !found || validated.ID != result.ChannelID {
@@ -226,7 +273,7 @@ func (s *Service) findConversation(ctx context.Context, operation stagestore.Ope
 	return s.channels.ExistingGroup(ctx, currentUserID, participantIDs)
 }
 
-func (s *Service) recordRemoteFailure(ctx context.Context, attemptID string, remoteErr error) (stagestore.ApplyReceipt, error) {
+func (s *Service) recordRemoteFailure(ctx context.Context, attemptID string, ordinal int, remoteErr error) (stagestore.ApplyReceipt, error) {
 	journalCtx := context.WithoutCancel(ctx)
 	var rejected *api.APIError
 	var err error
@@ -237,9 +284,9 @@ func (s *Service) recordRemoteFailure(ctx context.Context, attemptID string, rem
 		if marshalErr != nil {
 			return stagestore.ApplyReceipt{}, fmt.Errorf("%w: %v", ErrJournal, marshalErr)
 		}
-		err = s.store.MarkStepRejected(journalCtx, attemptID, 1, result)
+		err = s.store.MarkStepRejected(journalCtx, attemptID, ordinal, result)
 	} else {
-		err = s.store.MarkStepUnknown(journalCtx, attemptID, 1)
+		err = s.store.MarkStepUnknown(journalCtx, attemptID, ordinal)
 	}
 	if err != nil {
 		return stagestore.ApplyReceipt{}, errors.Join(remoteErr, fmt.Errorf("%w: %v", ErrJournal, err))

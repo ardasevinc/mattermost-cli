@@ -610,8 +610,16 @@ func applyServiceWithCredentials(t *testing.T, serverURL string, store Store, cr
 
 type faultStore struct {
 	*stagestore.Store
-	skipErr, unknownErr, validatedErr, finalizeErr error
-	beforeSkip                                     func()
+	skipErr, unknownErr, validatedErr, finalizeErr, beginErr error
+	beginOrdinal                                             int
+	beforeSkip                                               func()
+}
+
+func (s *faultStore) BeginDispatch(ctx context.Context, attemptID string, ordinal int) error {
+	if s.beginErr != nil && ordinal == s.beginOrdinal {
+		return s.beginErr
+	}
+	return s.Store.BeginDispatch(ctx, attemptID, ordinal)
 }
 
 func (s *faultStore) MarkStepSkipped(ctx context.Context, attemptID string, ordinal int, result json.RawMessage) error {

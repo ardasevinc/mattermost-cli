@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,6 +175,9 @@ func (s *Store) Close() error {
 	})
 	return s.closeErr
 }
+
+// StateDir returns the already validated private directory containing the store.
+func (s *Store) StateDir() string { return filepath.Dir(s.path) }
 
 func sqliteURI(path string, readOnly bool) string {
 	u := &url.URL{Scheme: "file", Path: path}

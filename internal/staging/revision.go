@@ -65,6 +65,9 @@ func (r *Reviser) Revise(ctx context.Context, in ReviseInput) (RevisionResult, e
 	if detail.ID != in.StageID {
 		return RevisionResult{}, ErrStore
 	}
+	if detail.Recovery == stagestore.RecoveryPartial {
+		return RevisionResult{}, ErrNotEligible
+	}
 	if detail.Operation != stagestore.CreatePost && detail.Operation != stagestore.Reply && detail.Operation != stagestore.EditPost {
 		return RevisionResult{}, ErrNotEligible
 	}

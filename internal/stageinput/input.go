@@ -16,10 +16,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	MaxAttachments      = 100
+	MaxAttachments      = 5
+	MaxSpoolBytes       = int64(512 << 20)
+	MinSpoolFreeReserve = int64(64 << 20)
 	maxPathBytes        = 4096
 	maxFilenameBytes    = 255
 	maxMediaTypeBytes   = 255
@@ -35,6 +38,8 @@ var (
 	ErrFileChanged   = errors.New("stage input: attachment changed while binding")
 	ErrUnsupported   = errors.New("stage input: secure attachment binding unsupported on this platform")
 	ErrTooMany       = errors.New("stage input: too many attachments")
+	ErrTooLarge      = errors.New("stage input: attachment spool budget exceeded")
+	ErrNoSpoolSpace  = errors.New("stage input: insufficient private spool space")
 	ErrCredentialSet = errors.New("stage input: invalid protected credential set")
 )
 
@@ -117,6 +122,9 @@ func Bind(ctx context.Context, inputs []Attachment, credentials [][]byte) ([]sta
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		if length == 0 {
+			return nil, ErrInvalid
+		}
 		if statErr != nil || closeErr != nil {
 			return nil, ErrUnsafeFile
 		}
@@ -139,7 +147,8 @@ func Bind(ctx context.Context, inputs []Attachment, credentials [][]byte) ([]sta
 			return nil, ErrFileChanged
 		}
 		bound = append(bound, stagestore.Attachment{SuppliedPath: input.supplied, CanonicalPath: input.canonical,
-			RemoteFilename: input.filename, ByteLength: length, MediaType: mediaType, ContentDigest: digest})
+			RemoteFilename: input.filename, ByteLength: length, MediaType: mediaType, ContentDigest: digest,
+			FileIdentity: before.binding()})
 	}
 	return bound, nil
 }
@@ -162,6 +171,7 @@ func prepareMetadata(input Attachment) (preparedAttachment, error) {
 	if filename == "" {
 		filename = filepath.Base(canonical)
 	}
+	filename = norm.NFC.String(filename)
 	if !validText(filename, maxFilenameBytes) || strings.TrimSpace(filename) != filename || filename == "." || filename == ".." || strings.ContainsAny(filename, `/\`) || filepath.Base(filename) != filename {
 		return preparedAttachment{}, ErrInvalid
 	}

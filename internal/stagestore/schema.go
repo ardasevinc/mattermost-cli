@@ -485,4 +485,22 @@ CREATE TRIGGER apply_requests_history_immutable_delete BEFORE DELETE ON apply_re
 WHEN NOT EXISTS(SELECT 1 FROM apply_attempts a WHERE a.id=OLD.attempt_id AND a.outcome IS NULL)
  OR EXISTS(SELECT 1 FROM apply_steps WHERE attempt_id=OLD.attempt_id AND state!='pending')
 BEGIN SELECT RAISE(ABORT, 'dispatched apply requests are immutable'); END;
+`}, {version: 9, name: "attachment-identity-binding", sql: `
+CREATE TABLE stage_attachment_identities (
+  stage_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  ordinal INTEGER NOT NULL,
+  file_identity BLOB NOT NULL CHECK (length(file_identity) = 32),
+  PRIMARY KEY (stage_id,revision,ordinal),
+  FOREIGN KEY (stage_id,revision,ordinal) REFERENCES stage_attachments(stage_id,revision,ordinal) ON DELETE CASCADE
+) STRICT;
+CREATE TRIGGER stage_attachment_identity_immutable_update BEFORE UPDATE ON stage_attachment_identities
+BEGIN SELECT RAISE(ABORT, 'stage attachment identity is immutable'); END;
+CREATE TRIGGER stage_attachment_identity_immutable_delete BEFORE DELETE ON stage_attachment_identities
+WHEN EXISTS(SELECT 1 FROM stage_attachments a WHERE a.stage_id=OLD.stage_id AND a.revision=OLD.revision AND a.ordinal=OLD.ordinal)
+BEGIN SELECT RAISE(ABORT, 'stage attachment identity is immutable'); END;
 `}}
+
+func attachmentIdentityAvailable() bool {
+	return len(migrations) >= 9 && migrations[8].version == 9 && migrations[8].name == "attachment-identity-binding"
+}

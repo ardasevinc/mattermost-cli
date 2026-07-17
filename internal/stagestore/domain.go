@@ -26,7 +26,7 @@ const (
 	maxJSONBytes      = 1 << 20
 	maxRequestID      = 256
 	maxListLimit      = 100
-	maxAttachments    = 100
+	maxAttachments    = 5
 	maxFilenameBytes  = 255
 	maxMediaTypeBytes = 256
 )
@@ -78,6 +78,7 @@ type Attachment struct {
 	ByteLength     int64    `json:"byteLength"`
 	MediaType      string   `json:"mediaType,omitempty"`
 	ContentDigest  [32]byte `json:"contentDigest"`
+	FileIdentity   [32]byte `json:"-"`
 }
 type RevisionContent struct {
 	Body        []byte
@@ -270,7 +271,7 @@ func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, err
 			return MutationResult{}, ErrNotEligible
 		}
 		recovery = RecoveryNone
-	} else if base.Lifecycle != LifecycleOpen || base.Recovery == RecoveryForbidden {
+	} else if base.Lifecycle != LifecycleOpen || base.Recovery == RecoveryForbidden || base.Recovery == RecoveryPartial {
 		return MutationResult{}, ErrNotEligible
 	}
 	next := base.Revision + 1
@@ -522,14 +523,33 @@ func scanCurrent(ctx context.Context, tx *sql.Tx, id string) (StageDetail, error
 }
 
 type semanticContent struct {
-	Body        []byte          `json:"body,omitempty"`
-	Destination json.RawMessage `json:"destination"`
-	Plan        json.RawMessage `json:"plan"`
-	Attachments []Attachment    `json:"attachments,omitempty"`
+	Body        []byte               `json:"body,omitempty"`
+	Destination json.RawMessage      `json:"destination"`
+	Plan        json.RawMessage      `json:"plan"`
+	Attachments []semanticAttachment `json:"attachments,omitempty"`
+}
+
+type semanticAttachment struct {
+	SuppliedPath   string   `json:"suppliedPath"`
+	CanonicalPath  string   `json:"canonicalPath"`
+	RemoteFilename string   `json:"remoteFilename"`
+	ByteLength     int64    `json:"byteLength"`
+	MediaType      string   `json:"mediaType,omitempty"`
+	ContentDigest  [32]byte `json:"contentDigest"`
+	FileIdentity   []byte   `json:"fileIdentity,omitempty"`
 }
 
 func (v RevisionContent) semantic() semanticContent {
-	return semanticContent{v.Body, v.Destination, v.Plan, v.Attachments}
+	attachments := make([]semanticAttachment, len(v.Attachments))
+	for i, attachment := range v.Attachments {
+		var identity []byte
+		if attachment.FileIdentity != ([32]byte{}) {
+			identity = bytes.Clone(attachment.FileIdentity[:])
+		}
+		attachments[i] = semanticAttachment{attachment.SuppliedPath, attachment.CanonicalPath, attachment.RemoteFilename, attachment.ByteLength,
+			attachment.MediaType, attachment.ContentDigest, identity}
+	}
+	return semanticContent{v.Body, v.Destination, v.Plan, attachments}
 }
 func semanticDigest(op Operation, server, serverID, user string, c RevisionContent) [32]byte {
 	return digestValue(struct {
@@ -613,7 +633,7 @@ func normalizeComposition(op Operation, v Composition) (Composition, error) {
 		return v, ErrInvalid
 	}
 	for _, a := range v.Attachments {
-		if !boundedMetadata(a.SuppliedPath, maxIdentityBytes) || !boundedMetadata(a.CanonicalPath, maxIdentityBytes) || !boundedMetadata(a.RemoteFilename, maxFilenameBytes) || a.ByteLength < 0 || a.ContentDigest == ([32]byte{}) || (a.MediaType != "" && !boundedMetadata(a.MediaType, maxMediaTypeBytes)) {
+		if !boundedMetadata(a.SuppliedPath, maxIdentityBytes) || !boundedMetadata(a.CanonicalPath, maxIdentityBytes) || !boundedMetadata(a.RemoteFilename, maxFilenameBytes) || a.ByteLength <= 0 || a.ContentDigest == ([32]byte{}) || (a.MediaType != "" && !boundedMetadata(a.MediaType, maxMediaTypeBytes)) {
 			return v, ErrInvalid
 		}
 	}
@@ -761,6 +781,11 @@ func insertAttachments(ctx context.Context, tx *sql.Tx, stage string, revision i
 		if _, err := tx.ExecContext(ctx, `INSERT INTO stage_attachments(stage_id,revision,ordinal,supplied_path,canonical_path,remote_filename,byte_length,media_type,content_digest) VALUES(?,?,?,?,?,?,?,?,?)`, stage, revision, i, a.SuppliedPath, a.CanonicalPath, a.RemoteFilename, a.ByteLength, nullable(a.MediaType), a.ContentDigest[:]); err != nil {
 			return localError(err)
 		}
+		if attachmentIdentityAvailable() {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO stage_attachment_identities(stage_id,revision,ordinal,file_identity) VALUES(?,?,?,?)`, stage, revision, i, a.FileIdentity[:]); err != nil {
+				return localError(err)
+			}
+		}
 	}
 	return nil
 }
@@ -771,7 +796,11 @@ type queryer interface {
 }
 
 func readAttachments(ctx context.Context, q queryer, stage string, revision int64) ([]Attachment, error) {
-	rows, err := q.QueryContext(ctx, `SELECT supplied_path,canonical_path,remote_filename,byte_length,coalesce(media_type,''),content_digest FROM stage_attachments WHERE stage_id=? AND revision=? ORDER BY ordinal`, stage, revision)
+	query := `SELECT supplied_path,canonical_path,remote_filename,byte_length,coalesce(media_type,''),content_digest,NULL FROM stage_attachments WHERE stage_id=? AND revision=? ORDER BY ordinal`
+	if attachmentIdentityAvailable() {
+		query = `SELECT a.supplied_path,a.canonical_path,a.remote_filename,a.byte_length,coalesce(a.media_type,''),a.content_digest,i.file_identity FROM stage_attachments a LEFT JOIN stage_attachment_identities i USING(stage_id,revision,ordinal) WHERE a.stage_id=? AND a.revision=? ORDER BY a.ordinal`
+	}
+	rows, err := q.QueryContext(ctx, query, stage, revision)
 	if err != nil {
 		return nil, localError(err)
 	}
@@ -779,14 +808,17 @@ func readAttachments(ctx context.Context, q queryer, stage string, revision int6
 	out := make([]Attachment, 0)
 	for rows.Next() {
 		var a Attachment
-		var digest []byte
-		if err = rows.Scan(&a.SuppliedPath, &a.CanonicalPath, &a.RemoteFilename, &a.ByteLength, &a.MediaType, &digest); err != nil {
+		var digest, identity []byte
+		if err = rows.Scan(&a.SuppliedPath, &a.CanonicalPath, &a.RemoteFilename, &a.ByteLength, &a.MediaType, &digest, &identity); err != nil {
 			return nil, localError(err)
 		}
-		if len(digest) != 32 {
+		if len(digest) != 32 || len(identity) != 0 && len(identity) != 32 {
 			return nil, localError(errors.New("digest"))
 		}
 		copy(a.ContentDigest[:], digest)
+		if len(identity) == 32 {
+			copy(a.FileIdentity[:], identity)
+		}
 		out = append(out, a)
 	}
 	return out, localError(rows.Err())

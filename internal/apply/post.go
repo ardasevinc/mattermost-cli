@@ -8,11 +8,15 @@ import (
 	"strings"
 
 	"github.com/ardasevinc/mattermost-cli/internal/mattermost"
+	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
 	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 	"github.com/ardasevinc/mattermost-cli/internal/staging"
 )
 
-func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt, operation stagestore.Operation, currentUserID string, destination staging.Destination, body []byte) (stagestore.ApplyReceipt, error) {
+func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt, operation stagestore.Operation, currentUserID string, destination staging.Destination, body []byte, attachments []stagestore.Attachment) (stagestore.ApplyReceipt, error) {
+	if len(attachments) > 0 {
+		return s.applyPostWithAttachments(ctx, attempt, operation, currentUserID, destination, body, attachments)
+	}
 	switch operation {
 	case stagestore.CreatePost, stagestore.Reply:
 		rootID := ""
@@ -28,7 +32,7 @@ func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt
 		if err = s.revalidatePostTarget(ctx, operation, currentUserID, destination); err != nil {
 			return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
 		}
-		return executePrepared(s, ctx, attempt.ID, prepared.Execute)
+		return executePrepared(s, ctx, attempt.ID, 1, prepared.Execute)
 	case stagestore.EditPost:
 		post, err := s.revalidateBoundPost(ctx, currentUserID, destination)
 		if err != nil {
@@ -43,7 +47,7 @@ func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt
 		if err != nil {
 			return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, err)
 		}
-		return executePrepared(s, ctx, attempt.ID, prepared.Execute)
+		return executePrepared(s, ctx, attempt.ID, 1, prepared.Execute)
 	case stagestore.DeletePost:
 		prepared, err := s.postWrites.PrepareDelete(mattermost.DeletePostMutationInput{PostID: *destination.PostID})
 		if err != nil {
@@ -52,26 +56,120 @@ func (s *Service) applyPost(ctx context.Context, attempt stagestore.ApplyAttempt
 		if _, err = s.revalidateBoundPost(ctx, currentUserID, destination); err != nil {
 			return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
 		}
-		return executePrepared(s, ctx, attempt.ID, prepared.Execute)
+		return executePrepared(s, ctx, attempt.ID, 1, prepared.Execute)
 	default:
 		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, ErrUnsupportedOperation)
 	}
 }
 
-func executePrepared[T any](s *Service, ctx context.Context, attemptID string, execute func(context.Context) (T, error)) (stagestore.ApplyReceipt, error) {
-	if err := s.store.BeginDispatch(ctx, attemptID, 1); err != nil {
+func executePrepared[T any](s *Service, ctx context.Context, attemptID string, ordinal int, execute func(context.Context) (T, error)) (stagestore.ApplyReceipt, error) {
+	if err := s.store.BeginDispatch(ctx, attemptID, ordinal); err != nil {
+		if ordinal > 1 {
+			return s.stopCompoundBeforeDispatch(ctx, attemptID, err)
+		}
 		return stagestore.ApplyReceipt{}, s.abandon(ctx, attemptID, err)
 	}
 	result, remoteErr := execute(ctx)
 	if remoteErr != nil {
-		return s.recordRemoteFailure(ctx, attemptID, remoteErr)
+		return s.recordRemoteFailure(ctx, attemptID, ordinal, remoteErr)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
 	}
 	journalCtx := context.WithoutCancel(ctx)
-	if err = s.store.MarkStepValidated(journalCtx, attemptID, 1, encoded); err != nil {
+	if err = s.store.MarkStepValidated(journalCtx, attemptID, ordinal, encoded); err != nil {
+		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
+	}
+	receipt, err := s.finalizeReceipt(journalCtx, attemptID)
+	if err != nil {
+		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
+	}
+	return receipt, nil
+}
+
+func (s *Service) applyPostWithAttachments(ctx context.Context, attempt stagestore.ApplyAttempt, operation stagestore.Operation, currentUserID string, destination staging.Destination, body []byte, attachments []stagestore.Attachment) (stagestore.ApplyReceipt, error) {
+	if operation != stagestore.CreatePost && operation != stagestore.Reply || len(attachments) == 0 || len(attachments) > stageinput.MaxAttachments {
+		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, ErrUnsupportedOperation)
+	}
+	if err := s.revalidatePostTarget(ctx, operation, currentUserID, destination); err != nil {
+		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
+	}
+	spools := make([]*stageinput.Spool, len(attachments))
+	defer func() {
+		for _, spool := range spools {
+			if spool != nil {
+				_ = spool.Close()
+			}
+		}
+	}()
+	for i, attachment := range attachments {
+		spool, err := stageinput.Snapshot(ctx, attachment, s.credentials, s.spoolDirectory)
+		if err != nil {
+			return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
+		}
+		spools[i] = spool
+	}
+
+	fileIDs := make([]string, 0, len(spools))
+	for i, spool := range spools {
+		ordinal := i + 1
+		prepared, err := s.fileWrites.PrepareUpload(mattermost.UploadMutationInput{
+			ChannelID: destination.ChannelID, UserID: currentUserID, Filename: spool.RemoteFilename, MediaType: spool.MediaType, Length: spool.Length, Body: spool,
+		})
+		if err != nil {
+			return s.stopCompoundBeforeDispatch(ctx, attempt.ID, err)
+		}
+		spools[i] = nil // ownership transferred to the prepared mutation
+		if err = s.store.BeginDispatch(ctx, attempt.ID, ordinal); err != nil {
+			_ = prepared.Close()
+			return s.stopCompoundBeforeDispatch(ctx, attempt.ID, err)
+		}
+		result, remoteErr := prepared.Execute(ctx)
+		if remoteErr != nil {
+			return s.recordRemoteFailure(ctx, attempt.ID, ordinal, remoteErr)
+		}
+		if s.containsCredential(result.FileID) {
+			journalCtx := context.WithoutCancel(ctx)
+			if err = s.store.MarkStepUnknown(journalCtx, attempt.ID, ordinal); err != nil {
+				return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
+			}
+			return s.finalizeReceipt(journalCtx, attempt.ID)
+		}
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
+		}
+		if err = s.store.MarkStepValidated(context.WithoutCancel(ctx), attempt.ID, ordinal, encoded); err != nil {
+			return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
+		}
+		fileIDs = append(fileIDs, result.FileID)
+	}
+
+	if err := s.revalidatePostTarget(ctx, operation, currentUserID, destination); err != nil {
+		if sealErr := s.store.SealRemainingNotDispatched(context.WithoutCancel(ctx), attempt.ID); sealErr != nil {
+			return stagestore.ApplyReceipt{}, &ConfirmedEffectError{sealErr}
+		}
+		return s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
+	}
+	rootID := ""
+	if destination.RootPostID != nil {
+		rootID = *destination.RootPostID
+	}
+	prepared, err := s.postWrites.PrepareCreate(mattermost.CreatePostMutationInput{ChannelID: destination.ChannelID, UserID: currentUserID,
+		Message: string(body), RootID: rootID, FileIDs: fileIDs, PendingPostID: attempt.PendingPostID})
+	if err != nil {
+		return s.stopCompoundBeforeDispatch(ctx, attempt.ID, err)
+	}
+	return executePrepared(s, ctx, attempt.ID, len(attachments)+1, prepared.Execute)
+}
+
+func (s *Service) stopCompoundBeforeDispatch(ctx context.Context, attemptID string, cause error) (stagestore.ApplyReceipt, error) {
+	journalCtx := context.WithoutCancel(ctx)
+	if err := s.store.SealRemainingNotDispatched(journalCtx, attemptID); err != nil {
+		if errors.Is(err, stagestore.ErrNotEligible) {
+			return stagestore.ApplyReceipt{}, s.abandon(ctx, attemptID, cause)
+		}
 		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
 	}
 	receipt, err := s.finalizeReceipt(journalCtx, attemptID)

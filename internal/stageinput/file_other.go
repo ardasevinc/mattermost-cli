@@ -8,5 +8,6 @@ type fileIdentity struct{ size int64 }
 
 func (a fileIdentity) sameFile(fileIdentity) bool       { return false }
 func (a fileIdentity) stable(fileIdentity) bool         { return false }
+func (a fileIdentity) binding() [32]byte                { return [32]byte{} }
 func openSecure(string) (*os.File, fileIdentity, error) { return nil, fileIdentity{}, ErrUnsupported }
 func fileIdentityOf(*os.File) (fileIdentity, error)     { return fileIdentity{}, ErrUnsupported }

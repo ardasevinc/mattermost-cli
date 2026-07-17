@@ -41,7 +41,7 @@ func (s *Service) applyReaction(ctx context.Context, attempt stagestore.ApplyAtt
 	}
 	result, remoteErr := prepared.Execute(ctx)
 	if remoteErr != nil {
-		return s.recordRemoteFailure(ctx, attempt.ID, remoteErr)
+		return s.recordRemoteFailure(ctx, attempt.ID, 1, remoteErr)
 	}
 	present, validationErr := s.revalidateReaction(ctx, currentUserID, destination)
 	if validationErr != nil || operation == stagestore.React && !present || operation == stagestore.Unreact && present {

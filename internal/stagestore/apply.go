@@ -213,6 +213,45 @@ func (s *Store) MarkStepSkipped(ctx context.Context, attemptID string, ordinal i
 	return s.transitionStep(ctx, attemptID, ordinal, StepPending, StepSkipped, result)
 }
 
+// SealRemainingNotDispatched closes a compound attempt after confirmed early
+// effects when a fresh local precondition prevents the next dispatch.
+func (s *Store) SealRemainingNotDispatched(ctx context.Context, attemptID string) error {
+	if ctx == nil || !bounded(attemptID, maxIdentityBytes) {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return localError(err)
+	}
+	defer tx.Rollback()
+	attempt, err := scanApplyAttempt(ctx, tx, attemptID)
+	if err != nil {
+		return err
+	}
+	hasEffect, hasPending := false, false
+	for _, step := range attempt.Steps {
+		switch step.State {
+		case StepValidated, StepSkipped:
+			hasEffect = true
+		case StepPending:
+			hasPending = true
+		default:
+			return ErrNotEligible
+		}
+	}
+	if !hasEffect || !hasPending {
+		return ErrNotEligible
+	}
+	if err = sealPendingSteps(ctx, tx, &attempt, formatTime(time.Now().UTC()), "not_dispatched"); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return localError(err)
+	}
+	runCommitHook()
+	return nil
+}
+
 func (s *Store) transitionStep(ctx context.Context, attemptID string, ordinal int, from, to StepState, result json.RawMessage) error {
 	if ctx == nil || !bounded(attemptID, maxIdentityBytes) || ordinal < 1 || !validStepTransition(from, to) {
 		return ErrInvalid

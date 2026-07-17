@@ -117,13 +117,13 @@ func validResolvedTeam(team mattermost.Team) bool {
 }
 
 func validBoundAttachments(values []stagestore.Attachment) bool {
-	if len(values) > 100 {
+	if len(values) > 5 {
 		return false
 	}
 	for _, value := range values {
 		if !validBoundText(value.SuppliedPath, 4096) || !validBoundText(value.CanonicalPath, 4096) ||
 			!validBoundText(value.RemoteFilename, 255) || (value.MediaType != "" && !validBoundText(value.MediaType, 255)) ||
-			value.ByteLength < 0 || value.ContentDigest == ([32]byte{}) {
+			value.ByteLength <= 0 || value.ContentDigest == ([32]byte{}) {
 			return false
 		}
 	}

@@ -248,7 +248,7 @@ Only operations with mutable composition may be revised. Top-level posts and rep
 
 Attachments are path-backed, not copied into SQLite or managed blob storage.
 
-At staging time v2 records, at minimum:
+At staging time v2 accepts at most five ordered attachments, matching the maximum file-ID set accepted by a Mattermost post. It records, at minimum:
 
 - caller-provided path;
 - canonical path information needed for later safe reopening;
@@ -256,14 +256,17 @@ At staging time v2 records, at minimum:
 - byte length;
 - detected or explicit media type;
 - cryptographic content digest.
+- local file identity needed to reject replacement even when replacement bytes are identical.
 
 Apply securely reopens and rehashes the file. Missing, inaccessible, non-regular, replaced, symlink-swapped, resized, or digest-mismatched files cause a local conflict before upload. v2 never silently uploads bytes different from the staged revision.
 
-To close the hash-to-upload race without retaining attachment copies between commands, apply copies each securely opened source into a private `0600` spool file while hashing it. Only a complete spool whose digest and length match the staged revision may be uploaded. Upload reads the spool, not the original path. Thus path-backed staging remains low-storage at rest while dispatched bytes are an immutable snapshot of the reviewed file.
+Development databases upgraded from a pre-identity schema cannot safely infer this binding. Their existing attachment revisions remain inspectable but ineligible for apply until an ordinary revision securely rebinds the attachment sources.
 
-Spools live under a private per-attempt directory. A spool is deleted after validated success or definitive rejection once the journal commit is durable. It is retained for partial/unknown recovery when it represents bytes that may need exact reuse. On startup, unreferenced spools and spools whose journal proves no dispatch are removed; spools referenced by a stale applying claim are retained while that claim becomes unknown. Explicit prune removes retained spools only under the recovery-destructive rules below.
+To close the hash-to-upload race without retaining attachment copies between commands, apply copies every securely opened source into a private `0600` spool file while hashing it before the first remote dispatch. Only a complete spool whose identity, digest, and length match the staged revision may be uploaded. Each completed spool is unlinked while its descriptor remains open; upload reads that descriptor, not the original path. Thus path-backed staging remains low-storage at rest while dispatched bytes are an immutable snapshot of the reviewed file.
 
-Server upload limits are checked before upload when discoverable. Upload and post creation are separate remote substeps and therefore use the compound-operation journal.
+Spools are execution-only snapshots and never durable recovery artifacts. Process exit closes their descriptors and leaves no pathname to reconcile. A later explicit recovery securely reopens and respools the staged source; if the exact bound source is unavailable, recovery fails closed until the source is restored or recovery is explicitly abandoned. Validated upload steps recover from their journaled file IDs after fresh remote metadata revalidation, not by uploading the file again.
+
+Attachments are non-empty and limited to five per post. Server per-file upload limits are checked before upload when discoverable; a dispatched `413` is a definitive rejection. Checked arithmetic caps an attempt's aggregate spool bytes at 512 MiB, and apply refuses to begin unless the private state filesystem can retain that snapshot while preserving a 64 MiB free-space reserve. Upload and post creation are separate remote substeps and therefore use the compound-operation journal.
 
 ## 11. Supported remote mutation lifecycle
 
@@ -366,7 +369,7 @@ Normal transitions are:
 
 An interrupted or stale `applying` claim creates an `unknown` attempt outcome unless the journal proves no remote mutation dispatch was handed to the transport. The stage returns to `open` with aggregate `force_unknown`. Lease expiry never makes a mutation ordinarily replayable.
 
-Revise is refused while `applying` or after `completed`, `canceled`, or `pruned`. An expired stage may be revised only with `stage revise <id> --revive`, which atomically returns it to `open` with a new revision. Revision never clears recovery history: revising after partial or unknown carries `resume_partial` or `force_unknown` to the new revision. Revised content is therefore still gated by the unresolved risk of prior effects.
+Revise is refused while `applying`, while recovery is `resume_partial`, or after `completed`, `canceled`, or `pruned`. Partial recovery is bound to the exact immutable attachment ordinals that produced its confirmed effects; it must be completed or explicitly abandoned before composition can change. An expired stage may be revised only with `stage revise <id> --revive`, which atomically returns it to `open` with a new revision. Revision never clears unknown recovery history: revising after an unknown attempt carries `force_unknown` to the new revision. Revised content is therefore still gated by the unresolved risk of prior effects.
 
 Ordinary `mm apply <id>@<revision>` requires the exact current revision, lifecycle `open`, and recovery requirement `none`.
 

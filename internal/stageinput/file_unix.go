@@ -3,6 +3,8 @@
 package stageinput
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,6 +25,18 @@ type fileIdentity struct {
 func (a fileIdentity) sameFile(b fileIdentity) bool { return a.dev == b.dev && a.ino == b.ino }
 func (a fileIdentity) stable(b fileIdentity) bool {
 	return a.sameFile(b) && a.mode == b.mode && a.nlink == b.nlink && a.size == b.size && a.mtimeNsec == b.mtimeNsec && a.ctimeNsec == b.ctimeNsec
+}
+
+func (a fileIdentity) binding() [32]byte {
+	var encoded [52]byte
+	binary.BigEndian.PutUint64(encoded[0:8], a.dev)
+	binary.BigEndian.PutUint64(encoded[8:16], a.ino)
+	binary.BigEndian.PutUint32(encoded[16:20], a.mode)
+	binary.BigEndian.PutUint64(encoded[20:28], a.nlink)
+	binary.BigEndian.PutUint64(encoded[28:36], uint64(a.size))
+	binary.BigEndian.PutUint64(encoded[36:44], uint64(a.mtimeNsec))
+	binary.BigEndian.PutUint64(encoded[44:52], uint64(a.ctimeNsec))
+	return sha256.Sum256(encoded[:])
 }
 
 func openSecure(path string) (*os.File, fileIdentity, error) {
