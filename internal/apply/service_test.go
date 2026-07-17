@@ -67,7 +67,7 @@ func TestApplyResolveDMCreatesOnceAndReplaysDurableReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	service, err := New(server.URL+"/api/v4", "", store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewConversationMutations(client))
+	service, err := New(server.URL+"/api/v4", "", [][]byte{[]byte("token")}, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +81,27 @@ func TestApplyResolveDMCreatesOnceAndReplaysDurableReceipt(t *testing.T) {
 	if err != nil || !replay.Replay || replay.AttemptID != receipt.AttemptID || writes.Load() != 1 {
 		t.Fatalf("replay=%+v err=%v writes=%d", replay, err, writes.Load())
 	}
+	rotated, err := New(server.URL+"/api/v4", "", [][]byte{[]byte("peer")}, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rotated.Apply(context.Background(), claim); !errors.Is(err, ErrCredential) {
+		t.Fatalf("rotated credential replay error=%v", err)
+	}
+	rotatedResult, err := New(server.URL+"/api/v4", "", [][]byte{[]byte("dm-1")}, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rotatedResult.Apply(context.Background(), claim); !errors.Is(err, ErrCredential) {
+		t.Fatalf("rotated result credential replay error=%v", err)
+	}
+	rotatedTimestamp, err := New(server.URL+"/api/v4", "", [][]byte{[]byte("2026")}, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rotatedTimestamp.Apply(context.Background(), claim); !errors.Is(err, ErrCredential) {
+		t.Fatalf("rotated timestamp credential replay error=%v", err)
+	}
 }
 
 func TestDecodeResolveDestinationAcceptsCanonicalUnresolvedDM(t *testing.T) {
@@ -88,6 +109,57 @@ func TestDecodeResolveDestinationAcceptsCanonicalUnresolvedDM(t *testing.T) {
 	destination, err := decodeResolveDestination(stagestore.ResolveDM, raw, "self")
 	if err != nil || destination.ChannelType != "dm" || !slices.Equal(destination.ParticipantIDs, []string{"peer"}) {
 		t.Fatalf("destination=%+v err=%v", destination, err)
+	}
+}
+
+func TestDecodeReactionDestinationRejectsUnknownMissingAndNullMembers(t *testing.T) {
+	valid := `{"channelId":"channel-1","channelType":"public","emoji":"eyes","kind":"reaction","participantIds":[],"postId":"post-1","postState":null,"reactionPresent":false,"rootPostId":null,"teamId":"team-1"}`
+	for name, raw := range map[string]string{
+		"unknown-replaces-required": strings.Replace(valid, `"postState":null`, `"extra":null`, 1),
+		"null-participants":         strings.Replace(valid, `"participantIds":[]`, `"participantIds":null`, 1),
+		"missing-required":          strings.Replace(valid, `,"postState":null`, ``, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeReactionDestination(json.RawMessage(raw)); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("error=%v raw=%s", err, raw)
+			}
+		})
+	}
+}
+
+func TestApplyBlocksCurrentCredentialInStoredOutboundFieldsBeforeNetworkOrClaim(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		http.NotFound(response, request)
+	}))
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createResolveStage(t, store, server.URL+"/api/v4", stagestore.ResolveDM, "dm", []string{"peer"})
+	service, client := applyServiceWithCredentials(t, server.URL, store, [][]byte{[]byte("peer")})
+	defer client.Close()
+	_, err := service.Apply(context.Background(), applyClaim(stage, "apply-credential"))
+	detail, showErr := store.Show(context.Background(), stage.Stage.ID)
+	if !errors.Is(err, ErrCredential) || showErr != nil || detail.Lifecycle != stagestore.LifecycleOpen || calls.Load() != 0 {
+		t.Fatalf("detail=%+v applyErr=%v showErr=%v calls=%d", detail.StageSummary, err, showErr, calls.Load())
+	}
+}
+
+func TestApplyBlocksCurrentCredentialAsRequestIDBeforePersistenceOrNetwork(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		http.NotFound(response, request)
+	}))
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createResolveStage(t, store, server.URL+"/api/v4", stagestore.ResolveDM, "dm", []string{"peer"})
+	service, client := applyServiceWithCredentials(t, server.URL, store, [][]byte{[]byte("request-secret")})
+	defer client.Close()
+	_, err := service.Apply(context.Background(), applyClaim(stage, "request-secret"))
+	detail, showErr := store.Show(context.Background(), stage.Stage.ID)
+	if !errors.Is(err, ErrCredential) || showErr != nil || detail.Lifecycle != stagestore.LifecycleOpen || calls.Load() != 0 {
+		t.Fatalf("detail=%+v applyErr=%v showErr=%v calls=%d", detail.StageSummary, err, showErr, calls.Load())
 	}
 }
 
@@ -332,6 +404,137 @@ func TestApplyResolveDMReportsConfirmedEffectWhenValidatedResultCannotBeJournale
 	}
 }
 
+func TestApplyReactionExecutesOrSkipsFromFreshAuthoritativeState(t *testing.T) {
+	for _, test := range []struct {
+		name, operation string
+		initial, skip   bool
+	}{
+		{"add", string(stagestore.React), false, false},
+		{"remove", string(stagestore.Unreact), true, false},
+		{"already-present", string(stagestore.React), true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var present atomic.Bool
+			present.Store(test.initial)
+			var writes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.RequestURI() {
+				case "/api/v4/users/me":
+					_, _ = io.WriteString(response, `{"id":"self","username":"arda"}`)
+				case "/api/v4/posts/post-1":
+					_, _ = io.WriteString(response, `{"id":"post-1","channel_id":"channel-1","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]}`)
+				case "/api/v4/channels/channel-1":
+					_, _ = io.WriteString(response, `{"id":"channel-1","team_id":"team-1","type":"O","name":"town-square","display_name":"Town Square"}`)
+				case "/api/v4/channels/channel-1/members/self":
+					_, _ = io.WriteString(response, `{"channel_id":"channel-1","user_id":"self"}`)
+				case "/api/v4/posts/post-1/reactions":
+					if present.Load() {
+						_, _ = io.WriteString(response, `[{"user_id":"self","post_id":"post-1","emoji_name":"eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":null,"channel_id":"channel-1"}]`)
+					} else {
+						_, _ = io.WriteString(response, `[]`)
+					}
+				case "/api/v4/reactions":
+					body, _ := io.ReadAll(request.Body)
+					if request.Method != http.MethodPost || string(body) != `{"user_id":"self","post_id":"post-1","emoji_name":"eyes"}` {
+						response.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					writes.Add(1)
+					present.Store(true)
+					_, _ = io.WriteString(response, `{"user_id":"self","post_id":"post-1","emoji_name":"eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":"","channel_id":"channel-1"}`)
+				case "/api/v4/users/self/posts/post-1/reactions/eyes":
+					if request.Method != http.MethodDelete {
+						response.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					writes.Add(1)
+					present.Store(false)
+					_, _ = io.WriteString(response, `{"status":"OK"}`)
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			defer server.Close()
+			store := openApplyStore(t)
+			operation := stagestore.Operation(test.operation)
+			stage := createReactionStage(t, store, server.URL+"/api/v4", operation, test.initial)
+			service, client := applyService(t, server.URL, store)
+			defer client.Close()
+			receipt, err := service.Apply(context.Background(), applyClaim(stage, "apply-reaction-"+test.name))
+			wantOutcome, wantState, wantWrites := stagestore.OutcomeSucceeded, stagestore.StepValidated, int32(1)
+			if test.skip {
+				wantOutcome, wantState, wantWrites = stagestore.OutcomeAlreadySatisfied, stagestore.StepSkipped, 0
+			}
+			if err != nil || receipt.Outcome != wantOutcome || receipt.Steps[0].State != wantState || writes.Load() != wantWrites {
+				t.Fatalf("receipt=%+v err=%v writes=%d", receipt, err, writes.Load())
+			}
+		})
+	}
+}
+
+func TestApplyReactionTreatsUnconfirmedSuccessfulResponseAsUnknown(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/api/v4/users/me":
+			_, _ = io.WriteString(response, `{"id":"self","username":"arda"}`)
+		case "/api/v4/posts/post-1":
+			_, _ = io.WriteString(response, `{"id":"post-1","channel_id":"channel-1","user_id":"author","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]}`)
+		case "/api/v4/channels/channel-1":
+			_, _ = io.WriteString(response, `{"id":"channel-1","team_id":"team-1","type":"O","name":"town-square","display_name":"Town Square"}`)
+		case "/api/v4/channels/channel-1/members/self":
+			_, _ = io.WriteString(response, `{"channel_id":"channel-1","user_id":"self"}`)
+		case "/api/v4/posts/post-1/reactions":
+			_, _ = io.WriteString(response, `[]`)
+		case "/api/v4/reactions":
+			writes.Add(1)
+			_, _ = io.WriteString(response, `{"user_id":"self","post_id":"post-1","emoji_name":"eyes","create_at":1,"update_at":1,"delete_at":0,"remote_id":"","channel_id":"channel-1"}`)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createReactionStage(t, store, server.URL+"/api/v4", stagestore.React, false)
+	service, client := applyService(t, server.URL, store)
+	defer client.Close()
+	receipt, err := service.Apply(context.Background(), applyClaim(stage, "apply-reaction-unconfirmed"))
+	if err != nil || receipt.Outcome != stagestore.OutcomeUnknown || receipt.Recovery != stagestore.RecoveryUnknown || receipt.Steps[0].State != stagestore.StepUnknown || writes.Load() != 1 {
+		t.Fatalf("receipt=%+v err=%v writes=%d", receipt, err, writes.Load())
+	}
+}
+
+func TestApplyReactionRejectsStaleDMMembershipBeforeDispatch(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.RequestURI() {
+		case "/api/v4/users/me":
+			_, _ = io.WriteString(response, `{"id":"self","username":"arda"}`)
+		case "/api/v4/posts/post-1":
+			_, _ = io.WriteString(response, `{"id":"post-1","channel_id":"dm-1","user_id":"peer","message":"hello","create_at":1,"update_at":1,"delete_at":0,"root_id":"","type":"","file_ids":[]}`)
+		case "/api/v4/users/self/channels":
+			_, _ = io.WriteString(response, `[{"id":"dm-1","team_id":"","type":"D","name":"peer__self","display_name":""}]`)
+		case "/api/v4/channels/dm-1/members?page=0&per_page=9":
+			_, _ = io.WriteString(response, `[{"channel_id":"dm-1","user_id":"self"}]`)
+		case "/api/v4/reactions":
+			writes.Add(1)
+			response.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	store := openApplyStore(t)
+	stage := createDMReactionStage(t, store, server.URL+"/api/v4")
+	service, client := applyService(t, server.URL, store)
+	defer client.Close()
+	_, err := service.Apply(context.Background(), applyClaim(stage, "apply-stale-dm-reaction"))
+	detail, showErr := store.Show(context.Background(), stage.Stage.ID)
+	if !errors.Is(err, ErrTargetDrift) || showErr != nil || detail.Lifecycle != stagestore.LifecycleOpen || writes.Load() != 0 {
+		t.Fatalf("detail=%+v applyErr=%v showErr=%v writes=%d", detail.StageSummary, err, showErr, writes.Load())
+	}
+}
+
 func openApplyStore(t *testing.T) *stagestore.Store {
 	t.Helper()
 	store, err := stagestore.Open(context.Background(), filepath.Join(t.TempDir(), "state", "mattermost-cli", stagestore.DatabaseFilename))
@@ -353,6 +556,32 @@ func createResolveStage(t *testing.T, store *stagestore.Store, serverURL string,
 	return result.MutationResult
 }
 
+func createReactionStage(t *testing.T, store *stagestore.Store, serverURL string, operation stagestore.Operation, present bool) stagestore.MutationResult {
+	t.Helper()
+	destination := []byte(fmt.Sprintf(`{"channelId":"channel-1","channelType":"public","emoji":"eyes","kind":"reaction","participantIds":[],"postId":"post-1","postState":null,"reactionPresent":%t,"rootPostId":null,"teamId":"team-1"}`, present))
+	stepType := "add_reaction"
+	if operation == stagestore.Unreact {
+		stepType = "remove_reaction"
+	}
+	plan := []byte(`{"steps":[{"ordinal":1,"type":"` + stepType + `","condition":"if_missing"}]}`)
+	result, err := store.Create(context.Background(), stagestore.CreateInput{RequestDigest: sha256.Sum256([]byte("reaction-stage\x00" + string(operation))), Operation: operation, ServerURL: serverURL, UserID: "self", Content: stagestore.RevisionContent{Destination: destination, Plan: plan}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.MutationResult
+}
+
+func createDMReactionStage(t *testing.T, store *stagestore.Store, serverURL string) stagestore.MutationResult {
+	t.Helper()
+	destination := []byte(`{"channelId":"dm-1","channelType":"dm","emoji":"eyes","kind":"reaction","participantIds":["peer"],"postId":"post-1","postState":null,"reactionPresent":false,"rootPostId":null,"teamId":null}`)
+	plan := []byte(`{"steps":[{"ordinal":1,"type":"add_reaction","condition":"if_missing"}]}`)
+	result, err := store.Create(context.Background(), stagestore.CreateInput{RequestDigest: sha256.Sum256([]byte("dm-reaction-stage")), Operation: stagestore.React, ServerURL: serverURL, UserID: "self", Content: stagestore.RevisionContent{Destination: destination, Plan: plan}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.MutationResult
+}
+
 func applyClaim(stage stagestore.MutationResult, requestID string) stagestore.ApplyClaimInput {
 	return stagestore.ApplyClaimInput{StageID: stage.Stage.ID, RequestID: requestID, Revision: stage.Stage.Revision, ExpectedDigest: stage.Stage.SemanticDigest, RequestDigest: sha256.Sum256([]byte(requestID)), RecoveryMode: stagestore.RecoveryModeOrdinary}
 }
@@ -362,12 +591,16 @@ func applyService(t *testing.T, serverURL string, store *stagestore.Store) (*Ser
 }
 
 func applyServiceWithStore(t *testing.T, serverURL string, store Store) (*Service, *api.Client) {
+	return applyServiceWithCredentials(t, serverURL, store, [][]byte{[]byte("token")})
+}
+
+func applyServiceWithCredentials(t *testing.T, serverURL string, store Store, credentials [][]byte) (*Service, *api.Client) {
 	t.Helper()
 	client, err := api.New(serverURL, "token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(serverURL+"/api/v4", "", store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewConversationMutations(client))
+	service, err := New(serverURL+"/api/v4", "", credentials, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
 	if err != nil {
 		client.Close()
 		t.Fatal(err)

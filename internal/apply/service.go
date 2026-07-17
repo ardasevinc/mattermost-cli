@@ -21,6 +21,7 @@ var (
 	ErrTargetDrift          = errors.New("apply: staged target no longer matches Mattermost")
 	ErrUnsupportedOperation = errors.New("apply: operation is not implemented")
 	ErrJournal              = errors.New("apply: durable journal update failed")
+	ErrCredential           = errors.New("apply: active credential in outbound content")
 )
 
 // ConfirmedEffectError means Mattermost confirmed the effect but its durable
@@ -52,6 +53,13 @@ type CurrentUser interface {
 type Conversations interface {
 	ExistingDirect(context.Context, string, string) (mattermost.Channel, bool, error)
 	ExistingGroup(context.Context, string, []string) (mattermost.Channel, bool, error)
+	ByID(context.Context, string) (mattermost.Channel, error)
+	Member(context.Context, string, string) (mattermost.ChannelMember, error)
+}
+
+type PostTargets interface {
+	ByID(context.Context, string) (mattermost.Post, error)
+	ReactionState(context.Context, string, string, string, string) (bool, error)
 }
 
 type Service struct {
@@ -59,19 +67,26 @@ type Service struct {
 	store               Store
 	users               CurrentUser
 	channels            Conversations
+	posts               PostTargets
 	writes              *mattermost.ConversationMutations
+	postWrites          *mattermost.PostMutations
+	credentials         [][]byte
 }
 
-func New(serverURL, serverID string, store Store, users CurrentUser, channels Conversations, writes *mattermost.ConversationMutations) (*Service, error) {
-	if serverURL == "" || store == nil || users == nil || channels == nil || writes == nil {
+func New(serverURL, serverID string, credentials [][]byte, store Store, users CurrentUser, channels Conversations, posts PostTargets, writes *mattermost.ConversationMutations, postWrites *mattermost.PostMutations) (*Service, error) {
+	protected, validCredentials := cloneCredentials(credentials)
+	if serverURL == "" || !validCredentials || store == nil || users == nil || channels == nil || posts == nil || writes == nil || postWrites == nil {
 		return nil, ErrInvalid
 	}
-	return &Service{serverURL: serverURL, serverID: serverID, store: store, users: users, channels: channels, writes: writes}, nil
+	return &Service{serverURL: serverURL, serverID: serverID, store: store, users: users, channels: channels, posts: posts, writes: writes, postWrites: postWrites, credentials: protected}, nil
 }
 
 func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (stagestore.ApplyReceipt, error) {
 	if ctx == nil || s == nil {
 		return stagestore.ApplyReceipt{}, ErrInvalid
+	}
+	if s.containsCredential(in.RequestID) {
+		return stagestore.ApplyReceipt{}, ErrCredential
 	}
 	detail, err := s.store.Show(ctx, in.StageID)
 	if err != nil {
@@ -79,6 +94,21 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 	}
 	if detail.ServerURL != s.serverURL || detail.ServerID != s.serverID {
 		return stagestore.ApplyReceipt{}, ErrTargetDrift
+	}
+	if detail.Operation != stagestore.ResolveDM && detail.Operation != stagestore.ResolveGroupDM && detail.Operation != stagestore.React && detail.Operation != stagestore.Unreact {
+		return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
+	}
+	var destination staging.Destination
+	if detail.Operation == stagestore.ResolveDM || detail.Operation == stagestore.ResolveGroupDM {
+		destination, err = decodeResolveDestination(detail.Operation, detail.Destination, detail.UserID)
+	} else {
+		destination, err = decodeReactionDestination(detail.Destination)
+	}
+	if err != nil {
+		return stagestore.ApplyReceipt{}, err
+	}
+	if s.destinationContainsCredential(destination, detail.UserID) {
+		return stagestore.ApplyReceipt{}, ErrCredential
 	}
 	if in.RequestID != "" {
 		replay, found, findErr := s.store.FindApply(ctx, detail.ServerURL, detail.UserID, in.RequestID, in.RequestDigest)
@@ -89,25 +119,18 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 			if replay.StageID != in.StageID || replay.Revision != in.Revision || replay.SemanticDigest != in.ExpectedDigest || replay.RecoveryMode != in.RecoveryMode {
 				return stagestore.ApplyReceipt{}, stagestore.ErrConflict
 			}
-			return s.store.FinalizeApply(ctx, replay.ID)
+			return s.finalizeReceipt(ctx, replay.ID)
 		}
 	}
 	if detail.Revision != in.Revision || detail.SemanticDigest != in.ExpectedDigest {
 		return stagestore.ApplyReceipt{}, stagestore.ErrConflict
-	}
-	if detail.Operation != stagestore.ResolveDM && detail.Operation != stagestore.ResolveGroupDM {
-		return stagestore.ApplyReceipt{}, ErrUnsupportedOperation
-	}
-	destination, err := decodeResolveDestination(detail.Operation, detail.Destination, detail.UserID)
-	if err != nil {
-		return stagestore.ApplyReceipt{}, err
 	}
 	attempt, err := s.store.ClaimApply(ctx, in)
 	if err != nil {
 		return stagestore.ApplyReceipt{}, err
 	}
 	if attempt.Replay {
-		return s.store.FinalizeApply(ctx, attempt.ID)
+		return s.finalizeReceipt(ctx, attempt.ID)
 	}
 	current, err := s.users.Current(ctx)
 	if err != nil {
@@ -115,6 +138,9 @@ func (s *Service) Apply(ctx context.Context, in stagestore.ApplyClaimInput) (sta
 	}
 	if current.ID != detail.UserID {
 		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, ErrTargetDrift)
+	}
+	if detail.Operation == stagestore.React || detail.Operation == stagestore.Unreact {
+		return s.applyReaction(ctx, attempt, detail.Operation, current.ID, destination)
 	}
 	return s.applyConversation(ctx, attempt, detail.Operation, current.ID, destination)
 }
@@ -136,11 +162,7 @@ func (s *Service) applyConversation(ctx context.Context, attempt stagestore.Appl
 		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, errors.Join(ErrTargetDrift, err))
 	}
 	if found {
-		journalCtx := context.WithoutCancel(ctx)
-		if err = s.store.MarkStepSkipped(journalCtx, attempt.ID, 1, json.RawMessage(`{"reason":"already_satisfied"}`)); err != nil {
-			return stagestore.ApplyReceipt{}, s.abandon(journalCtx, attempt.ID, fmt.Errorf("%w: %v", ErrJournal, err))
-		}
-		return s.store.FinalizeApply(journalCtx, attempt.ID)
+		return s.skip(ctx, attempt.ID)
 	}
 	if err = s.store.BeginDispatch(ctx, attempt.ID, 1); err != nil {
 		return stagestore.ApplyReceipt{}, s.abandon(ctx, attempt.ID, err)
@@ -154,7 +176,7 @@ func (s *Service) applyConversation(ctx context.Context, attempt stagestore.Appl
 		if err = s.store.MarkStepUnknown(context.WithoutCancel(ctx), attempt.ID, 1); err != nil {
 			return stagestore.ApplyReceipt{}, errors.Join(&api.OutcomeUnknownError{}, fmt.Errorf("%w: %v", ErrJournal, err))
 		}
-		receipt, finalizeErr := s.store.FinalizeApply(context.WithoutCancel(ctx), attempt.ID)
+		receipt, finalizeErr := s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
 		if finalizeErr != nil {
 			return stagestore.ApplyReceipt{}, errors.Join(&api.OutcomeUnknownError{}, fmt.Errorf("%w: %v", ErrJournal, finalizeErr))
 		}
@@ -167,7 +189,7 @@ func (s *Service) applyConversation(ctx context.Context, attempt stagestore.Appl
 	if err = s.store.MarkStepValidated(context.WithoutCancel(ctx), attempt.ID, 1, encoded); err != nil {
 		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
 	}
-	receipt, err := s.store.FinalizeApply(context.WithoutCancel(ctx), attempt.ID)
+	receipt, err := s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
 	if err != nil {
 		return stagestore.ApplyReceipt{}, &ConfirmedEffectError{err}
 	}
@@ -199,7 +221,7 @@ func (s *Service) recordRemoteFailure(ctx context.Context, attemptID string, rem
 	if err != nil {
 		return stagestore.ApplyReceipt{}, errors.Join(remoteErr, fmt.Errorf("%w: %v", ErrJournal, err))
 	}
-	receipt, finalizeErr := s.store.FinalizeApply(journalCtx, attemptID)
+	receipt, finalizeErr := s.finalizeReceipt(journalCtx, attemptID)
 	if finalizeErr != nil {
 		return stagestore.ApplyReceipt{}, errors.Join(remoteErr, fmt.Errorf("%w: %v", ErrJournal, finalizeErr))
 	}
@@ -213,13 +235,31 @@ func (s *Service) abandon(ctx context.Context, attemptID string, cause error) er
 	return cause
 }
 
-func decodeResolveDestination(operation stagestore.Operation, raw json.RawMessage, currentUserID string) (staging.Destination, error) {
-	var canonical map[string]any
-	if json.Unmarshal(raw, &canonical) != nil || len(canonical) != 10 {
-		return staging.Destination{}, ErrInvalid
+func (s *Service) skip(ctx context.Context, attemptID string) (stagestore.ApplyReceipt, error) {
+	journalCtx := context.WithoutCancel(ctx)
+	if err := s.store.MarkStepSkipped(journalCtx, attemptID, 1, json.RawMessage(`{"reason":"already_satisfied"}`)); err != nil {
+		return stagestore.ApplyReceipt{}, s.abandon(journalCtx, attemptID, fmt.Errorf("%w: %v", ErrJournal, err))
 	}
-	canonicalRaw, err := json.Marshal(canonical)
-	if err != nil || !bytes.Equal(canonicalRaw, raw) {
+	return s.finalizeReceipt(journalCtx, attemptID)
+}
+
+func (s *Service) finalizeReceipt(ctx context.Context, attemptID string) (stagestore.ApplyReceipt, error) {
+	receipt, err := s.store.FinalizeApply(ctx, attemptID)
+	if err != nil {
+		return stagestore.ApplyReceipt{}, err
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return stagestore.ApplyReceipt{}, fmt.Errorf("%w: encode receipt: %v", ErrJournal, err)
+	}
+	if s.rawContainsCredentialValue(encoded) {
+		return stagestore.ApplyReceipt{}, ErrCredential
+	}
+	return receipt, nil
+}
+
+func decodeResolveDestination(operation stagestore.Operation, raw json.RawMessage, currentUserID string) (staging.Destination, error) {
+	if !canonicalDestination(raw) {
 		return staging.Destination{}, ErrInvalid
 	}
 	var wire struct {
@@ -256,4 +296,80 @@ func decodeResolveDestination(operation stagestore.Operation, raw json.RawMessag
 		}
 	}
 	return destination, nil
+}
+
+func canonicalDestination(raw json.RawMessage) bool {
+	var canonical map[string]any
+	if json.Unmarshal(raw, &canonical) != nil || len(canonical) != 10 {
+		return false
+	}
+	encoded, err := json.Marshal(canonical)
+	return err == nil && bytes.Equal(encoded, raw)
+}
+
+func cloneCredentials(values [][]byte) ([][]byte, bool) {
+	if len(values) == 0 {
+		return nil, false
+	}
+	cloned := make([][]byte, len(values))
+	for index, value := range values {
+		if len(value) == 0 {
+			return nil, false
+		}
+		cloned[index] = bytes.Clone(value)
+	}
+	return cloned, true
+}
+
+func (s *Service) destinationContainsCredential(destination staging.Destination, currentUserID string) bool {
+	values := []string{currentUserID, destination.ChannelID, destination.ChannelType}
+	values = append(values, destination.ParticipantIDs...)
+	for _, optional := range []*string{destination.TeamID, destination.PostID, destination.RootPostID, destination.Emoji} {
+		if optional != nil {
+			values = append(values, *optional)
+		}
+	}
+	return s.containsCredential(values...)
+}
+
+func (s *Service) containsCredential(values ...string) bool {
+	for _, value := range values {
+		for _, credential := range s.credentials {
+			if bytes.Contains([]byte(value), credential) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) rawContainsCredentialValue(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return true
+	}
+	var visit func(any) bool
+	visit = func(candidate any) bool {
+		switch typed := candidate.(type) {
+		case string:
+			return s.containsCredential(typed)
+		case []any:
+			for _, item := range typed {
+				if visit(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			for _, item := range typed {
+				if visit(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return visit(value)
 }
