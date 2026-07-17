@@ -6,15 +6,17 @@
   "required": ["schema", "latest", "migrations"],
   "properties": {
     "schema": { "const": "mm/v2/store-migrations" },
-    "latest": { "const": 3 },
+    "latest": { "const": 4 },
     "migrations": {
-      "type": "array", "minItems": 3, "maxItems": 3,
+      "type": "array", "minItems": 4, "maxItems": 4,
       "prefixItems": [{ "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 1 }, "name": { "const": "core-stage-state" }, "checksum": { "const": "e69a3e2524903dbdb4ef5a9691ce8674fac8fe284d09e95bc5983ec9e9fef92f" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 2 }, "name": { "const": "immutable-local-request-receipts" }, "checksum": { "const": "ac1c291e7201786935cce68dd459f61150048c505e4f29ad813304c309009b8c" }
       } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
         "version": { "const": 3 }, "name": { "const": "caller-intent-stage-create-replay" }, "checksum": { "const": "237315b734e034951a7394ef708273af5f91ea6a44abe9927537571fbcee78d5" }
+      } }, { "type": "object", "additionalProperties": false, "required": ["version", "name", "checksum"], "properties": {
+        "version": { "const": 4 }, "name": { "const": "caller-intent-stage-revise-replay" }, "checksum": { "const": "c4076ad9dba0494142f0a9cddd94e1ddcfb9c6384729f5a5f54098c8eb24f9e4" }
       } }],
       "items": false
     }

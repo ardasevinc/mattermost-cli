@@ -156,7 +156,10 @@ func unsafeIdentityRune(r rune) bool {
 }
 
 func validRequestID(value string) bool {
-	if value == "" || len(value) > 256 || !requestCharacter(value[0], true) {
+	if value == "" {
+		return true
+	}
+	if len(value) > 256 || !requestCharacter(value[0], true) {
 		return false
 	}
 	for i := 1; i < len(value); i++ {

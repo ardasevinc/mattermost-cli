@@ -255,11 +255,11 @@ func TestBoundAttachmentRejectsAdditionalBidiControls(t *testing.T) {
 	}
 }
 
-func TestCreateRequiresRequestIDAndMapsConflict(t *testing.T) {
+func TestCreateAllowsHumanRequestWithoutReplayIDAndMapsConflict(t *testing.T) {
 	store := &recordingStore{}
 	s, _, _ := dmService(t, store)
 	_, err := s.CreatePost(context.Background(), CreatePostInput{Target: dmTarget(), Body: bytes.NewReader([]byte("hello"))})
-	if !errors.Is(err, ErrInvalid) || store.calls != 0 {
+	if err != nil || store.calls != 1 || store.in.RequestID != "" {
 		t.Fatalf("empty request error/calls = %v/%d", err, store.calls)
 	}
 	store.err = stagestore.ErrConflict

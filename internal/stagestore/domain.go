@@ -18,6 +18,7 @@ import (
 
 	"github.com/ardasevinc/mattermost-cli/internal/messageinput"
 	"github.com/ardasevinc/mattermost-cli/internal/serverurl"
+	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
 )
 
 const (
@@ -106,6 +107,7 @@ type ReviseInput struct {
 	StageID, RequestID string
 	ExpectedRevision   int64
 	ExpectedDigest     [32]byte
+	RequestDigest      [32]byte
 	Revive             bool
 	Composition        Composition
 }
@@ -143,7 +145,23 @@ type MutationResult struct {
 	RecordedAt time.Time    `json:"recordedAt"`
 	Replay     bool         `json:"-"`
 }
-type ListOptions struct{ Limit int }
+type ListOptions struct {
+	Limit int
+	After *stagecursor.Boundary
+}
+
+// ListRecord is the non-content projection used by public stage listings.
+// Destination is included in the listing query so callers need not issue one
+// Show query per stage.
+type ListRecord struct {
+	StageSummary
+	Destination json.RawMessage
+}
+
+type ListPage struct {
+	Records    []ListRecord
+	NextCursor *string
+}
 
 func (s *Store) Create(ctx context.Context, in CreateInput) (CreateRecord, error) {
 	if err := ctx.Err(); err != nil {
@@ -220,20 +238,23 @@ func (s *Store) Revise(ctx context.Context, in ReviseInput) (MutationResult, err
 	if err != nil {
 		return MutationResult{}, err
 	}
+	if !validOperation(base.Operation) {
+		return MutationResult{}, localError(errors.New("stored operation"))
+	}
+	if base.Operation != CreatePost && base.Operation != Reply && base.Operation != EditPost {
+		return MutationResult{}, ErrNotEligible
+	}
 	composition, err := normalizeComposition(base.Operation, in.Composition)
 	if err != nil {
 		return MutationResult{}, ErrInvalid
 	}
 	content := RevisionContent{composition.Body, bytes.Clone(base.Destination), bytes.Clone(base.Plan), composition.Attachments}
-	requestDigest := digestValue(struct {
-		Action, StageID  string
-		ExpectedRevision int64
-		ExpectedDigest   [32]byte
-		Revive           bool
-		Composition      Composition
-	}{"revise", in.StageID, in.ExpectedRevision, in.ExpectedDigest, in.Revive, composition})
+	requestDigest := in.RequestDigest
+	if in.RequestID != "" && requestDigest == ([32]byte{}) {
+		return MutationResult{}, ErrInvalid
+	}
 	if in.RequestID != "" {
-		if result, found, e := loadReplay(ctx, tx, base.ServerURL, base.UserID, in.RequestID, "mm/v2/stage-revise-request", requestDigest); e != nil {
+		if result, found, e := loadReviseReplay(ctx, tx, base.ServerURL, base.UserID, in.RequestID, requestDigest); e != nil {
 			return MutationResult{}, e
 		} else if found {
 			return result, nil
@@ -312,6 +333,9 @@ func (s *Store) Cancel(ctx context.Context, in CancelInput) (MutationResult, err
 		if result, found, e := loadReplay(ctx, tx, base.ServerURL, base.UserID, in.RequestID, "mm/v2/stage-cancel-request", digest); e != nil {
 			return MutationResult{}, e
 		} else if found {
+			if result.Stage != base.StageSummary || result.Action != "cancel" || result.Stage.Lifecycle != LifecycleCanceled || result.Stage.Recovery != RecoveryForbidden {
+				return MutationResult{}, localError(errors.New("cancel receipt projection"))
+			}
 			return result, nil
 		}
 	}
@@ -354,33 +378,86 @@ func (s *Store) Show(ctx context.Context, id string) (StageDetail, error) {
 		return detail, err
 	}
 	detail.Attachments, err = readAttachments(ctx, s.db, id, detail.Revision)
-	return detail, err
+	if err != nil {
+		return detail, err
+	}
+	if !VerifyDetail(detail) {
+		return StageDetail{}, localError(errors.New("stored stage detail"))
+	}
+	return detail, nil
 }
 func (s *Store) List(ctx context.Context, o ListOptions) ([]StageSummary, error) {
+	page, err := s.ListRecords(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StageSummary, len(page.Records))
+	for i := range page.Records {
+		out[i] = page.Records[i].StageSummary
+	}
+	return out, nil
+}
+
+func (s *Store) ListRecords(ctx context.Context, o ListOptions) (ListPage, error) {
 	limit := o.Limit
 	if limit == 0 {
 		limit = 50
 	}
 	if limit < 1 || limit > maxListLimit {
-		return nil, ErrInvalid
+		return ListPage{}, ErrInvalid
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.server_url,coalesce(s.server_id,''),s.user_id,s.operation,s.lifecycle,s.recovery,r.revision,r.semantic_digest,s.created_at,s.updated_at FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=s.current_revision ORDER BY s.updated_at DESC,s.id ASC LIMIT ?`, limit)
+	var boundaryTime, boundaryID string
+	if o.After != nil {
+		encoded, encodeErr := stagecursor.Encode(*o.After)
+		if encodeErr != nil || encoded == "" {
+			return ListPage{}, ErrInvalid
+		}
+		boundaryTime, boundaryID = formatListTime(o.After.UpdatedAt), o.After.StageID
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.server_url,coalesce(s.server_id,''),s.user_id,s.operation,s.lifecycle,s.recovery,r.revision,r.semantic_digest,s.created_at,s.updated_at,r.destination_json
+		FROM stages s LEFT JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=s.current_revision
+		WHERE ?='' OR substr(s.updated_at,1,23) < ? OR (substr(s.updated_at,1,23) = ? AND s.id > ?)
+		ORDER BY substr(s.updated_at,1,23) DESC,s.id ASC LIMIT ?`, boundaryTime, boundaryTime, boundaryTime, boundaryID, limit+1)
 	if err != nil {
-		return nil, localError(err)
+		return ListPage{}, localError(err)
 	}
 	defer rows.Close()
-	out := make([]StageSummary, 0)
+	out := make([]ListRecord, 0, limit+1)
 	for rows.Next() {
-		v, e := scanSummary(rows)
-		if e != nil {
-			return nil, e
+		var v ListRecord
+		var digest []byte
+		var created, updated, destination string
+		e := rows.Scan(&v.ID, &v.ServerURL, &v.ServerID, &v.UserID, &v.Operation, &v.Lifecycle, &v.Recovery, &v.Revision, &digest, &created, &updated, &destination)
+		if e == nil && len(digest) != 32 {
+			e = errors.New("digest")
 		}
+		if e == nil {
+			copy(v.SemanticDigest[:], digest)
+			v.CreatedAt, e = parseTime(created)
+		}
+		if e == nil {
+			v.UpdatedAt, e = parseTime(updated)
+		}
+		if e != nil {
+			return ListPage{}, localError(e)
+		}
+		v.Destination = json.RawMessage(destination)
 		out = append(out, v)
 	}
 	if err = rows.Err(); err != nil {
-		return nil, localError(err)
+		return ListPage{}, localError(err)
 	}
-	return out, nil
+	page := ListPage{Records: out}
+	if len(out) > limit {
+		page.Records = out[:limit]
+		last := page.Records[len(page.Records)-1]
+		cursor, encodeErr := stagecursor.Encode(stagecursor.Boundary{UpdatedAt: last.UpdatedAt, StageID: last.ID})
+		if encodeErr != nil {
+			return ListPage{}, localError(encodeErr)
+		}
+		page.NextCursor = &cursor
+	}
+	return page, nil
 }
 
 const currentDetailSQL = `SELECT s.id,s.server_url,coalesce(s.server_id,''),s.user_id,s.operation,s.lifecycle,s.recovery,r.revision,r.semantic_digest,s.created_at,s.updated_at,r.created_at,r.body,r.destination_json,r.plan_json FROM stages s JOIN stage_revisions r ON r.stage_id=s.id AND r.revision=s.current_revision WHERE s.id=?`
@@ -461,6 +538,37 @@ func semanticDigest(op Operation, server, serverID, user string, c RevisionConte
 		UserID    string          `json:"userId"`
 		Content   semanticContent `json:"content"`
 	}{op, server, serverID, user, c.semantic()})
+}
+
+// ComputeSemanticDigest normalizes a complete retained revision and returns
+// the digest used to bind review and apply to its exact semantics.
+func ComputeSemanticDigest(op Operation, server, serverID, user string, content RevisionContent) ([32]byte, error) {
+	if !validOperation(op) || !canonicalServerURL(server) || !bounded(user, maxIdentityBytes) || serverID != "" && !bounded(serverID, maxIdentityBytes) {
+		return [32]byte{}, ErrInvalid
+	}
+	normalized, err := normalizeContent(op, content)
+	if err != nil {
+		return [32]byte{}, ErrInvalid
+	}
+	return semanticDigest(op, server, serverID, user, normalized), nil
+}
+
+// VerifyDetail checks the current stored projection before content is exposed.
+func VerifyDetail(detail StageDetail) bool {
+	if !validStoredSummary(detail.StageSummary) || detail.RevisionCreatedAt.IsZero() || detail.RevisionCreatedAt.Before(detail.CreatedAt) || detail.RevisionCreatedAt.After(detail.UpdatedAt) {
+		return false
+	}
+	if detail.Lifecycle == LifecycleCompleted || detail.Lifecycle == LifecyclePruned {
+		if detail.Body != nil || len(detail.Attachments) != 0 {
+			return false
+		}
+		_, destinationErr := canonicalObject(detail.Destination)
+		_, planErr := canonicalObject(detail.Plan)
+		return destinationErr == nil && planErr == nil
+	}
+	digest, err := ComputeSemanticDigest(detail.Operation, detail.ServerURL, detail.ServerID, detail.UserID,
+		RevisionContent{detail.Body, detail.Destination, detail.Plan, detail.Attachments})
+	return err == nil && digest == detail.SemanticDigest
 }
 func normalizeContent(op Operation, v RevisionContent) (RevisionContent, error) {
 	destination, err := canonicalObject(v.Destination)
@@ -678,10 +786,10 @@ func readAttachments(ctx context.Context, q queryer, stage string, revision int6
 	return out, localError(rows.Err())
 }
 
-func loadReplay(ctx context.Context, tx *sql.Tx, server, user, id, schema string, digest [32]byte) (MutationResult, bool, error) {
+func loadReplay(ctx context.Context, q queryer, server, user, id, schema string, digest [32]byte) (MutationResult, bool, error) {
 	var storedSchema, raw, created string
 	var stored []byte
-	err := tx.QueryRowContext(ctx, `SELECT request_schema,request_digest,result_json,created_at FROM local_requests WHERE server_url=? AND user_id=? AND request_id=?`, server, user, id).Scan(&storedSchema, &stored, &raw, &created)
+	err := q.QueryRowContext(ctx, `SELECT request_schema,request_digest,result_json,created_at FROM local_requests WHERE server_url=? AND user_id=? AND request_id=?`, server, user, id).Scan(&storedSchema, &stored, &raw, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MutationResult{}, false, nil
 	}
@@ -699,6 +807,43 @@ func loadReplay(ctx context.Context, tx *sql.Tx, server, user, id, schema string
 		return MutationResult{}, false, localError(errors.New("receipt"))
 	}
 	result.Replay = true
+	return result, true, nil
+}
+
+func (s *Store) FindRevise(ctx context.Context, server, user, id string, digest [32]byte) (MutationResult, bool, error) {
+	if ctx == nil || !canonicalServerURL(server) || !bounded(user, maxIdentityBytes) || !validRequestID(id) || id == "" || digest == ([32]byte{}) {
+		return MutationResult{}, false, ErrInvalid
+	}
+	return loadReviseReplay(ctx, s.db, server, user, id, digest)
+}
+
+func loadReviseReplay(ctx context.Context, q queryer, server, user, id string, digest [32]byte) (MutationResult, bool, error) {
+	result, found, err := loadReplay(ctx, q, server, user, id, "mm/v2/stage-revise-request", digest)
+	if err != nil || !found {
+		return result, found, err
+	}
+	var operation Operation
+	var storedServer, serverID, storedUser, stageCreated, revisionCreated, destination, plan string
+	var semantic, body []byte
+	err = q.QueryRowContext(ctx, `SELECT s.operation,s.server_url,coalesce(s.server_id,''),s.user_id,s.created_at,r.created_at,r.semantic_digest,r.body,r.destination_json,r.plan_json
+		FROM stages s JOIN stage_revisions r ON r.stage_id=s.id WHERE s.id=? AND r.revision=?`, result.Stage.ID, result.Stage.Revision).
+		Scan(&operation, &storedServer, &serverID, &storedUser, &stageCreated, &revisionCreated, &semantic, &body, &destination, &plan)
+	if err != nil {
+		return MutationResult{}, false, localError(err)
+	}
+	attachments, err := readAttachments(ctx, q, result.Stage.ID, result.Stage.Revision)
+	if err != nil {
+		return MutationResult{}, false, err
+	}
+	stageCreatedAt, stageTimeErr := parseTime(stageCreated)
+	revisionCreatedAt, revisionTimeErr := parseTime(revisionCreated)
+	content, contentErr := normalizeContent(operation, RevisionContent{body, json.RawMessage(destination), json.RawMessage(plan), attachments})
+	if stageTimeErr != nil || revisionTimeErr != nil || contentErr != nil || len(semantic) != 32 || operation != result.Stage.Operation ||
+		storedServer != server || serverID != result.Stage.ServerID || storedUser != user || !stageCreatedAt.Equal(result.Stage.CreatedAt) ||
+		!revisionCreatedAt.Equal(result.Stage.UpdatedAt) || !revisionCreatedAt.Equal(result.RecordedAt) ||
+		!bytes.Equal(semantic, result.Stage.SemanticDigest[:]) || semanticDigest(operation, storedServer, serverID, storedUser, content) != result.Stage.SemanticDigest {
+		return MutationResult{}, false, localError(errors.New("revise receipt projection"))
+	}
 	return result, true, nil
 }
 
@@ -723,7 +868,7 @@ func findCreate(ctx context.Context, q queryer, server, user, id string) (Create
 	if err != nil {
 		return CreateRecord{}, false, localError(err)
 	}
-	if schemaName == "mm/v2/legacy-stage-request-conflict" || schemaName == "mm/v2/legacy-request-conflict" || schemaName == "mm/v2/stage-revise-request" || schemaName == "mm/v2/stage-cancel-request" {
+	if schemaName == "mm/v2/legacy-stage-request-conflict" || schemaName == "mm/v2/legacy-stage-revise-conflict" || schemaName == "mm/v2/legacy-request-conflict" || schemaName == "mm/v2/stage-revise-request" || schemaName == "mm/v2/stage-cancel-request" {
 		return CreateRecord{}, false, ErrConflict
 	}
 	if schemaName != "mm/v2/stage-request" || len(digest) != 32 {
@@ -818,6 +963,12 @@ func validRecovery(v Recovery) bool {
 		return true
 	}
 	return false
+}
+
+func validStoredSummary(stage StageSummary) bool {
+	return bounded(stage.ID, maxIdentityBytes) && canonicalServerURL(stage.ServerURL) && bounded(stage.UserID, maxIdentityBytes) && validOperation(stage.Operation) &&
+		stage.Revision > 0 && stage.SemanticDigest != ([32]byte{}) && validLifecycle(stage.Lifecycle) && validRecovery(stage.Recovery) &&
+		!stage.CreatedAt.IsZero() && !stage.UpdatedAt.IsZero() && !stage.UpdatedAt.Before(stage.CreatedAt)
 }
 func persistReplay(ctx context.Context, tx *sql.Tx, server, user, id, schema string, digest [32]byte, result MutationResult, stamp string) error {
 	if id == "" {
@@ -938,8 +1089,9 @@ func parseTime(v string) (time.Time, error) {
 	}
 	return t, nil
 }
-func formatTime(v time.Time) string { return v.UTC().Format("2006-01-02T15:04:05.000000000Z") }
-func oneRow(v sql.Result) bool      { n, err := v.RowsAffected(); return err == nil && n == 1 }
+func formatTime(v time.Time) string     { return v.UTC().Format("2006-01-02T15:04:05.000000000Z") }
+func formatListTime(v time.Time) string { return v.UTC().Format("2006-01-02T15:04:05.000") }
+func oneRow(v sql.Result) bool          { n, err := v.RowsAffected(); return err == nil && n == 1 }
 func runCommitHook() {
 	commitHook.RLock()
 	fn := commitHook.fn

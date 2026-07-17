@@ -93,4 +93,8 @@ BEGIN SELECT RAISE(ABORT, 'stage destination and plan are immutable'); END;
 DROP TRIGGER local_requests_immutable_update;
 UPDATE local_requests SET request_schema='mm/v2/legacy-stage-request-conflict' WHERE request_schema='mm/v2/stage-request';
 CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
+`}, {version: 4, name: "caller-intent-stage-revise-replay", sql: `
+DROP TRIGGER local_requests_immutable_update;
+UPDATE local_requests SET request_schema='mm/v2/legacy-stage-revise-conflict' WHERE request_schema='mm/v2/stage-revise-request';
+CREATE TRIGGER local_requests_immutable_update BEFORE UPDATE ON local_requests BEGIN SELECT RAISE(ABORT, 'local request receipts are immutable'); END;
 `}}

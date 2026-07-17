@@ -19,6 +19,14 @@ type callerIntent struct {
 }
 
 func intentDigest(operation stagestore.Operation, target any, body []byte, emoji string, attachments []stageinput.MetadataIntent) [32]byte {
+	return callerIntentDigest("mm/v2/stage-request/caller-intent/v1", operation, target, body, emoji, attachments)
+}
+
+func revisionRequestDigest(operation stagestore.Operation, target revisionIntent, body []byte, attachments []stageinput.MetadataIntent) [32]byte {
+	return callerIntentDigest("mm/v2/stage-revise-request/caller-intent/v1", operation, target, body, "", attachments)
+}
+
+func callerIntentDigest(domain string, operation stagestore.Operation, target any, body []byte, emoji string, attachments []stageinput.MetadataIntent) [32]byte {
 	var bodyValue *string
 	if body != nil {
 		value := string(body)
@@ -28,7 +36,7 @@ func intentDigest(operation stagestore.Operation, target any, body []byte, emoji
 	if emoji != "" {
 		emojiValue = &emoji
 	}
-	value := callerIntent{"mm/v2/stage-request/caller-intent/v1", operation, target, bodyValue, emojiValue, attachments}
+	value := callerIntent{domain, operation, target, bodyValue, emojiValue, attachments}
 	var out bytes.Buffer
 	encoder := json.NewEncoder(&out)
 	encoder.SetEscapeHTML(false)
@@ -59,4 +67,11 @@ func conversationCallerIntent(target Target) conversationIntent {
 
 type postIntent struct {
 	PostID string `json:"postId"`
+}
+
+type revisionIntent struct {
+	StageID          string   `json:"stageId"`
+	ExpectedRevision int64    `json:"expectedRevision"`
+	ExpectedDigest   [32]byte `json:"expectedDigest"`
+	Revive           bool     `json:"revive"`
 }

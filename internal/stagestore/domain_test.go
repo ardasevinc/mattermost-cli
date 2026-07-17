@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ardasevinc/mattermost-cli/internal/stagecursor"
 )
 
 func openDomainStore(t *testing.T) *Store {
@@ -37,7 +39,8 @@ func TestFindCreateUsesExactReceiptRevisionAndFailsClosedOnCorruption(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	revised, err := s.Revise(context.Background(), ReviseInput{StageID: created.Stage.ID, RequestID: "revise-exact", ExpectedRevision: 1, ExpectedDigest: created.Stage.SemanticDigest, Composition: Composition{Body: []byte("two"), Attachments: in.Content.Attachments}})
+	revised, err := s.Revise(context.Background(), ReviseInput{StageID: created.Stage.ID, RequestID: "revise-exact", ExpectedRevision: 1, ExpectedDigest: created.Stage.SemanticDigest,
+		RequestDigest: sha256.Sum256([]byte("revise-exact")), Composition: Composition{Body: []byte("two"), Attachments: in.Content.Attachments}})
 	if err != nil || revised.Stage.Revision != 2 {
 		t.Fatalf("revise = %#v/%v", revised, err)
 	}
@@ -166,7 +169,7 @@ func TestCreateAndReplayReturnCanonicalAuthoritativeProjection(t *testing.T) {
 	}
 }
 
-func TestMigrationThreeTombstonesOnlyLegacyStageCreates(t *testing.T) {
+func TestCallerIntentMigrationsTombstoneLegacyCreateAndReviseReceipts(t *testing.T) {
 	path := testPath(t)
 	original := migrations
 	migrations = append([]migration(nil), original[:2]...)
@@ -198,16 +201,20 @@ func TestMigrationThreeTombstonesOnlyLegacyStageCreates(t *testing.T) {
 	if err = s.db.QueryRow(`SELECT request_schema FROM local_requests WHERE request_id='revise-kept'`).Scan(&reviseSchema); err != nil {
 		t.Fatal(err)
 	}
-	if createSchema != "mm/v2/legacy-stage-request-conflict" || reviseSchema != "mm/v2/stage-revise-request" {
+	if createSchema != "mm/v2/legacy-stage-request-conflict" || reviseSchema != "mm/v2/legacy-stage-revise-conflict" {
 		t.Fatalf("schemas = %s/%s", createSchema, reviseSchema)
 	}
 	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, in.RequestID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("legacy lookup = %v", err)
 	}
+	if _, _, err = s.FindCreate(context.Background(), in.ServerURL, in.UserID, "revise-kept"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("legacy revise ID reuse = %v", err)
+	}
 }
 func reviseInput(stage StageSummary, request, body string) ReviseInput {
 	content := createInput("", body).Content
-	return ReviseInput{stage.ID, request, stage.Revision, stage.SemanticDigest, false, Composition{content.Body, content.Attachments}}
+	return ReviseInput{StageID: stage.ID, RequestID: request, ExpectedRevision: stage.Revision, ExpectedDigest: stage.SemanticDigest,
+		RequestDigest: sha256.Sum256([]byte(request + "\x00" + body)), Composition: Composition{Body: content.Body, Attachments: content.Attachments}}
 }
 
 func TestRevisePreservesImmutableDestinationAndPlan(t *testing.T) {
@@ -233,6 +240,58 @@ func TestRevisePreservesImmutableDestinationAndPlan(t *testing.T) {
 	}
 	if string(after.Destination) != string(before.Destination) || string(after.Plan) != string(before.Plan) {
 		t.Fatalf("binding changed: destination %s -> %s, plan %s -> %s", before.Destination, after.Destination, before.Plan, after.Plan)
+	}
+}
+
+func TestReviseCallerIntentReplayIgnoresBoundFileDrift(t *testing.T) {
+	s := openDomainStore(t)
+	created, err := s.Create(context.Background(), createInput("", "one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestDigest := sha256.Sum256([]byte("caller body and attachment metadata"))
+	first := reviseInput(created.Stage, "revise-replay", "two")
+	first.RequestDigest = requestDigest
+	revised, err := s.Revise(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := first
+	retry.Composition = Composition{Body: []byte("different bound bytes"), Attachments: []Attachment{attachment("changed.txt")}}
+	replayed, err := s.Revise(context.Background(), retry)
+	if err != nil || !replayed.Replay || replayed.Stage != revised.Stage {
+		t.Fatalf("replayed=%+v err=%v want=%+v", replayed, err, revised)
+	}
+	lookup, found, err := s.FindRevise(context.Background(), revised.Stage.ServerURL, revised.Stage.UserID, first.RequestID, requestDigest)
+	if err != nil || !found || !lookup.Replay || lookup.Stage != revised.Stage {
+		t.Fatalf("lookup=%+v found=%v err=%v", lookup, found, err)
+	}
+	wrong := requestDigest
+	wrong[0] ^= 0xff
+	if _, _, err = s.FindRevise(context.Background(), revised.Stage.ServerURL, revised.Stage.UserID, first.RequestID, wrong); !errors.Is(err, ErrConflict) {
+		t.Fatalf("wrong caller intent = %v", err)
+	}
+	if _, err = s.db.Exec(`DROP TRIGGER local_requests_immutable_update`); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err = s.db.QueryRow(`SELECT result_json FROM local_requests WHERE request_id=?`, first.RequestID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var corrupted MutationResult
+	if err = json.Unmarshal([]byte(raw), &corrupted); err != nil {
+		t.Fatal(err)
+	}
+	corrupted.Stage.ID = "stg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	encoded, err := marshalCanonical(corrupted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE local_requests SET result_json=? WHERE request_id=?`, string(encoded), first.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.FindRevise(context.Background(), revised.Stage.ServerURL, revised.Stage.UserID, first.RequestID, requestDigest); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("corrupt revise projection = %v", err)
 	}
 }
 
@@ -288,6 +347,76 @@ func TestCreateShowListPrivacyAttachmentsAndCanonicalDigest(t *testing.T) {
 	}
 	if len(tiedIDs) != 2 || tiedIDs[0] > tiedIDs[1] {
 		t.Fatalf("nondeterministic tie order: %v", tiedIDs)
+	}
+}
+
+func TestListRecordsUsesHonestKeysetPagination(t *testing.T) {
+	s := openDomainStore(t)
+	for i := range 5 {
+		created, err := s.Create(context.Background(), createInput("", string(rune('a'+i))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Date(2026, 1, 1, 0, 0, 0, 123456780+i, time.UTC)
+		if _, err = s.db.Exec(`UPDATE stages SET updated_at=? WHERE id=?`, formatTime(stamp), created.Stage.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var after *stagecursor.Boundary
+	seen := make(map[string]struct{})
+	for pageNumber := 0; ; pageNumber++ {
+		page, err := s.ListRecords(context.Background(), ListOptions{Limit: 2, After: after})
+		if err != nil || len(page.Records) == 0 || len(page.Records) > 2 {
+			t.Fatalf("page %d = %+v err=%v", pageNumber, page, err)
+		}
+		for _, record := range page.Records {
+			if _, exists := seen[record.ID]; exists {
+				t.Fatalf("duplicate stage %s", record.ID)
+			}
+			seen[record.ID] = struct{}{}
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		boundary, err := stagecursor.Decode(*page.NextCursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after = &boundary
+	}
+	if len(seen) != 5 {
+		t.Fatalf("listed %d stages", len(seen))
+	}
+}
+
+func TestListRecordsFailsClosedWhenCurrentRevisionIsMissing(t *testing.T) {
+	s := openDomainStore(t)
+	created, err := s.Create(context.Background(), createInput("", "body"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE stages SET current_revision=999 WHERE id=?`, created.Stage.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ListRecords(context.Background(), ListOptions{}); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("corrupt current revision = %v", err)
+	}
+}
+
+func TestShowFailsClosedWhenRetainedContentBreaksSemanticDigest(t *testing.T) {
+	s := openDomainStore(t)
+	created, err := s.Create(context.Background(), createInput("", "original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE stage_revisions SET body=? WHERE stage_id=? AND revision=1`, []byte("modified"), created.Stage.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Show(context.Background(), created.Stage.ID); err == nil || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotFound) {
+		t.Fatalf("semantic corruption = %v", err)
 	}
 }
 
@@ -470,8 +599,30 @@ func TestOperationContentApplicability(t *testing.T) {
 	validDelete.Operation = DeletePost
 	validDelete.Content.Body = nil
 	validDelete.Content.Attachments = nil
-	if _, err := s.Create(context.Background(), validDelete); err != nil {
+	createdDelete, err := s.Create(context.Background(), validDelete)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err = s.Revise(context.Background(), ReviseInput{StageID: createdDelete.Stage.ID, ExpectedRevision: 1, ExpectedDigest: createdDelete.Stage.SemanticDigest}); !errors.Is(err, ErrNotEligible) {
+		t.Fatalf("delete revision error = %v", err)
+	}
+}
+
+func TestReviseDistinguishesCorruptOperationFromImmutableOperation(t *testing.T) {
+	s := openDomainStore(t)
+	created, err := s.Create(context.Background(), createInput("operation-corruption", "one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`PRAGMA ignore_check_constraints=ON`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE stages SET operation='corrupt' WHERE id=?`, created.Stage.ID); err != nil {
+		t.Fatal(err)
+	}
+	input := reviseInput(created.Stage, "operation-corruption-revise", "two")
+	if _, err = s.Revise(context.Background(), input); err == nil || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotEligible) {
+		t.Fatalf("corrupt operation error = %v", err)
 	}
 }
 
@@ -529,7 +680,7 @@ func TestBoundsRequestIDOrderingAndCommitCancellation(t *testing.T) {
 			}
 		})
 	}
-	if _, err := s.List(context.Background(), ListOptions{maxListLimit + 1}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.List(context.Background(), ListOptions{Limit: maxListLimit + 1}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("list=%v", err)
 	}
 	preCanceled, stop := context.WithCancel(context.Background())

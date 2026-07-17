@@ -137,3 +137,31 @@ type Store interface {
 }
 
 type AttachmentBinder func(context.Context, []stageinput.Attachment, [][]byte) ([]stagestore.Attachment, error)
+
+// RevisionStore is the narrow offline lifecycle surface used by Reviser.
+type RevisionStore interface {
+	Show(context.Context, string) (stagestore.StageDetail, error)
+	FindRevise(context.Context, string, string, string, [32]byte) (stagestore.MutationResult, bool, error)
+	Revise(context.Context, stagestore.ReviseInput) (stagestore.MutationResult, error)
+	Cancel(context.Context, stagestore.CancelInput) (stagestore.MutationResult, error)
+}
+
+type ReviseInput struct {
+	StageID, RequestID string
+	ExpectedRevision   int64
+	ExpectedDigest     [32]byte
+	Revive             bool
+	Body               io.Reader
+	Attachments        []Attachment
+}
+
+type CancelInput struct {
+	StageID, RequestID string
+	ExpectedRevision   int64
+	ExpectedDigest     [32]byte
+}
+
+type RevisionResult struct {
+	Stored      stagestore.MutationResult
+	Destination []byte
+}

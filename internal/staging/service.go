@@ -24,6 +24,7 @@ var (
 	ErrInput      = errors.New("staging: message or attachment input rejected")
 	ErrStore      = errors.New("staging: stage could not be persisted")
 	ErrConflict   = errors.New("staging: request conflict")
+	ErrNotFound   = errors.New("staging: stage not found")
 )
 
 type Service struct {
@@ -93,15 +94,19 @@ func (s *Service) CreatePost(ctx context.Context, in CreatePostInput) (CreatePos
 	if err != nil {
 		return CreatePostResult{}, err
 	}
-	record, found, err := s.store.FindCreate(ctx, s.serverURL, current.ID, in.RequestID)
-	if err != nil {
-		if errors.Is(err, stagestore.ErrConflict) {
-			return CreatePostResult{}, ErrConflict
+	var record stagestore.CreateRecord
+	var found bool
+	if in.RequestID != "" {
+		record, found, err = s.store.FindCreate(ctx, s.serverURL, current.ID, in.RequestID)
+		if err != nil {
+			if errors.Is(err, stagestore.ErrConflict) {
+				return CreatePostResult{}, ErrConflict
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return CreatePostResult{}, err
+			}
+			return CreatePostResult{}, ErrStore
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return CreatePostResult{}, err
-		}
-		return CreatePostResult{}, ErrStore
 	}
 	if found {
 		if record.Stage.Operation != stagestore.CreatePost {

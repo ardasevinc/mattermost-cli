@@ -43,14 +43,21 @@
       ]
     },
     "attachments": {
-      "type": "array",
-      "maxItems": 100,
-      "items": {
-        "$ref": "#/$defs/attachment"
-      }
+      "anyOf": [
+        {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/attachment"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
-  "$comment": "Whether body and attachments apply is determined from the stored immutable operation. Runtime rejects changes for non-content operations and attachments for operations other than create_post or reply.",
+  "$comment": "A null body or attachments value preserves that part of the current composition; an empty attachment array clears attachments. Whether changes apply is determined from the stored immutable operation. Runtime rejects changes for non-content operations and attachment changes for operations other than create_post or reply.",
   "$defs": {
     "requestId": {
       "type": "string",

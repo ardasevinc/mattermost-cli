@@ -329,6 +329,9 @@ func (s *Service) persistPost(ctx context.Context, requestID string, requestDige
 }
 
 func (s *Service) findCreate(ctx context.Context, userID, requestID string) (stagestore.CreateRecord, bool, error) {
+	if requestID == "" {
+		return stagestore.CreateRecord{}, false, nil
+	}
 	record, found, err := s.store.FindCreate(ctx, s.serverURL, userID, requestID)
 	if err == nil {
 		return record, found, nil
