@@ -582,7 +582,7 @@
         },
         "participantIds": {
           "type": "array",
-          "maxItems": 100,
+          "maxItems": 7,
           "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/id"

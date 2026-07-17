@@ -141,7 +141,7 @@ func (s *Service) resolveGroupFor(ctx context.Context, currentUserID string, use
 }
 
 func validGroupUsernames(usernames []string) bool {
-	if len(usernames) < 2 || len(usernames) > 100 {
+	if len(usernames) < 2 || len(usernames) > 7 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(usernames))

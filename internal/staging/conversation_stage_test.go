@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -83,6 +84,28 @@ func TestResolveGroupCanonicalizesParticipantIDsAndRejectsAmbiguity(t *testing.T
 	users.byName["alias"] = mattermost.User{ID: "a-peer", Username: "alias"}
 	if _, err := service.DryRunResolveGroup(t.Context(), []string{"bob", "alias"}); !errors.Is(err, ErrTarget) {
 		t.Fatalf("duplicate identity error=%v", err)
+	}
+}
+
+func TestResolveGroupEnforcesMattermostPeerLimitsBeforeLookup(t *testing.T) {
+	users := &directoryUsers{current: mattermost.User{ID: "self", Username: "arda"}, byName: make(map[string]mattermost.User)}
+	seven := make([]string, 7)
+	for index := range seven {
+		username := fmt.Sprintf("peer-%d", index)
+		seven[index] = username
+		users.byName[username] = mattermost.User{ID: fmt.Sprintf("user-%d", index), Username: username}
+	}
+	service := conversationStageService(t, users, new(recordingStore), nil)
+	if _, err := service.DryRunResolveGroup(t.Context(), seven); err != nil {
+		t.Fatalf("seven peers rejected: %v", err)
+	}
+	before := users.calls.Load()
+	tooMany := append(append([]string(nil), seven...), "peer-7")
+	if _, err := service.DryRunResolveGroup(t.Context(), tooMany); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("eight peers error=%v", err)
+	}
+	if got := users.calls.Load(); got != before {
+		t.Fatalf("invalid request performed lookups: %d -> %d", before, got)
 	}
 }
 

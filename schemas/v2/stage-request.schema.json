@@ -529,7 +529,7 @@
         "usernames": {
           "type": "array",
           "minItems": 2,
-          "maxItems": 100,
+          "maxItems": 7,
           "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/id"

@@ -56,7 +56,7 @@
         "teamId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
         "postId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
         "rootPostId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
-        "participantIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "participantIds": { "type": "array", "maxItems": 7, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
         "emoji": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_+-]+$" }, { "type": "null" }] },
         "postState": {
           "anyOf": [
@@ -75,7 +75,7 @@
     "createResult": { "type": "object", "additionalProperties": false, "required": ["postId", "createAt", "channelId", "userId", "pendingPostId"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "createAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "channelId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "userId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "pendingPostId": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
     "editResult": { "type": "object", "additionalProperties": false, "required": ["postId", "updateAt"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "updateAt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
     "postResult": { "type": "object", "additionalProperties": false, "required": ["postId"], "properties": { "postId": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
-    "conversationResult": { "type": "object", "additionalProperties": false, "required": ["channelId", "participantIds"], "properties": { "channelId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "participantIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } } } },
+    "conversationResult": { "type": "object", "additionalProperties": false, "required": ["channelId", "participantIds"], "properties": { "channelId": { "type": "string", "minLength": 1, "maxLength": 4096 }, "participantIds": { "type": "array", "maxItems": 7, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } } } },
     "rejectedResult": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "type": "integer", "minimum": 400, "maximum": 499 } } },
     "skippedResult": { "type": "object", "additionalProperties": false, "required": ["reason"], "properties": { "reason": { "const": "already_satisfied" } } },
     "result": {
