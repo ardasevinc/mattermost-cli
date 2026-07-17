@@ -97,6 +97,15 @@ When the selected XDG path differs from the v1 path, migration behavior is manda
 
 v2 never silently moves, rewrites, merges, or deletes the legacy file. `config --init` and all explicit writes target the selected v2 path.
 
+Retention policy uses two TOML keys with integer-second values:
+
+```toml
+stage_ttl_seconds = 0
+stage_prune_after_seconds = 0
+```
+
+Both values must be non-negative integers. Zero disables the corresponding policy. A wrong type, negative value, or value that cannot be represented safely is a configuration error. TTL has no daemon: a positive policy is enforced opportunistically after store recovery whenever a writable stage operation opens the database. Read-only `stage list` and `stage show` never mutate local state. A bulk prune requires either a positive configured prune age or an explicit positive `--older-than` duration; zero never means prune everything.
+
 State path:
 
 - `$XDG_STATE_HOME/mattermost-cli` when `XDG_STATE_HOME` is set and absolute;
@@ -158,7 +167,8 @@ mm stage show <stage-id>
 mm stage revise <stage-id>
 mm stage revise <stage-id> --revive
 mm stage cancel <stage-id>
-mm stage prune
+mm stage prune [--older-than <duration>]
+mm stage prune <stage-id>@<revision> [--abandon-recovery] [--request-id <id>]
 
 mm apply <stage-id>@<revision>
 mm apply <stage-id>@<revision> --resume-partial
@@ -354,6 +364,8 @@ Every stage also has an aggregate recovery requirement derived monotonically fro
 
 `force_unknown` dominates `resume_partial`, which dominates `none`. A later rejected attempt never erases uncertainty from an earlier attempt. Only confirmed completion or explicit lifecycle closure changes recovery to `forbidden`.
 
+The store separately tracks retained recovery material as `none`, `resume_partial`, or `force_unknown`. Public recovery answers whether and how a stage may be applied; retained recovery material answers whether pruning would deliberately destroy evidence or inputs needed for partial/unknown recovery. Cancel changes public recovery to `forbidden` but does not erase retained recovery material. Confirmed completion clears it. Explicit recovery abandonment clears it only after an append-only audit tombstone is durable.
+
 Normal transitions are:
 
 | Event | Lifecycle after event | Attempt outcome | Recovery requirement |
@@ -399,9 +411,15 @@ After confirmed success:
 
 Rejected, partial, unknown, and unapplied stages retain the minimum content required for inspection and deliberate recovery until eligible cleanup.
 
-TTL is configurable. Its default is `0`, meaning stages never expire automatically. Enabling TTL is explicit. Age is measured from the latest revision or attempt activity. Automatic expiry applies only to inactive open stages with recovery `none`; it never races an applying claim or expires a recovery-eligible stage. Expiry changes lifecycle eligibility but preserves prior attempt outcomes and does not pretend secure erasure.
+TTL is configurable and disabled by default. Age is measured from `stages.updated_at`, which advances on revisions and attempt activity. Opportunistic expiry applies only to inactive open stages whose public recovery and retained recovery material are both `none`; it never races an applying claim or expires a recovery-eligible stage. Expiry changes lifecycle eligibility, retains staged content, records an append-only retention event, preserves prior attempt outcomes, and does not pretend secure erasure. Reviving an expired stage records a corresponding retention event.
 
-Cancel is refused while applying. On an open stage it revokes future apply without rewriting history. `stage prune` defaults to completed, canceled, and expired stages older than an explicit or configured age. It refuses applying and recovery-eligible stages. Removing content or retained spools from a `resume_partial` or `force_unknown` stage requires an exact stage reference plus `--abandon-recovery`; this makes the stage `pruned`, recovery `forbidden`, and preserves an audit tombstone stating that recovery material was deliberately destroyed.
+Cancel is refused while applying. On an open stage it revokes future apply without rewriting history or discarding retained recovery material.
+
+Bulk `stage prune` is an explicitly human maintenance action. It atomically selects only completed, canceled, and expired stages older than one fixed explicit or configured cutoff, with no claim and no retained recovery material. It has no caller request ID, emits a bounded count-only result, and fails closed if no positive age exists. Structured machine prune is always exact and replayable.
+
+Exact `stage prune <id>@<revision>` bypasses the age threshold because the exact reference is deliberate intent, but still refuses applying or claimed stages and requires the current revision and semantic digest to remain unchanged. Ordinary exact prune accepts only completed, canceled, or expired stages with no retained recovery material. Removing retained staged content and source bindings from a stage with `resume_partial` or `force_unknown` material requires the exact reference plus `--abandon-recovery`; this makes the stage `pruned`, public recovery `forbidden`, clears the retained-material marker, and preserves an append-only audit tombstone stating that recovery was deliberately abandoned. No durable attachment spool exists outside SQLite source bindings.
+
+Every exact structured prune uses `mm/v2/stage-prune-request`, includes caller request ID, stage ID, expected revision, expected digest, and the abandonment choice, and reuses the stored stage's server/user replay scope. Its narrow result reuses `mm/v2/stage-receipt` with action `pruned`. Bulk human prune emits `mm/v2/stage-prune-result` with the fixed cutoff, pruned count, and recorded timestamp; it never emits an unbounded stage list.
 
 ## 15. Receipts, errors, and output failure
 
@@ -480,7 +498,7 @@ Required layers:
 - transition and race tests for show-revise-apply, revise/cancel/prune versus applying, known-partial resume, uncertainty-bearing expiry/cancel, and stale revisions;
 - recovery-history tests for unknown then forced rejection, revise after partial/unknown, definitively rejected suffix resume, and the impossibility of clearing aggregate uncertainty through a later outcome;
 - adversarial attachment tests for in-place writes during spool creation, inode/path replacement, truncation, symlink swaps, and active-credential bytes;
-- spool recovery tests for pre-dispatch crash cleanup, stale applying retention, successful cleanup, and explicit recovery abandonment;
+- execution-spool tests for pre-dispatch crash cleanup, stale applying retention, and successful cleanup, plus SQLite source-binding tests for explicit recovery abandonment;
 - lost-output idempotency tests for stage creation and revision as well as apply receipts;
 - security fixture parity for every v1 secret pattern and hostile presentation input;
 - artifact tests against the exact released archives and npm platform packages.
