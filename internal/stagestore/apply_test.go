@@ -693,6 +693,26 @@ func TestApplyCanBeReleasedOnlyBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestLookupApplyRequestReturnsImmutableHumanReplayBinding(t *testing.T) {
+	s := openDomainStore(t)
+	created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}`)
+	input := claimInput(created.Stage, "human-replay", RecoveryModeUnknown)
+	// Force mode is not eligible on a fresh stage, so bind an ordinary attempt.
+	input.RecoveryMode = RecoveryModeOrdinary
+	input.RequestDigest = sha256.Sum256([]byte("human replay intent"))
+	attempt, err := s.ClaimApply(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, found, err := s.LookupApplyRequest(context.Background(), created.Stage.ServerURL, created.Stage.UserID, input.RequestID)
+	if err != nil || !found || binding.RequestDigest != input.RequestDigest || !binding.Attempt.Replay || binding.Attempt.ID != attempt.ID {
+		t.Fatalf("binding=%+v found=%v err=%v", binding, found, err)
+	}
+	if _, found, err = s.LookupApplyRequest(context.Background(), created.Stage.ServerURL, created.Stage.UserID, "missing"); err != nil || found {
+		t.Fatalf("missing found=%v err=%v", found, err)
+	}
+}
+
 func TestApplyAuditHistoryCannotBeDeletedAfterDispatch(t *testing.T) {
 	s := openDomainStore(t)
 	created := createApplyStage(t, s, `{"steps":[{"ordinal":1,"type":"create_post","condition":"always"}]}`)

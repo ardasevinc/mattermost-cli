@@ -4,6 +4,7 @@ package stagerequest
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/ardasevinc/mattermost-cli/internal/schema"
 	"github.com/ardasevinc/mattermost-cli/internal/stageinput"
+	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 	"github.com/ardasevinc/mattermost-cli/internal/staging"
 )
 
@@ -24,6 +26,7 @@ const (
 	StageSchema  = "mm/v2/stage-request"
 	ReviseSchema = "mm/v2/stage-revise-request"
 	CancelSchema = "mm/v2/stage-cancel-request"
+	ApplySchema  = "mm/v2/apply-request"
 )
 
 var ErrInvalid = errors.New("invalid stage request")
@@ -132,6 +135,15 @@ type CancelRequest struct {
 	ExpectedDigest   string     `json:"expectedDigest"`
 }
 
+type ApplyRequest struct {
+	Schema         string     `json:"schema"`
+	RequestID      string     `json:"requestId"`
+	StageID        string     `json:"stageId"`
+	Revision       ExactInt64 `json:"revision"`
+	ExpectedDigest string     `json:"expectedDigest"`
+	RecoveryMode   string     `json:"recoveryMode"`
+}
+
 type ExactInt64 int64
 
 func (n *ExactInt64) UnmarshalJSON(data []byte) error {
@@ -175,6 +187,10 @@ func (d *Decoder) DecodeRevise(input io.Reader) (ReviseRequest, error) {
 
 func (d *Decoder) DecodeCancel(input io.Reader) (CancelRequest, error) {
 	return decode[CancelRequest](d, CancelSchema, input)
+}
+
+func (d *Decoder) DecodeApply(input io.Reader) (ApplyRequest, error) {
+	return decode[ApplyRequest](d, ApplySchema, input)
 }
 
 func decode[T any](d *Decoder, id string, input io.Reader) (T, error) {
@@ -452,4 +468,37 @@ func (r CancelRequest) CancelInput() (staging.CancelInput, error) {
 		return staging.CancelInput{}, ErrInvalid
 	}
 	return staging.CancelInput{StageID: r.StageID, RequestID: r.RequestID, ExpectedRevision: int64(r.ExpectedRevision), ExpectedDigest: digest}, nil
+}
+
+// ApplyClaimInput converts the public request and derives caller-intent replay
+// identity. The request ID is deliberately excluded from the digest.
+func (r ApplyRequest) ApplyClaimInput() (stagestore.ApplyClaimInput, error) {
+	digest, err := decodeDigest(r.ExpectedDigest)
+	mode := map[string]stagestore.RecoveryMode{
+		string(stagestore.RecoveryModeOrdinary): stagestore.RecoveryModeOrdinary,
+		string(stagestore.RecoveryModePartial):  stagestore.RecoveryModePartial,
+		string(stagestore.RecoveryModeUnknown):  stagestore.RecoveryModeUnknown,
+	}[r.RecoveryMode]
+	if err != nil || mode == "" || validateConversion(ApplySchema, r) != nil {
+		return stagestore.ApplyClaimInput{}, ErrInvalid
+	}
+	return NewApplyClaimInput(r.StageID, r.RequestID, int64(r.Revision), digest, mode), nil
+}
+
+// NewApplyClaimInput builds the same replay identity for human and structured
+// callers. Human callers may omit requestID and therefore opt out of replay.
+func NewApplyClaimInput(stageID, requestID string, revision int64, expectedDigest [32]byte, mode stagestore.RecoveryMode) stagestore.ApplyClaimInput {
+	intent := struct {
+		Domain         string                  `json:"domain"`
+		StageID        string                  `json:"stageId"`
+		Revision       int64                   `json:"revision"`
+		ExpectedDigest string                  `json:"expectedDigest"`
+		RecoveryMode   stagestore.RecoveryMode `json:"recoveryMode"`
+	}{"mm/v2/apply-request/caller-intent/v1", stageID, revision, hex.EncodeToString(expectedDigest[:]), mode}
+	raw, _ := json.Marshal(intent)
+	requestDigest := [32]byte{}
+	if requestID != "" {
+		requestDigest = sha256.Sum256(raw)
+	}
+	return stagestore.ApplyClaimInput{StageID: stageID, RequestID: requestID, Revision: revision, ExpectedDigest: expectedDigest, RequestDigest: requestDigest, RecoveryMode: mode}
 }

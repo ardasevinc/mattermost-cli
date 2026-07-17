@@ -309,6 +309,10 @@ func internalFailure(err error) error {
 }
 
 func exitCode(err error) int {
+	var applyFailure applyCommandFailure
+	if errors.As(err, &applyFailure) {
+		return applyFailure.exit
+	}
 	var outputFailure outputError
 	if errors.As(err, &outputFailure) {
 		return 3

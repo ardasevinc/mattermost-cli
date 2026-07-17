@@ -35,6 +35,7 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	defer state.releaseCredentials()
 	defer state.close()
 	cmd := newRootWithState(state)
+	state.flags.json = earlyStructuredMachineMode(args)
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		var corrupted watchOutputFailure
@@ -48,17 +49,29 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		message := presentation.SanitizeLabel(presentation.Preprocess(err.Error(), state.credentials).Text)
 		code := exitCode(err)
 		if state.flags.json && trackedOut.BytesWritten() > 0 {
+			if code >= 4 {
+				return code
+			}
 			return 3
 		}
 		if state.flags.json {
-			document := output.ErrorEnvelope{Schema: "mm/v2/error", Code: machineErrorCode(err), Message: message, ExitCode: code, Recovery: "none"}
+			document := output.ErrorEnvelope{Schema: "mm/v2/error", Code: machineErrorCode(err), Message: message, ExitCode: code, StageRef: machineStageRef(err), Recovery: machineRecovery(err)}
 			if _, writeErr := output.WriteMachineJSON(errOut, document); writeErr != nil {
+				if code >= 4 {
+					return code
+				}
 				return 3
 			}
 		} else if writeErr := writeAll(errOut, []byte(fmt.Sprintf("error: %s\n", message))); writeErr != nil {
+			if code >= 4 {
+				return code
+			}
 			return 3
 		}
 		if trackedOut.Failed() {
+			if code >= 4 {
+				return code
+			}
 			return 3
 		}
 		return code
@@ -74,7 +87,49 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	return state.semanticExitCode()
 }
 
+func earlyStructuredMachineMode(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return false
+		}
+		if arg == "--url" || arg == "--token" || arg == "-t" {
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "--url=") || strings.HasPrefix(arg, "--token=") || strings.HasPrefix(arg, "-t") || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if arg != "apply" {
+			return false
+		}
+		for _, applyArg := range args[index+1:] {
+			if applyArg == "--" {
+				return false
+			}
+			if applyArg == "--from-json" {
+				return true
+			}
+			if strings.HasPrefix(applyArg, "--from-json=") {
+				value := strings.TrimPrefix(applyArg, "--from-json=")
+				switch value {
+				case "0", "f", "F", "false", "FALSE", "False":
+					return false
+				default:
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
+}
+
 func machineErrorCode(err error) string {
+	var applyFailure applyCommandFailure
+	if errors.As(err, &applyFailure) {
+		return applyFailure.code
+	}
 	var outputFailure outputError
 	if errors.As(err, &outputFailure) {
 		return "internal"
@@ -89,9 +144,25 @@ func machineErrorCode(err error) string {
 	}
 	var local localStateFailure
 	if errors.As(err, &local) {
-		return "local_state"
+		return "state_conflict"
 	}
 	return "invalid_invocation"
+}
+
+func machineRecovery(err error) string {
+	var applyFailure applyCommandFailure
+	if errors.As(err, &applyFailure) {
+		return applyFailure.recovery
+	}
+	return "none"
+}
+
+func machineStageRef(err error) string {
+	var applyFailure applyCommandFailure
+	if errors.As(err, &applyFailure) {
+		return applyFailure.stageRef
+	}
+	return ""
 }
 
 func newRoot(s streams) *cobra.Command {
@@ -130,6 +201,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.AddCommand(newSchemaCommand(state))
 	cmd.AddCommand(newStoreCommand(state))
 	cmd.AddCommand(newStageCommand(state))
+	cmd.AddCommand(newApplyCommand(state))
 	cmd.AddCommand(newConfigCommand(state))
 	cmd.AddCommand(newDoctorCommand(state))
 	cmd.AddCommand(newWhoAmICommand(state))

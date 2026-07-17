@@ -215,6 +215,8 @@ mm apply --from-json
 
 It consumes one `mm/v2/apply-request` containing `requestId`, `stageId`, `revision`, expected semantic digest, and exactly one `recoveryMode`: `ordinary`, `resume_partial`, or `force_unknown`. Identical replay returns the existing attempt receipt without dispatch. Reuse of a request ID with different content conflicts. Flags and structured recovery mode cannot be combined.
 
+Apply replay equality uses the digest domain `mm/v2/apply-request/caller-intent/v1`. It binds the stage ID, exact revision, expected semantic digest, and recovery mode, and excludes the request ID and server scope. Human `--request-id` and structured apply therefore share one replay identity without allowing a caller-generated key to alter the intent it names.
+
 Every machine-issued local state mutation, including revise, cancel, revive, and destructive prune, has a versioned request schema and required caller request ID with the same identical-replay/conflicting-reuse semantics. Human subcommands may opt into those semantics with `--request-id`.
 
 Input methods are mutually exclusive. Empty or whitespace-only content is rejected. UTF-8 failure is fatal. The current Mattermost limits remain locally enforced before any remote mutation: at most 16,383 Unicode code points and 65,535 UTF-8 bytes, unless a verified server capability establishes a lower bound.

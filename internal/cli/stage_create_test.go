@@ -222,7 +222,7 @@ func TestStructuredStageReplayUsesStoredTargetAndConflictingReuseFailsClosed(t *
 	}
 	beforeConflict := len(methods)
 	code, conflictOut, conflictErr := run("changed **markdown**")
-	if code != 6 || conflictOut != "" || !strings.Contains(conflictErr, `"code":"local_state"`) {
+	if code != 6 || conflictOut != "" || !strings.Contains(conflictErr, `"code":"state_conflict"`) {
 		t.Fatalf("conflict exit=%d stdout=%q stderr=%q", code, conflictOut, conflictErr)
 	}
 	if got := methods[beforeConflict:]; len(got) != 1 || got[0] != "GET /api/v4/users/me" {

@@ -36,6 +36,21 @@ func (e *ConfirmedEffectError) Error() string {
 }
 func (e *ConfirmedEffectError) Unwrap() error { return e.err }
 
+// UnsafeReceiptError means a terminal receipt was durably recorded but cannot
+// be emitted because one of its narrow remote fields contains an active
+// credential. Callers must classify from the receipt outcome without printing
+// the receipt itself.
+type UnsafeReceiptError struct {
+	receipt stagestore.ApplyReceipt
+	err     error
+}
+
+func (e *UnsafeReceiptError) Error() string { return "apply: durable receipt is unsafe to emit" }
+func (e *UnsafeReceiptError) Unwrap() error { return e.err }
+func (e *UnsafeReceiptError) UnsafeReceipt() stagestore.ApplyReceipt {
+	return e.receipt
+}
+
 type Store interface {
 	Show(context.Context, string) (stagestore.StageDetail, error)
 	FindApply(context.Context, string, string, string, [32]byte) (stagestore.ApplyAttempt, bool, error)
@@ -249,7 +264,7 @@ func (s *Service) applyConversation(ctx context.Context, attempt stagestore.Appl
 		}
 		receipt, finalizeErr := s.finalizeReceipt(context.WithoutCancel(ctx), attempt.ID)
 		if finalizeErr != nil {
-			return stagestore.ApplyReceipt{}, errors.Join(&api.OutcomeUnknownError{}, fmt.Errorf("%w: %v", ErrJournal, finalizeErr))
+			return receipt, errors.Join(&api.OutcomeUnknownError{}, ErrJournal, finalizeErr)
 		}
 		return receipt, nil
 	}
@@ -294,7 +309,7 @@ func (s *Service) recordRemoteFailure(ctx context.Context, attemptID string, ord
 	}
 	receipt, finalizeErr := s.finalizeReceipt(journalCtx, attemptID)
 	if finalizeErr != nil {
-		return stagestore.ApplyReceipt{}, errors.Join(remoteErr, fmt.Errorf("%w: %v", ErrJournal, finalizeErr))
+		return receipt, errors.Join(remoteErr, ErrJournal, finalizeErr)
 	}
 	return receipt, nil
 }
@@ -321,10 +336,10 @@ func (s *Service) finalizeReceipt(ctx context.Context, attemptID string) (stages
 	}
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
-		return stagestore.ApplyReceipt{}, fmt.Errorf("%w: encode receipt: %v", ErrJournal, err)
+		return receipt, &ConfirmedEffectError{fmt.Errorf("%w: encode receipt: %v", ErrJournal, err)}
 	}
 	if s.rawContainsCredentialValue(encoded) {
-		return stagestore.ApplyReceipt{}, ErrCredential
+		return receipt, &UnsafeReceiptError{receipt: receipt, err: ErrCredential}
 	}
 	return receipt, nil
 }

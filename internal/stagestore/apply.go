@@ -103,6 +103,11 @@ type ApplyReceipt struct {
 	Replay              bool            `json:"-"`
 }
 
+type ApplyRequestBinding struct {
+	RequestDigest [32]byte
+	Attempt       ApplyAttempt
+}
+
 type persistedPlan struct {
 	Steps []struct {
 		Ordinal   int    `json:"ordinal"`
@@ -540,21 +545,48 @@ func (s *Store) FindApply(ctx context.Context, server, user, requestID string, r
 	return attempt, found, err
 }
 
+// LookupApplyRequest returns the immutable caller-intent binding for a human
+// replay that does not carry an expected semantic digest on the command line.
+func (s *Store) LookupApplyRequest(ctx context.Context, server, user, requestID string) (ApplyRequestBinding, bool, error) {
+	if ctx == nil || !canonicalServerURL(server) || !bounded(user, maxIdentityBytes) || !validRequestID(requestID) || requestID == "" {
+		return ApplyRequestBinding{}, false, ErrInvalid
+	}
+	storedDigest, attempt, found, err := lookupApplyRequest(ctx, s.db, server, user, requestID)
+	if err != nil || !found {
+		return ApplyRequestBinding{}, found, err
+	}
+	attempt.Replay = true
+	return ApplyRequestBinding{RequestDigest: storedDigest, Attempt: attempt}, true, nil
+}
+
 func findApplyRequest(ctx context.Context, q queryer, server, user, requestID string, requestDigest [32]byte) (ApplyAttempt, bool, error) {
+	storedDigest, attempt, found, err := lookupApplyRequest(ctx, q, server, user, requestID)
+	if err != nil || !found {
+		return ApplyAttempt{}, found, err
+	}
+	if storedDigest != requestDigest {
+		return ApplyAttempt{}, false, ErrConflict
+	}
+	return attempt, true, nil
+}
+
+func lookupApplyRequest(ctx context.Context, q queryer, server, user, requestID string) ([32]byte, ApplyAttempt, bool, error) {
+	var digest [32]byte
 	var storedDigest []byte
 	var attemptID string
 	err := q.QueryRowContext(ctx, `SELECT request_digest,attempt_id FROM apply_requests WHERE server_url=? AND user_id=? AND request_id=?`, server, user, requestID).Scan(&storedDigest, &attemptID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ApplyAttempt{}, false, nil
+		return digest, ApplyAttempt{}, false, nil
 	}
 	if err != nil {
-		return ApplyAttempt{}, false, localError(err)
+		return digest, ApplyAttempt{}, false, localError(err)
 	}
-	if len(storedDigest) != sha256.Size || !bytes.Equal(storedDigest, requestDigest[:]) {
-		return ApplyAttempt{}, false, ErrConflict
+	if len(storedDigest) != sha256.Size {
+		return digest, ApplyAttempt{}, false, localError(errors.New("apply request digest"))
 	}
+	copy(digest[:], storedDigest)
 	attempt, err := scanApplyAttempt(ctx, q, attemptID)
-	return attempt, err == nil, err
+	return digest, attempt, err == nil, err
 }
 
 func scanApplyAttempt(ctx context.Context, q queryer, attemptID string) (ApplyAttempt, error) {

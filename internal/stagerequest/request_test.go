@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ardasevinc/mattermost-cli/internal/schema"
+	"github.com/ardasevinc/mattermost-cli/internal/stagestore"
 	"github.com/ardasevinc/mattermost-cli/internal/staging"
 )
 
@@ -171,6 +172,47 @@ func TestReviseAndCancelDecodeAndStoreConversions(t *testing.T) {
 	revise.Attachments = []Attachment{{Path: "/tmp/a"}}
 	if _, err := revise.ReviseInput(); err != nil {
 		t.Fatalf("raw attachment rejected: %v", err)
+	}
+}
+
+func TestApplyDecodeConversionAndCallerIntentReplayDigest(t *testing.T) {
+	digestText := strings.Repeat("ab", 32)
+	raw := `{"schema":"mm/v2/apply-request","requestId":"apply-1","stageId":"stg_abcdefghijklmnopqrstuvwxyzABCDEF","revision":2,"expectedDigest":"` + digestText + `","recoveryMode":"resume_partial"}`
+	request, err := decoder(t).DecodeApply(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := request.ApplyClaimInput()
+	if err != nil || input.Revision != 2 || input.ExpectedDigest[0] != 0xab || input.RecoveryMode != stagestore.RecoveryModePartial || input.RequestDigest == ([32]byte{}) {
+		t.Fatalf("input=%#v err=%v", input, err)
+	}
+	replayed := request
+	replayed.RequestID = "apply-2"
+	replayInput, err := replayed.ApplyClaimInput()
+	if err != nil || replayInput.RequestDigest != input.RequestDigest {
+		t.Fatalf("request id changed caller intent: %#v %v", replayInput, err)
+	}
+	replayed.RecoveryMode = string(stagestore.RecoveryModeUnknown)
+	changed, err := replayed.ApplyClaimInput()
+	if err != nil || changed.RequestDigest == input.RequestDigest {
+		t.Fatalf("recovery mode did not change caller intent: %#v %v", changed, err)
+	}
+}
+
+func TestApplyDecodeRejectsDuplicateAndMutatedContracts(t *testing.T) {
+	valid := `{"schema":"mm/v2/apply-request","requestId":"apply-1","stageId":"stg_abcdefghijklmnopqrstuvwxyzABCDEF","revision":1,"expectedDigest":"` + strings.Repeat("ab", 32) + `","recoveryMode":"ordinary"}`
+	for _, raw := range []string{strings.Replace(valid, `"requestId":"apply-1"`, `"requestId":"apply-1","requestId":"apply-1"`, 1), valid + `{}`} {
+		if _, err := decoder(t).DecodeApply(strings.NewReader(raw)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("malformed apply accepted: %v", err)
+		}
+	}
+	request, err := decoder(t).DecodeApply(strings.NewReader(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedDigest = strings.ToUpper(request.ExpectedDigest)
+	if _, err := request.ApplyClaimInput(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mutated apply accepted: %v", err)
 	}
 }
 

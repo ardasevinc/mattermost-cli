@@ -205,7 +205,7 @@ func TestStageInspectionIsWiredThroughRootWithStableMachineErrors(t *testing.T) 
 	if code := Execute(t.Context(), []string{"--json", "stage", "show", stageID}, strings.NewReader(""), &stdout, &stderr); code != 6 {
 		t.Fatalf("show exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `"code":"local_state"`) || !strings.Contains(stderr.String(), `"exitCode":6`) {
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `"code":"state_conflict"`) || !strings.Contains(stderr.String(), `"exitCode":6`) {
 		t.Fatalf("show stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }

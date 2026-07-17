@@ -95,6 +95,10 @@ func TestApplyResolveDMCreatesOnceAndReplaysDurableReceipt(t *testing.T) {
 	if _, err = rotatedResult.Apply(context.Background(), claim); !errors.Is(err, ErrCredential) {
 		t.Fatalf("rotated result credential replay error=%v", err)
 	}
+	var unsafeReceipt *UnsafeReceiptError
+	if !errors.As(err, &unsafeReceipt) || unsafeReceipt.UnsafeReceipt().Outcome != stagestore.OutcomeSucceeded {
+		t.Fatalf("rotated result credential classification=%T receipt=%+v", err, unsafeReceipt)
+	}
 	rotatedTimestamp, err := New(server.URL+"/api/v4", "", [][]byte{[]byte("2026")}, store, mattermost.NewUsers(client), mattermost.NewChannels(client), mattermost.NewPosts(client), mattermost.NewConversationMutations(client), mattermost.NewPostMutations(client))
 	if err != nil {
 		t.Fatal(err)
@@ -279,6 +283,39 @@ func TestApplyResolveDMClassifiesRejectedAndUnknown(t *testing.T) {
 				t.Fatalf("receipt=%+v err=%v", receipt, err)
 			}
 		})
+	}
+}
+
+func TestRecordRemoteFailurePreservesUnsafePartialReceiptClassification(t *testing.T) {
+	store := openApplyStore(t)
+	stage := createResolveStage(t, store, "https://mattermost.example.com/api/v4", stagestore.ResolveDM, "dm", []string{"peer"})
+	attempt, err := store.ClaimApply(context.Background(), applyClaim(stage, "unsafe-partial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.BeginDispatch(context.Background(), attempt.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	unsafeReceipt := stagestore.ApplyReceipt{
+		Outcome:  stagestore.OutcomePartial,
+		Recovery: stagestore.RecoveryPartial,
+		Steps: []stagestore.ApplyStep{{
+			Ordinal: 1,
+			State:   stagestore.StepValidated,
+			Result:  json.RawMessage(`{"fileId":"active-token"}`),
+		}},
+	}
+	service := &Service{
+		store:       &faultStore{Store: store, finalizeReceipt: &unsafeReceipt},
+		credentials: [][]byte{[]byte("active-token")},
+	}
+	receipt, err := service.recordRemoteFailure(context.Background(), attempt.ID, 1, &api.APIError{Status: http.StatusBadRequest})
+	var unsafeErr *UnsafeReceiptError
+	if !errors.As(err, &unsafeErr) || !errors.Is(err, ErrJournal) {
+		t.Fatalf("classification=%T err=%v", err, err)
+	}
+	if receipt.Outcome != stagestore.OutcomePartial || unsafeErr.UnsafeReceipt().Recovery != stagestore.RecoveryPartial {
+		t.Fatalf("receipt=%+v unsafe=%+v", receipt, unsafeErr.UnsafeReceipt())
 	}
 }
 
@@ -612,6 +649,7 @@ type faultStore struct {
 	*stagestore.Store
 	skipErr, unknownErr, validatedErr, finalizeErr, beginErr error
 	reuseErr                                                 error
+	finalizeReceipt                                          *stagestore.ApplyReceipt
 	beginOrdinal                                             int
 	reuseOrdinal                                             int
 	beforeSkip                                               func()
@@ -656,6 +694,9 @@ func (s *faultStore) MarkStepReused(ctx context.Context, attemptID string, ordin
 }
 
 func (s *faultStore) FinalizeApply(ctx context.Context, attemptID string) (stagestore.ApplyReceipt, error) {
+	if s.finalizeReceipt != nil {
+		return *s.finalizeReceipt, nil
+	}
 	if s.finalizeErr != nil {
 		return stagestore.ApplyReceipt{}, s.finalizeErr
 	}

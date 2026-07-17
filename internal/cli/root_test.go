@@ -174,11 +174,34 @@ func TestMachineErrorCodePreservesSemantics(t *testing.T) {
 		{readFailure(&api.APIError{Status: 401}), "authentication"},
 		{readFailure(&api.APIError{Status: 403}), "authorization"},
 		{outputError{err: errors.New("bad")}, "internal"},
-		{localStateFailure{err: errors.New("bad")}, "local_state"},
+		{localStateFailure{err: errors.New("bad")}, "state_conflict"},
 	}
 	for _, test := range tests {
 		if got := machineErrorCode(test.err); got != test.want {
 			t.Errorf("machineErrorCode(%T) = %q, want %q", test.err, got, test.want)
+		}
+	}
+}
+
+func TestConfirmedEffectFailurePreservesSafePartialRecovery(t *testing.T) {
+	err := applyConfirmedFailureWithRecovery("stg_0123456789abcdefghijklmnopqrstuv@1", "resume_partial", errors.New("output failed"))
+	if exitCode(err) != 7 || machineErrorCode(err) != "confirmed_effect_local_failure" || machineRecovery(err) != "resume_partial" {
+		t.Fatalf("exit=%d code=%q recovery=%q", exitCode(err), machineErrorCode(err), machineRecovery(err))
+	}
+}
+
+func TestEarlyStructuredMachineModeOnlyRecognizesApplyFlag(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"apply", "--from-json"}, true},
+		{[]string{"--url", "https://example.com", "apply", "--from-json", "--unknown"}, true},
+		{[]string{"stage", "send", "dm", "alice", "--message", "--from-json"}, false},
+		{[]string{"apply", "--", "--from-json"}, false},
+	} {
+		if got := earlyStructuredMachineMode(test.args); got != test.want {
+			t.Fatalf("args=%q got=%v want=%v", test.args, got, test.want)
 		}
 	}
 }

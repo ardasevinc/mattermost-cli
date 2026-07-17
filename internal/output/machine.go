@@ -120,6 +120,7 @@ type ErrorEnvelope struct {
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 	ExitCode int    `json:"exitCode"`
+	StageRef string `json:"stageRef,omitempty"`
 	Recovery string `json:"recovery"`
 }
 
