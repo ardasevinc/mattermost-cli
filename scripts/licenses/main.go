@@ -54,30 +54,55 @@ type listedPackage struct {
 	Module *module
 }
 
+var supportedTargets = []struct {
+	goos   string
+	goarch string
+}{
+	{goos: "darwin", goarch: "amd64"},
+	{goos: "darwin", goarch: "arm64"},
+	{goos: "linux", goarch: "amd64"},
+	{goos: "linux", goarch: "arm64"},
+}
+
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	modules := make(map[string]module)
+	for _, target := range supportedTargets {
+		targetModules, err := listModules(ctx, target.goos, target.goarch)
+		if err != nil {
+			fatal(fmt.Errorf("list dependencies for %s/%s: %w", target.goos, target.goarch, err))
+		}
+		for path, mod := range targetModules {
+			modules[path] = mod
+		}
+	}
+	if err := verify(modules, approved); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("license check passed: %d reviewed modules across %d targets\n", len(modules), len(supportedTargets))
+}
+
+func listModules(ctx context.Context, goos, goarch string) (map[string]module, error) {
 	cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-test", "-json", "./...")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
-		fatal(err)
+		return nil, err
 	}
 	modules, decodeErr := decodeModules(out)
 	waitErr := cmd.Wait()
 	if decodeErr != nil {
-		fatal(decodeErr)
+		return nil, decodeErr
 	}
 	if waitErr != nil {
-		fatal(waitErr)
+		return nil, waitErr
 	}
-	if err = verify(modules, approved); err != nil {
-		fatal(err)
-	}
-	fmt.Printf("license check passed: %d reviewed modules\n", len(modules))
+	return modules, nil
 }
 
 func decodeModules(r io.Reader) (map[string]module, error) {
