@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -33,6 +34,13 @@ type liveHarness struct {
 	client *http.Client
 	mu     sync.Mutex
 	writes map[string]int
+	crash  *responseCrash
+}
+
+type responseCrash struct {
+	key     string
+	process <-chan *os.Process
+	result  chan<- error
 }
 
 type stageReceipt struct {
@@ -43,11 +51,15 @@ type stageReceipt struct {
 }
 
 type applyReceipt struct {
-	Schema    string `json:"schema"`
-	AttemptID string `json:"attemptId"`
-	Outcome   string `json:"outcome"`
-	Steps     []struct {
+	Schema              string `json:"schema"`
+	AttemptID           string `json:"attemptId"`
+	RecoveryMode        string `json:"recoveryMode"`
+	ForcedDuplicateRisk bool   `json:"forcedDuplicateRisk"`
+	Outcome             string `json:"outcome"`
+	Recovery            string `json:"recovery"`
+	Steps               []struct {
 		Kind   string          `json:"kind"`
+		State  string          `json:"state"`
 		Result json.RawMessage `json:"result"`
 	} `json:"steps"`
 }
@@ -102,6 +114,26 @@ func newLiveHarness(t *testing.T) *liveHarness {
 	proxyTransport := &http.Transport{Proxy: nil}
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
 	proxy.Transport = proxyTransport
+	proxy.ModifyResponse = func(response *http.Response) error {
+		key := response.Request.Method + " " + response.Request.URL.Path
+		harness.mu.Lock()
+		crash := harness.crash
+		if crash != nil && crash.key == key {
+			harness.crash = nil
+		} else {
+			crash = nil
+		}
+		harness.mu.Unlock()
+		if crash != nil {
+			select {
+			case process := <-crash.process:
+				crash.result <- process.Kill()
+			case <-time.After(5 * time.Second):
+				crash.result <- errors.New("timed out waiting for the CLI process")
+			}
+		}
+		return nil
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions {
 			harness.mu.Lock()
@@ -291,6 +323,32 @@ func (h *liveHarness) api(method, path string, body []byte, target any) {
 
 func (h *liveHarness) cli(stdin string, args ...string) []byte {
 	h.t.Helper()
+	stdout, stderr, code := h.cliResult(stdin, args...)
+	if code != 0 {
+		h.t.Fatalf("mm %s exited %d, stderr=%s", strings.Join(args, " "), code, fmt.Sprintf("%q", stderr))
+	}
+	if len(stderr) != 0 {
+		h.t.Fatalf("mm %s emitted stderr on success: %q", strings.Join(args, " "), stderr)
+	}
+	return stdout
+}
+
+func (h *liveHarness) cliResult(stdin string, args ...string) ([]byte, []byte, int) {
+	h.t.Helper()
+	command, stdout, stderr := h.cliCommand(stdin, args...)
+	err := command.Run()
+	if err == nil {
+		return stdout.Bytes(), stderr.Bytes(), 0
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		h.t.Fatalf("mm %s failed to run: %v", strings.Join(args, " "), err)
+	}
+	return stdout.Bytes(), stderr.Bytes(), exitErr.ExitCode()
+}
+
+func (h *liveHarness) cliCommand(stdin string, args ...string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
+	h.t.Helper()
 	command := exec.Command(h.binary, args...)
 	command.Stdin = strings.NewReader(stdin)
 	command.Env = []string{
@@ -309,11 +367,42 @@ func (h *liveHarness) cli(stdin string, args ...string) []byte {
 	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err != nil {
-		h.t.Fatalf("mm %s failed: %v, stderr=%s", strings.Join(args, " "), err, fmt.Sprintf("%q", stderr.String()))
+	return command, &stdout, &stderr
+}
+
+func (h *liveHarness) armCrashAfterResponse(key string) (chan<- *os.Process, <-chan error) {
+	h.t.Helper()
+	process := make(chan *os.Process, 1)
+	result := make(chan error, 1)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.crash != nil {
+		h.t.Fatal("response crash is already armed")
 	}
-	if stderr.Len() != 0 {
-		h.t.Fatalf("mm %s emitted stderr on success: %q", strings.Join(args, " "), stderr.String())
+	h.crash = &responseCrash{key: key, process: process, result: result}
+	return process, result
+}
+
+func (h *liveHarness) cliKilledAfterResponse(stdin, key string, args ...string) ([]byte, []byte) {
+	h.t.Helper()
+	process, crashResult := h.armCrashAfterResponse(key)
+	command, stdout, stderr := h.cliCommand(stdin, args...)
+	if err := command.Start(); err != nil {
+		h.t.Fatal(err)
 	}
-	return stdout.Bytes()
+	process <- command.Process
+	runErr := command.Wait()
+	select {
+	case crashErr := <-crashResult:
+		if crashErr != nil {
+			h.t.Fatalf("could not terminate CLI after accepted response: %v", crashErr)
+		}
+	case <-time.After(5 * time.Second):
+		h.t.Fatal("accepted response did not trigger the armed CLI crash")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != -1 {
+		h.t.Fatalf("CLI was not killed after accepted response: %v", runErr)
+	}
+	return stdout.Bytes(), stderr.Bytes()
 }
