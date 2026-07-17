@@ -1,290 +1,184 @@
-# Mattermost CLI - Specification
+# mattermost-cli v2 Product Spec
 
-## Overview
-A TypeScript + Bun CLI tool to fetch, display, watch, and deliberately send Mattermost messages, with built-in secret redaction for safe LLM processing later.
+This is the concise public product spec. `V2_CONTRACT.md` is authoritative for
+safety, state-machine, schema, recovery, and cutover details.
 
-## Requirements Summary
+## Identity
 
-| Aspect | Decision |
-|--------|----------|
-| Auth | Personal access token (env var) |
-| Message Scope | DMs + public/private/group channels |
-| Threading | Complete visible threads by default, `--no-threads` for selected seeds only |
-| Output | Pretty terminal for TTY, markdown for pipe/non-TTY, `--json` flag |
-| Time Range | `--since` (duration) and `--limit` (count) flags |
-| Style | One-shot command |
-| Writes | Explicit DM/existing-group send commands; stdin only; no automatic replay |
-| Secret Handling | Redact by default; can disable via `--no-redact` / `MM_REDACT=false` / config |
-| Future | Modular design for LLM task extraction |
+- Binary: `mm`
+- Implementation: native Go
+- First public Go release: `v2.0.0`
+- Supported targets: darwin/linux, arm64/amd64
+- Purpose: dependable Mattermost access for humans and agents, with honest
+  bounded reads and deliberate stage-first mutations
 
----
+## Commands
 
-## Usage
+Read-only remote commands:
 
-### Environment Variables
-
-```bash
-MM_URL=https://mattermost.example.com
-MM_TOKEN=your-personal-access-token
-MM_REDACT=false
+```text
+whoami
+teams
+users [query]
+channels
+dms
+group-dms
+channel <name>
+thread <post-id>
+search <query>
+mentions
+unread
+watch [channel] | watch --dm <username>
+config
+doctor
+store doctor
+store migrations
+schema list|show|validate
 ```
 
-### Commands
+Mutation preparation and local lifecycle:
 
-```bash
-# Inspect the authenticated identity and team memberships
-mm whoami
-mm teams
-mm users [query] [--team <name>] [--limit 20]
-
-# List all account-wide channels
-mm channels
-mm channels --type public
-
-# Fetch DMs (all or filtered)
-mm dms [options]
-
-# Fetch DMs from specific user
-mm dms --user=<username>
-mm dms -u bob -u alice    # Multiple users
-
-# Fetch group DMs (all or one validated group channel)
-mm group-dms [--limit 50] [--since 7d]
-mm group-dms --channel <channel-id>
-
-# Send stdin to an exact DM user or existing group-DM channel
-printf '%s' 'hello' | mm send dm alice
-printf '%s' 'hello group' | mm send group <channel-id>
-mm --json send dm alice --dry-run
-
-# Fetch one thread
-mm thread <postId>
-
-# Fetch one channel by name
-mm channel general
-mm channel '#dev' --team myteam
+```text
+stage send dm|group|channel
+stage reply
+stage post-edit
+stage post-delete
+stage react|unreact
+stage dm-create|group-create
+stage list|show|revise|cancel|prune
 ```
 
-### Global Options
+The only general remote mutation boundary:
 
-```
---token, -t       Mattermost personal access token (or MM_TOKEN env)
---url             Mattermost server URL (or MM_URL env)
---json            Output as JSON (JSON Lines for watch)
---no-color        Disable colored output
--r, --relative    Show relative times
---no-relative     Show absolute times
---redact          Enable secret redaction (default)
---no-redact       Disable heuristic redaction; active Mattermost credential stays masked
---threads         Show thread structure (default)
---no-threads      Return selected seed posts only (except thread command)
+```text
+apply <stage-id>@<revision>
 ```
 
-### DMs Options
+There is no immediate `send`, `edit`, `delete`, `react`, or conversation-create
+alias.
 
+## Read behavior
+
+- Requests, pages, retries, backoff, response bodies, concurrency, and output
+  size are bounded.
+- Results are ordered deterministically.
+- Cursor context is authenticated by a versioned opaque token and validated
+  before network access.
+- Completeness is tri-state: complete, truncated, or unknown.
+- Empty results succeed only when emptiness is proven.
+- Thread hydration is bounded to four workers and preserves partial visible
+  context when completeness cannot be proven.
+- Deleted posts never expose stale body, file, attachment, or reaction data.
+- Watch authenticates before events, validates sequence state, bounds reconnect,
+  reports gaps, and never claims REST backfill it did not perform.
+
+## Mutation behavior
+
+Stage creation may perform remote reads to bind the exact authenticated user,
+server, channel, post, participants, and current state. It performs no remote
+mutation. Persisted stages live in private local SQLite and receive an opaque ID,
+monotonic revision, semantic digest, normalized plan, lifecycle, and recovery
+state.
+
+Apply:
+
+1. reopens and validates the exact current stage revision;
+2. revalidates authenticated identity and destination state;
+3. transactionally claims the revision;
+4. journals dispatch intent;
+5. sends each prepared mutation at most once;
+6. validates confirmed remote effects;
+7. persists a narrow bodyless receipt and clears content when complete.
+
+Recovery is never inferred from optimism:
+
+- ordinary apply requires recovery `none`;
+- `--resume-partial` dispatches only a suffix proven not applied;
+- `--force-unknown` is an explicit caller acceptance of duplicate risk;
+- confirmed remote effect plus failed local receipt/output is distinct and says
+  not to retry.
+
+## Content and attachments
+
+Message content comes from exactly one source:
+
+- non-TTY stdin;
+- `$VISUAL`, then `$EDITOR`, in human TTY mode;
+- `--message`, explicitly visible to process inspection and shell history;
+- structured `mm/v2/stage-request` input.
+
+Content must be valid UTF-8, nonblank, no more than 16,383 Unicode code points,
+and no more than 65,535 bytes.
+
+Attachment stages bind private regular files by stable filesystem identity,
+length, digest, canonical metadata, and order. Apply securely reopens and copies
+each source into a private unlinked descriptor while hashing and scanning it.
+Only the reviewed bytes can be uploaded. A changed, replaced, linked, symlinked,
+oversized, or credential-bearing source fails closed.
+
+## Output
+
+- TTY human mode: pretty output, color-capable
+- non-TTY human mode: Markdown
+- `--json`: one strict schema-identified JSON document
+- `--json watch`: schema-identified JSON Lines
+- diagnostics: stderr only
+
+All remote presentation text is sanitized before output. Markdown structure and
+links are escaped or admitted through a narrow safe policy. Machine schemas and
+golden examples under `schemas/v2/` are release artifacts.
+
+Exit classes:
+
+```text
+0 success or idempotent replay
+2 invalid invocation/input
+3 config/auth/read failure before mutation dispatch
+4 dispatched mutation definitively rejected
+5 partial or unknown mutation outcome
+6 local state/revision/claim/target/attachment conflict
+7 confirmed remote effect but failed local receipt/output; do not retry
 ```
---user, -u        Filter by username (repeatable)
---limit, -l       Max total messages across matched DMs (default: 50)
---since, -s       Time range: "24h", "7d", "30d" (default: 7d)
---channel, -c     Specific direct-message channel ID (type D only)
---cursor           Resume that explicit channel's deterministic history
+
+## Security
+
+- HTTPS is mandatory except canonical loopback HTTP.
+- Active credentials are never emitted and cannot be disabled by `--no-redact`.
+- Active credentials are forbidden in outbound text, structured fields,
+  attachment metadata/path, and bytes.
+- Mutation redirects are rejected.
+- Unknown mutation outcomes are not automatically replayed.
+- Remote response bodies and unsafe caller/remote values are not reflected in
+  ordinary errors.
+- Original secret values are absent from redaction provenance.
+- Read commands never perform a write fallback.
+
+## Configuration and local state
+
+Config precedence: CLI, environment, TOML, defaults.
+
+```text
+$XDG_CONFIG_HOME/mattermost-cli/config.toml
+~/.config/mattermost-cli/config.toml
 ```
 
-### Group DMs Options
+State:
 
-```
---limit, -l       Max total messages across matched group DMs (default: 50)
---since, -s       Time range: "24h", "7d", "30d" (default: 7d)
---channel, -c     Specific group-DM channel ID (type G only)
---cursor           Resume that explicit channel's deterministic history
+```text
+$XDG_STATE_HOME/mattermost-cli
+~/.local/state/mattermost-cli
 ```
 
-### Channels Options
+Paths are OS-independent. Files and directories use private modes, reject unsafe
+ownership/link/permission conditions, and never store the Mattermost token.
 
-```bash
---type            Filter list by type: dm, public, private, group, all
-```
+## Verification and distribution
 
-### Send Commands
+Required gates include normal/race/fault/subprocess/schema tests, `go vet`,
+Staticcheck, `govulncheck`, exact dependency-license review, module verification,
+CGO-free target builds, deterministic archives, checksums, exact npm packages,
+Homebrew install/test, and disposable Mattermost 11.8.3 lifecycle/read/watch
+acceptance.
 
-```bash
-send dm <username> [--dry-run]
-send group <channel-id> [--dry-run]
-```
-
-Messages come only from stdin. Input is preserved exactly, including multiline content and a final
-newline. It must be valid UTF-8, non-whitespace, no longer than 16,383 Unicode characters, and no
-larger than 65,535 bytes. TTY reads are rejected rather than waiting for hidden interactive input.
-The active Mattermost credential is blocked from outbound content before any API request.
-
-DM sending resolves an exact case-insensitive username, validates the authenticated identity and
-all discovered D channels, then reuses the matching channel or calls `POST /channels/direct` once.
-Group sending accepts only an exact existing channel ID whose fetched type is `G`; it never calls
-`POST /channels/group`. Both flows call `POST /posts` at most once with a generated
-`pending_post_id` and validate channel, author, post ID, and timestamp in the response.
-
-Dry-run uses only reads. For a missing DM it emits `channelId: null` plus `willCreate: true` and does
-not create the channel. Send receipts are narrow local projections and omit message text, raw post
-objects, props, metadata, error bodies, and credentials.
-
-Write outcomes are tri-state:
-
-- a validated success response is `sent`;
-- a known 4xx response is rejected;
-- timeout, transport/body failure, malformed success data, author/channel mismatch, or 5xx is
-  unknown and must instruct the caller to inspect the destination before retrying.
-
-No write request is automatically replayed. If direct-channel setup is unknown, the message was not
-attempted and the error says so. If post delivery was validated but the stdout stream reports a
-receipt write failure, the error states that delivery was confirmed and must not be retried.
-
-### Channel Command
-
-```bash
-channel <name>    Fetch and display one channel
---team            Team name (required if multiple teams)
---limit, -l       Max seed messages; thread context may exceed it (default: 50)
---since, -s       Time range: "24h", "7d", "30d" (default: 7d)
---cursor           Resume deterministic channel history
-```
-
-`channels` is account-wide. Its narrow JSON items are
-`{ id, type, name, displayName?, team, lastPost, messageCount }`, where `team` is
-`{ id, name, displayName? }` for public/private channels and `null` for DMs/group DMs. Human
-public/private labels are `team-slug/#channel`; every human row includes its channel ID.
-
-Search and mentions resolve exactly one team. Multi-team accounts must pass `--team`; these reads
-must not be treated as account-wide or as complete coverage of DMs/group DMs.
-
-### Thread Command
-
-```bash
-thread <postId>   Fetch and display one thread
-```
-
-Selection limits, time windows, and search predicates apply to seed posts. Thread hydration runs
-after selection, so roots and sibling replies are included as context even when they fall outside
-those predicates, and visible output may exceed the requested limit. Hydration uses bounded
-concurrency and reports partial coverage rather than dropping seed posts when a thread cannot be
-proved complete. `--no-threads` performs no thread hydration requests except for `mm thread`, which
-always fetches the explicitly requested thread.
-
----
-
-## Secret Redaction
-
-`mm doctor` performs only `GET /system/ping?get_server_status=true` and, when both URL and token are
-available, `GET /users/me`. It always emits configuration, server, and authentication checks with
-`pass`, `warn`, `fail`, or `skipped` status. JSON is `{ "ok": boolean, "checks": [...] }`; `ok` is
-false and the exit status is nonzero when any check fails. Credential values, raw remote bodies,
-and arbitrary ping/user fields are never emitted. Missing optional ping fields are reported as
-`unknown`, not inferred healthy. Missing URL or token is a configuration failure, but all checks
-are still emitted and any possible ping still runs. Each request has an independent bounded
-timeout. Every remote string passes through control-character sanitization and, when enabled, the
-normal secret-redaction pipeline. A configured token is never emitted even with redaction disabled.
-An insecure file containing a token fails regardless of which credential source wins precedence.
-
-Display redaction never mutates outbound send content. The active Mattermost credential is the hard
-exception: an exact occurrence in the outbound message is rejected before network access.
-
-The CLI automatically detects and redacts secrets including:
-
-- AWS access keys and secret keys
-- GitHub/GitLab tokens
-- Slack/Discord tokens and webhooks
-- JWTs
-- Bearer/Basic auth tokens
-- Connection strings (postgres://, mongodb://, etc.)
-- API keys and passwords in config
-- Private keys
-- Stripe, SendGrid, Twilio, OpenAI keys
-
-Redaction uses partial masking to show first/last characters:
-- Example: `ghp_abc123xyz789secret` → `ghp_...cret`
-
----
-
-## Output Formats
-
-Retrieved posts are normalized as their latest visible state. Structured JSON includes
-`updatedAt`, optional `editedAt`/`deletedAt`, deletion/system/pinned markers, post type, file IDs and
-available file metadata, safe attachment display fields, and reaction summaries with available
-actor identities. Pretty and Markdown output render the same state. Webhook override usernames are
-used for display while preserving the underlying `userId`; empty-author system posts use `system`.
-
-Message envelopes expose channel metadata coverage explicitly. Resolved channels use
-`channel.metadataStatus: "resolved"`. When posts have already been retrieved but the follow-up
-`GET /channels/:id` fails or returns a malformed successful payload, output preserves those posts
-and uses the sanitized channel ID with `type: "unknown"`, `name: "unknown"`, and
-`metadataStatus: "unavailable"`; one generic channel-metadata warning is written to stderr without
-the remote error or body. This metadata warning is additional to bounded request retry/transport
-diagnostics. HTTP 401 remains fatal. Other lookup errors, including ambiguous 403 responses that
-may represent a per-channel access boundary, are classified as unavailable metadata.
-
-Search response pages are normalized defensively. Ordered hits without a usable post payload are
-treated as stale/inaccessible evidence: scanning continues, but completeness becomes unknown.
-Search scanning is bounded at 100 pages, and reaching that boundary also leaves completeness
-unknown rather than claiming exhaustion.
-Channel history and thread pagination likewise preserve valid page content while treating missing
-ordered post payloads as unknown completeness.
-
-Only metadata already present in list, search, and thread payloads is used. There are no per-post
-file or reaction requests, no edit-history reconstruction, and arbitrary attachment actions or
-props are never emitted. Normal retrieval excludes deleted posts (`deletedPostsIncluded: false`);
-if one is returned in hydrated context, only a stable `[deleted post]` placeholder is exposed.
-
-### Pretty Terminal (default for TTY)
-- Colored usernames
-- Grouped by date
-- Timestamps formatted nicely
-- `--no-color` keeps pretty layout and disables ANSI colors
-
-### Markdown (default for pipe/non-TTY)
-- Standard markdown format
-- Good for LLM processing
-- Quoted messages
-- Selected for non-TTY stdout regardless of `--no-color`
-
-### JSON (`--json`)
-- Full structured data
-- Includes redaction log
-- Good for programmatic use
-
-Empty successful message reads (`dms`, `group-dms`, `channel`, `search`, and `mentions`) return `[]` and exit
-zero. Pretty and Markdown modes print `No messages found.` instead. A missing requested thread or
-post is still an error. Empty unread JSON retains its command-specific shape: `{ "unread": [] }`.
-The exception is an empty resumed channel-history read whose completeness is unknown. It returns
-one empty channel envelope with `queryTruncated: null`, echoes `inputCursor`, and repeats the same
-value as `nextCursor`. Consumers must treat an unchanged cursor as a retry token, not progress.
-Empty `teams` JSON is `[]`; human output is `No teams found.`. `whoami` and `teams` use narrow
-command-specific schemas and never emit raw Mattermost user or team objects. Malformed identity or
-team responses fail closed without including remote values in errors.
-`users` is a read-only directory lookup (its search endpoint uses POST semantically). It emits a
-narrow user whitelist inside `{ users, retrieval }`, sorts by username then ID, and probes with
-`limit + 1`. Single-page probes are capped at 200 users for listing and 1000 for search, with
-`truncated: null` when the relevant endpoint ceiling prevents a conclusive result. Empty human
-output is `No users found.`.
-
-### Deterministic channel-history cursors
-
-Only `channel <name>`, `dms --channel <D-id>`, and `group-dms --channel <G-id>` accept
-`--cursor`. Merged conversation reads, `dms --user`, and explicit `--since` plus `--cursor` are
-rejected. The opaque, versioned base64url cursor binds the raw channel ID, absolute original since
-boundary, and the last selected `(create_at, id)` boundary. Selection order is `create_at DESC`,
-then ASCII post ID ascending. Resume accepts older timestamps plus same-timestamp IDs greater than
-the boundary ID. A safe optional Mattermost `before` anchor may reduce scanning; the local boundary
-filter remains authoritative. Cursors are unsigned pagination state, not authorization tokens.
-
-### JSON Lines (`--json watch ...`)
-- One redacted `posted` event per stdout line
-- Connection, retry, malformed-event, and gap diagnostics on stderr
-- Automatic reconnect with next-sequence resume when the server preserves the connection
-- Changed connections and sequence gaps are reported honestly; no implicit REST backfill
-
----
-
-## Future Extensions (Not in current scope)
-
-- LLM task extraction module
-- SQLite cache for offline access
-- Interactive TUI mode
+The v1.6.0 TypeScript oracle is frozen at tag `v1.6.0`. Its complete removal
+receipt is `V1_TEST_DISPOSITION.md`.

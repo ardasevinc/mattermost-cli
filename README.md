@@ -1,459 +1,222 @@
 # mattermost-cli
 
-A CLI tool to fetch, display, watch, and deliberately send Mattermost messages with automatic secret redaction for safe LLM processing.
+`mm` is a native Mattermost CLI for agents and humans. It provides bounded,
+honest reads and live watch output, redacts secrets by default, and makes every
+remote mutation a persisted stage that must be reviewed and applied separately.
 
-## Features
+The sharp edge is intentionally blunt:
 
-- Fetch DMs from all channels or filter by specific users
-- Send stdin to an exact DM user or existing group-DM channel with dry-run receipts
-- Fetch messages from public/private channels via `mm channel <name>`
-- Search messages with Mattermost query syntax via `mm search <query>`
-- Find mentions via `mm mentions` (supports configurable aliases)
-- Show unread summary via `mm unread` (optional `--peek`)
-- Watch channel live via `mm watch <channel>`
-- List all messaging channel types via `mm channels` with `--type` filtering
-- Complete visible threads by default (`--no-threads` returns selected seeds only)
-- Fetch a single thread via `mm thread <postId>`
-- Automatic detection and redaction of secrets (API keys, tokens, passwords, etc.)
-- Multiple output formats: pretty terminal, markdown, JSON, and JSON Lines for live watch
-- Time-based filtering (`--since`) and message limits (`--limit`)
+```text
+describe intent -> stage locally -> inspect exact revision -> apply explicitly
+```
 
-## Prerequisites
+There is no immediate `send`, `edit`, `delete`, or `react` command.
 
-- Node.js >= 22.0.0
-- Mattermost personal access token
+## Install
 
-## Installation
+Supported release targets are macOS and Linux on arm64 or amd64.
 
 ```bash
-# npm
+# Homebrew
+brew install ardasevinc/tap/mattermost-cli
+
+# npm migration path (installs the exact native binary package)
 npm install -g mattermost-cli
 
-# yarn
-yarn global add mattermost-cli
+# Go
+go install github.com/ardasevinc/mattermost-cli/v2/cmd/mm@v2.0.0
 
-# pnpm
-pnpm add -g mattermost-cli
-
-# bun
-bun add -g mattermost-cli
+# checksum-verifying installer
+curl -fsSL https://raw.githubusercontent.com/ardasevinc/mattermost-cli/main/scripts/install.sh | sh
 ```
 
-Or run without installing:
+The installer defaults to `~/.local/bin`. Set `MATTERMOST_CLI_INSTALL_DIR` to
+choose another directory or `MATTERMOST_CLI_VERSION=v2.0.0` to pin a release.
 
-```bash
-bunx mattermost-cli
-```
-
-### From source
+From source:
 
 ```bash
 git clone https://github.com/ardasevinc/mattermost-cli
 cd mattermost-cli
-bun install
-bun link  # Makes `mm` available globally
+go build -o ./bin/mm ./cmd/mm
 ```
 
-## Configuration
+## Configure
 
-Configuration is resolved in this order: **CLI flags → environment variables → config file**
-
-### Option 1: Config file (recommended)
+Configuration precedence is CLI flags, environment variables, TOML, then
+defaults.
 
 ```bash
-mm config --init  # Creates ~/.config/mattermost-cli/config.toml
+mm config --init
 ```
 
-Then edit the file:
+This creates `~/.config/mattermost-cli/config.toml` on every OS unless an
+absolute `XDG_CONFIG_HOME` is set.
 
 ```toml
-# ~/.config/mattermost-cli/config.toml
 url = "https://mattermost.example.com"
 token = "your-personal-access-token"
-# redact = false  # Uncomment to disable secret redaction
-# mention_names = ["Arda", "arda.sevinc"]  # Optional aliases for `mm mentions`
+redact = true
+mention_names = ["Arda", "arda.sevinc"]
+
+# Optional local-stage retention policy. Zero disables each policy.
+stage_ttl_seconds = 0
+stage_prune_after_seconds = 0
 ```
 
-### Option 2: Environment variables
+Environment alternatives:
 
 ```bash
 export MM_URL="https://mattermost.example.com"
 export MM_TOKEN="your-personal-access-token"
-# Optional: disable redaction globally
-export MM_REDACT="false"
 ```
 
-### Option 3: CLI flags
+Verify setup without mutation:
 
 ```bash
-mm --url https://mattermost.example.com --token your-token channels
+mm config
+mm doctor
+mm whoami
 ```
 
-## Usage
-
-### List channels
+## Read Mattermost
 
 ```bash
-mm channels
-mm channels --json
-mm channels --type public
-```
+mm teams
+mm users arda --team core
+mm channels --type all
 
-`channels` is account-wide and deduplicates channel IDs. JSON items use the narrow schema
-`{ id, type, name, displayName?, team, lastPost, messageCount }`: `team` is
-`{ id, name, displayName? }` for public/private channels and `null` for direct/group messages.
-Human public/private labels use `team-slug/#channel`, and every row includes the channel ID needed
-by explicit D/G fetches.
-
-### Fetch direct messages
-
-```bash
-# All DMs from last 7 days
-mm dms
-
-# From specific user(s)
-mm dms -u alice
-mm dms -u alice -u bob
-
-# With time filter
 mm dms --since 24h
-mm dms --since 30d --limit 100
+mm dms --user alice --limit 100
 mm dms --channel <channel-id> --cursor <opaque>
 
-# JSON output (for piping to other tools)
-mm dms --json
-
-# Return only selected seed posts (no root/sibling hydration)
-mm dms --no-threads
-```
-
-`mm dms --limit` is a total output cap across all matched DM channels, not a per-channel cap.
-
-### Fetch group direct messages
-
-```bash
-# All group DMs from the last 7 days
-mm group-dms
-
-# One group DM by channel ID
-mm group-dms --channel <channel-id>
-
-# Adjust the shared output budget and time range
-mm group-dms --since 24h --limit 100
-mm group-dms --channel <channel-id> --cursor <opaque>
-```
-
-`mm group-dms --limit` is a total output cap across all matched group-DM channels.
-
-### Send direct and group messages
-
-```bash
-# Resolve the exact DM destination without writing
-mm --json send dm alice --dry-run
-
-# Send stdin exactly as received; printf avoids an unintended final newline
-printf '%s' 'hello alice' | mm send dm alice
-
-# Group sends accept an existing type-G channel ID only
-printf 'deploy is complete\n' | mm send group <group-channel-id>
-mm --json send group <group-channel-id> --dry-run
-```
-
-`send dm` reuses an existing direct channel or creates one for the exact resolved username.
-`send group` never creates or guesses a group conversation. Both commands validate the destination
-before posting, send the message exactly once, and never echo message content in their receipts.
-Input must be valid UTF-8, non-empty, at most 16,383 Unicode characters, and at most 65,535 bytes.
-The exact active Mattermost credential is blocked from outbound content regardless of `--no-redact`.
-
-Dry runs perform reads only. A missing DM reports `channelId: null` and `willCreate: true` without
-creating it. Successful JSON receipts contain only status, sanitized destination identity, post ID,
-creation time, a local permalink, and the client pending-post ID.
-
-Write requests are never automatically replayed. A timeout, transport failure, malformed success
-receipt, or server error after dispatch reports an unknown outcome and tells the caller to inspect
-the destination before retrying. If DM setup is uncertain, the error explicitly states that the
-message itself was not attempted. If delivery succeeded but the stdout stream reports a write
-failure, the error explicitly states that delivery was confirmed and must not be retried.
-
-### Fetch a specific thread
-
-```bash
+mm group-dms --since 7d
+mm channel general --team core --since 24h
 mm thread <post-id>
-```
+mm search "deployment" --team core
+mm mentions --team core --since 24h
+mm unread --team core --peek 5
 
-### Fetch a channel
-
-```bash
-mm channel general
-mm channel general --cursor <opaque>
-mm channel '#dev' --team myteam
-```
-
-### Search messages
-
-```bash
-mm search "deployment"
-mm search "from:alice in:general after:2026-02-01"
-mm search "deployment" --team myteam
-```
-
-Search is scoped to one team. Accounts with multiple memberships must pass `--team`; results are
-not guaranteed to include DMs or group DMs.
-
-### Find mentions
-
-```bash
-mm mentions
-mm mentions --since 7d
-mm mentions --channel general --limit 20
-mm mentions --team myteam
-```
-
-Mentions use the same single-team search scope and are not guaranteed to include DMs or group DMs.
-
-### Show unread channels
-
-```bash
-mm unread
-mm unread --peek 5
-```
-
-Unread resolves one team for public/private channels while including account-global, deduplicated
-DMs and group DMs. Multi-team accounts must pass `--team`.
-
-### Watch a channel live
-
-```bash
-mm watch general
-mm watch dev --team myteam
+mm watch general --team core
 mm watch --dm alice
-mm --json watch general >> mattermost-posts.jsonl
 ```
 
-Watch emits only newly posted events. It reconnects automatically with bounded backoff and resumes
-from the next expected WebSocket sequence when Mattermost preserves the connection. Sequence gaps
-or a changed server connection are reported, but watch does not perform REST backfill.
+History selection is deterministic and bounded. JSON envelopes expose whether
+retrieval is complete, truncated, or unknown; an unproven empty result fails
+closed instead of pretending that nothing exists. Visible threads are hydrated
+by default and can be disabled with `--no-threads`.
 
-With `--json`, stdout is JSON Lines: one redacted post object per line, suitable for piping or
-append-only logs. Connection status, retries, malformed-event warnings, and gap diagnostics go to
-stderr, so they never corrupt the JSONL stream. Stop cleanly with either `SIGINT` (Ctrl+C) or
-`SIGTERM`.
+Output modes:
 
-### Manage configuration
+- TTY: pretty, optionally colored output
+- non-TTY: Markdown suitable for pipes and agents
+- `--json`: versioned `mm/v2/*` JSON, or JSON Lines for `watch`
+
+## Stage and apply mutations
+
+Creating a stage performs read-only identity and destination binding plus a
+local SQLite write. It does not mutate Mattermost.
 
 ```bash
-mm config           # Show config file status
-mm config --path    # Print config file path
-mm config --init    # Create config file with template
-mm doctor           # Check config, server health, and authentication
-mm --json doctor    # Stable { ok, checks } diagnostic envelope
+# stdin avoids shell-history/process-list exposure
+printf '%s' '**hello** from a reviewed stage' | mm stage send dm alice
+
+# channel and group destinations
+printf '%s' 'deploy complete' | mm stage send channel releases --team core
+printf '%s' 'group update' | mm stage send group <group-channel-id>
+
+# other supported operations
+printf '%s' 'thread reply' | mm stage reply <post-id>
+printf '%s' 'corrected text' | mm stage post-edit <post-id>
+mm stage post-delete <post-id>
+mm stage react <post-id> eyes
+mm stage unreact <post-id> eyes
+mm stage dm-create alice
+mm stage group-create alice bob
 ```
 
-`doctor` is read-only and inspects partial configuration without aborting early. Missing URL or
-token makes readiness fail, while an available URL is still pinged and unavailable checks are
-reported as skipped. It reports whether credentials came
-from CLI flags, environment variables, a file, or are missing, never their values. Server checks
-expose only ping health fields; authentication exposes only user ID and username. An insecure
-config file is fatal whenever it stores a token, even if another source overrides it, and a warning
-otherwise. Network checks have independent bounded timeouts.
+Every creation command supports `--dry-run`, which resolves and previews the
+plan without reading content or writing local state. Human callers may also use
+`--message`, with the explicit caveat that it is visible to shell history and
+process inspection. Create/reply stages support repeatable `--attachment` paths.
 
-### Inspect identity, teams, and users
+Review and apply the exact revision printed by stage creation:
 
 ```bash
-mm whoami           # Authenticated user, id, and roles
-mm teams            # Team names, ids, and access types
-mm --json whoami    # Whitelisted identity JSON
-mm --json teams     # Deterministically sorted team JSON
-mm users            # List active users (default limit: 20)
-mm users arda       # Search active users
-mm users --team core --limit 50
-mm --json users arda
+mm stage list
+mm stage show <stage-id>
+mm apply <stage-id>@<revision>
 ```
 
-These commands are read-only. Identity output omits email, authentication, notification, and
-arbitrary property fields. Team output likewise exposes only names, IDs, and access type. A valid
-account with no team memberships prints `No teams found.` (`[]` with `--json`). `users` emits only
-IDs, usernames, display names, and nicknames. Its JSON envelope includes retrieval coverage;
-`truncated: null` means the single-page endpoint ceiling prevented a conclusive limit-plus-one
-probe. Listing is capped at 200 fetched users; search is capped at 1000.
+`stage show` deliberately reveals retained message content and attachment
+paths. `stage list` and ordinary receipts do not.
 
-### Options
-
-```
-Global:
-  -t, --token <token>     Mattermost personal access token (or MM_TOKEN env)
-  --url <url>             Mattermost server URL (or MM_URL env)
-  --json                  Output as JSON (JSON Lines for watch)
-  --no-color              Disable colored output
-  -r, --relative          Show relative times
-  --no-relative           Show absolute times
-  --redact                Enable secret redaction (default)
-  --no-redact             Disable heuristic redaction; active MM credential stays masked
-  --threads               Show thread structure (default)
-  --no-threads            Return selected seed posts only (except thread command)
-
-DMs:
-  -u, --user <username>   Filter by username (repeatable)
-  -l, --limit <number>    Max total messages across matched DMs (default: 50)
-  -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
-  -c, --channel <id>      Specific direct-message channel ID (type D only)
-  --cursor <opaque>       Resume that channel's deterministic history
-
-Group DMs:
-  -l, --limit <number>    Max total messages across matched group DMs (default: 50)
-  -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
-  -c, --channel <id>      Specific group-DM channel ID (type G only)
-  --cursor <opaque>       Resume that channel's deterministic history
-
-Send:
-  send dm <username>       Send piped stdin to an exact DM user
-  send group <channel-id>  Send piped stdin to an existing group DM
-  --dry-run                Resolve the destination without writing
-
-Channels:
-  channels --type <type>  Filter the account-wide list: dm, public, private, group, all
-
-Users:
-  users [query]            List or search active users
-  --team <name>           Restrict users to a team
-  -l, --limit <number>    Max users to show (default: 20)
-
-Channel:
-  channel <name>          Fetch messages from one channel
-  --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max seed messages; thread context may exceed it (default: 50)
-  -s, --since <duration>  Time range: "24h", "7d", "30d" (default: 7d)
-  --cursor <opaque>       Resume deterministic channel history
-
-Search:
-  search <query>          Search messages (supports Mattermost search modifiers)
-  --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max seed results; thread context may exceed it (default: 50)
-
-Mentions:
-  mentions                Find @username + configured alias mentions
-  --team <name>           Team name (required if multiple teams)
-  -l, --limit <number>    Max seed results; thread context may exceed it (default: 50)
-  -s, --since <duration>  Time range filter (e.g. 24h, 7d)
-  --channel <name>        Restrict mentions to one channel
-
-Unread:
-  unread                  Show channels with unread messages
-  --team <name>           Team name (required if multiple teams)
-  --peek <number>         Fetch N recent unread messages per channel
-
-Watch:
-  watch [channel]         Live posted events with automatic reconnect
-  --team <name>           Team name (required if multiple teams)
-  --dm <username>         Watch a DM conversation instead of a channel
-
-Thread:
-  thread <postId>         Fetch and display one thread
-```
-
-### Retrieval coverage
-
-`mm channel`, `mm dms --channel`, and `mm group-dms --channel` return an opaque
-`nextCursor` when more history is available or completeness is unknown. Pass it back with
-`--cursor`; do not combine it with an explicit `--since`. Cursors are bound to the resolved raw
-channel ID and preserve the original absolute time boundary, so newly arriving posts do not shift
-later pages. Merged DM/group-DM reads and `dms --user` do not support cursors. Pretty and Markdown
-output print the cursor on a final `Next cursor:` line.
-An empty resumed read with unknown completeness returns one empty channel envelope and repeats the
-input cursor as `nextCursor`. Consumers must detect this unchanged cursor and retry later; it does
-not represent pagination progress. A proven-complete empty read remains `[]`.
-
-`--limit`, `--since`, and search terms select seed posts first. With threads enabled (the default),
-the CLI then fetches the complete visible thread for every selected root or reply. The resulting
-context can exceed `--limit` and can include replies outside the requested time range or search.
-`--no-threads` disables these extra requests and returns only the selected seeds, except `mm thread`
-which always fetches the requested thread. JSON message
-outputs include additive `retrieval` metadata with the selected count, requested limit and time
-boundary, whether the query was proven truncated, visible post/thread coverage, and the deleted-post policy. A
-`queryTruncated` value of `null` means bounded pagination stopped before completeness could be
-proved. `visibleThreads.status: "partial"` and `failedRootIds` report threads the server did not let
-the CLI prove complete. Each message also includes its stable post `id` and Mattermost `permalink`.
-
-Every message envelope reports `channel.metadataStatus` as `"resolved"` or `"unavailable"`. If
-posts were retrieved successfully but the follow-up channel metadata lookup fails or returns a
-malformed payload, the CLI preserves those posts, emits one generic channel-metadata warning, and
-uses the sanitized channel ID with `type: "unknown"`, `name: "unknown"`, and
-`metadataStatus: "unavailable"`. That warning is in addition to bounded request retry/transport
-diagnostics. Remote error bodies are never emitted. HTTP 401 remains a fatal authentication error;
-other lookup errors, including 403 responses that may be channel-specific, use the explicit
-unavailable state.
-
-Search tolerates stale ordered hits whose post payload is missing, continues scanning for usable
-results, and marks completeness unknown instead of crashing or claiming exhaustion. Search scans
-are capped at 100 pages; reaching that cap also produces unknown completeness.
-Channel history and thread reads apply the same missing-payload rule while preserving every valid
-post returned on the page.
-
-Proven-complete empty reads from `dms`, `group-dms`, `channel`, `search`, and `mentions` exit
-successfully. They emit `[]` with `--json` and `No messages found.` in terminal or piped text
-output. An empty result with unknown completeness fails instead of claiming there were no matches;
-the unchanged resumed-cursor envelope above is the sole retryable exception. A missing requested
-thread or post remains an error.
-
-### Current post state
-
-Message output represents the latest visible state returned by Mattermost, not edit history. It
-includes edit/update timestamps, pinned and system-post markers, webhook display names, payload
-file metadata, safe attachment display fields, and reaction summaries. This data comes from the
-list, search, or thread response itself; the CLI does not make per-post file or reaction requests.
-
-Normal retrieval excludes deleted posts and reports `deletedPostsIncluded: false`. If Mattermost
-does return a deleted post while hydrating context, the CLI emits only `[deleted post]` plus stable
-post metadata and suppresses its stale message, files, attachments, and reactions. Availability of
-file details, reactions, and actor usernames depends on the metadata included by the server and the
-caller's permissions.
-
-## Security
-
-This tool automatically detects and redacts secrets in all remotely controlled emitted strings,
-including messages, display names, file metadata, attachments, URLs, and reactions:
-
-- AWS access keys and secret keys
-- GitHub/GitLab tokens
-- Slack/Discord tokens and webhooks
-- JWTs
-- Connection strings (postgres://, mongodb://, etc.)
-- API keys, passwords, and more
-
-Secrets are partially masked (e.g., `ghp_...cret`) to preserve context while preventing exposure.
-
-**Note:** Redaction happens on display. Original messages are not modified on the server.
-`--no-redact` disables heuristic secret masking, but the exact active Mattermost credential remains
-protected. Unsafe terminal controls and Unicode bidirectional controls are always made visible;
-ordinary Unicode, emoji, and joiners are preserved.
-
-Outbound send content is not passed through display redaction or terminal sanitization. It is sent
-byte-for-byte after UTF-8, size, and non-empty validation. The one hard outbound secret boundary is
-the active Mattermost credential itself, which is never allowed inside a message.
-
-## AI Agent Skill
-
-This repo ships an agent skill for the [Vercel Skills CLI](https://github.com/vercel-labs/skills). Install it to give your AI coding agent access to Mattermost:
+Management:
 
 ```bash
-bunx skills@latest add ardasevinc/mattermost-cli --skill mattermost-cli
+printf '%s' 'revised text' | mm stage revise <stage-id>
+mm stage cancel <stage-id>
+mm stage prune --older-than 720h
+mm store doctor
+mm store migrations
 ```
 
-## Contributing
+Apply is exact-revision compare-and-swap. Concurrent callers cannot both claim
+one revision. A definitively rejected request may become eligible for
+`--resume-partial`; an uncertain outcome requires explicit `--force-unknown`
+and warns about duplicate risk. Neither mode is automatic.
 
-The published CLI targets Node.js >= 22. Development uses Bun 1.3.14 (matching `@types/bun`).
+Machine callers use versioned requests and caller-generated replay keys:
 
 ```bash
-bun install --frozen-lockfile  # Install exact dependencies
-bun run lint    # Biome lint
-bun run check   # Biome full check
-bun run typecheck  # Typecheck
-bun run test    # Run tests with Vitest
-bun run test:e2e # Disposable Mattermost 11.8.3 + Postgres send test (Docker required)
-bun run build   # Build for npm
-bun run verify  # Full release verification
-bun run mm      # Run CLI from source
+mm stage --from-json < stage-request.json
+mm apply --from-json < apply-request.json
+mm schema list
+mm schema show mm/v2/stage-request
+mm schema validate mm/v2/stage-request < stage-request.json
 ```
+
+Checked-in schemas and examples live under `schemas/v2/`.
+
+## Safety model
+
+- The active Mattermost credential is never emitted, even with `--no-redact`.
+- Outbound text, structured fields, attachment paths/metadata, and attachment
+  bytes containing that credential are rejected before persistence or dispatch.
+- Read commands never create conversations or perform write fallbacks.
+- Mutation redirects are rejected and uncertain writes are never replayed
+  automatically.
+- Remote bodies, reason phrases, and parser details are not reflected in errors.
+- Terminal controls and Unicode bidi hazards are made visible or removed.
+- A confirmed remote effect followed by local receipt/output failure has its own
+  exit class and explicitly says not to retry.
+
+Local stages are stored in SQLite under `$XDG_STATE_HOME/mattermost-cli` or
+`~/.local/state/mattermost-cli`, with private directory/file modes, migrations,
+integrity diagnostics, durable attempt journals, and append-only retention
+events. Plaintext staged content exists until completion or explicit retention
+cleanup; privileged local access, backups, snapshots, swap, and filesystem
+forensics are outside the confidentiality guarantee.
+
+## Development
+
+Go 1.26 or newer is required.
+
+```bash
+just gate           # format, unit, race, vet, staticcheck, vuln, license, build
+just docker-e2e     # disposable Mattermost 11.8.3 + Postgres acceptance
+just release-artifacts 2.0.0 <commit> /tmp/mm-release
+```
+
+The normal gate includes all Go tests, race detection, `go vet`, Staticcheck,
+`govulncheck`, exact dependency-license review, module verification, tagged E2E
+compile/vet, and CGO-free cross-builds for all supported targets. The Docker
+suite uses only fake local users and proves teardown leaves no project-scoped
+containers, volumes, or networks.
+
+The frozen TypeScript v1.6.0 oracle remains available at tag `v1.6.0`. Its
+file-by-file disposition is recorded in `docs/V1_TEST_DISPOSITION.md`; the v2
+contract is `docs/V2_CONTRACT.md`.
 
 ## License
 
