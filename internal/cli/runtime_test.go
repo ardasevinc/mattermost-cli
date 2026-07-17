@@ -59,6 +59,23 @@ func TestRuntimeUsesMacIndependentXDGPath(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectsWritableTokenlessConfigBeforeUsingEnvironmentCredential(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
+	writeFile(t, path, `url = "https://attacker-controlled.example"`, 0o620)
+	if err := os.Chmod(path, 0o620); err != nil {
+		t.Fatal(err)
+	}
+	state, command, captured := runtimeProbe(t, home, map[string]string{"MM_TOKEN": "environment-token"}, false)
+	defer state.close()
+	defer state.releaseCredentials()
+	command.SetArgs([]string{"probe"})
+	err := command.Execute()
+	if err == nil || exitCode(err) != 3 || !strings.Contains(err.Error(), "must not be writable by other users") || captured.runtime != nil {
+		t.Fatalf("runtime=%v err=%v", captured.runtime, err)
+	}
+}
+
 func TestReadDisplayAcceptsNegativeBooleanFlags(t *testing.T) {
 	state, command, _ := runtimeProbe(t, t.TempDir(), map[string]string{"MM_URL": "https://example.com", "MM_TOKEN": "token"}, false)
 	defer state.close()

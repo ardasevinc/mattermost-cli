@@ -76,6 +76,7 @@ type FileState struct {
 	LegacyPath          string
 	Exists              bool
 	InsecurePermissions bool
+	WritableByOthers    bool
 	Error               FileError
 	Unsafe              UnsafeReason
 	Migration           Migration
@@ -135,7 +136,7 @@ func Init(path string) (bool, error) {
 	file, err := createConfigFile(path)
 	if errors.Is(err, os.ErrExist) {
 		existing := inspect(path)
-		if existing.Unsafe != "" || existing.Error == FileErrorRead || (existing.InsecurePermissions && existing.Config.Token != "") {
+		if existing.Unsafe != "" || existing.Error == FileErrorRead || existing.WritableByOthers || (existing.InsecurePermissions && existing.Config.Token != "") {
 			return false, fmt.Errorf("existing config path is unsafe")
 		}
 		return false, nil
@@ -203,6 +204,7 @@ func inspect(path string) FileState {
 	state.Exists = true
 	defer func() { _ = file.Close() }()
 	state.InsecurePermissions = info.Mode().Perm()&0o077 != 0
+	state.WritableByOthers = info.Mode().Perm()&0o022 != 0
 	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err != nil || len(data) > maxConfigBytes {
 		state.Error = FileErrorRead

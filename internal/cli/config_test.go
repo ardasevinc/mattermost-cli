@@ -260,6 +260,26 @@ func TestConfigDiagnosticDocumentsUseHandledExitThree(t *testing.T) {
 	}
 }
 
+func TestHumanConfigReportsUnknownRetentionOnReadOrParseFailure(t *testing.T) {
+	for _, body := range []string{"broken = [", ""} {
+		home := t.TempDir()
+		path := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
+		if body == "" {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			writeFile(t, path, body, 0o600)
+		}
+		t.Setenv("HOME", home)
+		var stdout, stderr bytes.Buffer
+		code := Execute(context.Background(), []string{"config"}, strings.NewReader(""), &stdout, &stderr)
+		if code != 3 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Stage TTL seconds: unknown") || !strings.Contains(stdout.String(), "Stage prune after seconds: unknown") {
+			t.Fatalf("body=%q exit=%d stdout=%q stderr=%q", body, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestConfigPathDoesNotInspectSelectedFile(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".config", "mattermost-cli", "config.toml")

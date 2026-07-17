@@ -75,6 +75,29 @@ func TestStageListAbsentIsOfflineReadOnlyAndSchemaValid(t *testing.T) {
 	}
 }
 
+func TestStageCommandsRejectConfigWritableByOtherUsers(t *testing.T) {
+	home, stateRoot := t.TempDir(), filepath.Join(t.TempDir(), "state")
+	path := filepath.Join(home, ".config", "mattermost-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("stage_ttl_seconds = 1\n"), 0o620); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o620); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	_, command := stageInspectCommand(t, home, stateRoot, false, &stdout, &stderr)
+	err := command.execute(t.Context(), "list")
+	if err == nil || exitCode(err) != 3 || !strings.Contains(err.Error(), "must not be writable by other users") || stdout.Len() != 0 {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	if _, statErr := os.Stat(stateRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe policy touched store: %v", statErr)
+	}
+}
+
 func TestStageListValidatesBoundsAndCursorBeforeStoreAccess(t *testing.T) {
 	for _, args := range [][]string{{"list", "--limit", "0"}, {"list", "--limit", "101"}, {"list", "--cursor="}, {"list", "--cursor", "not-a-cursor"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

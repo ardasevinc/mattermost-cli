@@ -53,7 +53,7 @@ func newConfigCommand(state *rootState) *cobra.Command {
 			}
 			file := config.Load(paths)
 			status := state.presentConfigStatus(configMachineStatus(action, file, created))
-			if file.Error != "" || file.Unsafe != "" || (file.InsecurePermissions && file.Config.Token != "") {
+			if file.Error != "" || file.Unsafe != "" || file.WritableByOthers || (file.InsecurePermissions && file.Config.Token != "") {
 				state.setSemanticExit(3)
 			}
 			return writeConfigStatus(state, status)
@@ -182,8 +182,8 @@ func writeConfigHuman(state *rootState, status output.ConfigEnvelope) error {
 		"Exists: " + yesNo(valueOr(status.Exists, false)),
 		"URL configured: " + yesNo(valueOr(status.URLConfigured, false)),
 		"Token configured: " + yesNo(valueOr(status.TokenConfigured, false)),
-		"Stage TTL seconds: " + strconv.FormatInt(valueOr(status.StageTTLSeconds, int64(0)), 10),
-		"Stage prune after seconds: " + strconv.FormatInt(valueOr(status.StagePruneAfterSeconds, int64(0)), 10),
+		"Stage TTL seconds: " + optionalInt64(status.StageTTLSeconds),
+		"Stage prune after seconds: " + optionalInt64(status.StagePruneAfterSeconds),
 		"Permissions: " + valueOr(status.Permissions, "not_applicable"),
 		"Read status: " + valueOr(status.ReadStatus, "not_attempted"),
 		"Parse status: " + valueOr(status.ParseStatus, "not_attempted"),
@@ -206,4 +206,11 @@ func yesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+func optionalInt64(value *int64) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.FormatInt(*value, 10)
 }

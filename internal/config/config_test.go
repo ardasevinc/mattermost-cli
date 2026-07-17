@@ -111,6 +111,20 @@ func TestInitRejectsExistingTokenWithInsecurePermissions(t *testing.T) {
 	}
 }
 
+func TestWritableTokenlessConfigIsUnsafeForPolicyAndInit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	writeConfig(t, path, `stage_ttl_seconds = 0`, 0o620)
+
+	state := Load(Paths{ConfigPath: path, LegacyPath: path})
+	if !state.InsecurePermissions || !state.WritableByOthers {
+		t.Fatalf("Load() state = %+v, want writable-by-others classification", state)
+	}
+	created, err := Init(path)
+	if err == nil || created {
+		t.Fatalf("Init() = (%v, %v), want unsafe-policy failure", created, err)
+	}
+}
+
 func TestLoadRejectsSymlinkedAncestorInsideUserDirectory(t *testing.T) {
 	root := t.TempDir()
 	realDirectory := filepath.Join(root, "real")
@@ -217,6 +231,11 @@ func TestLoadCharacterizesMissingReadParseAndPermissions(t *testing.T) {
 	writeConfig(t, insecure, `token = "secret"`, 0o640)
 	if state := Load(Paths{ConfigPath: insecure, LegacyPath: insecure}); !state.InsecurePermissions {
 		t.Fatalf("insecure state = %+v", state)
+	}
+	writable := filepath.Join(root, "writable.toml")
+	writeConfig(t, writable, `stage_ttl_seconds = 1`, 0o602)
+	if state := Load(Paths{ConfigPath: writable, LegacyPath: writable}); !state.WritableByOthers {
+		t.Fatalf("writable state = %+v", state)
 	}
 }
 

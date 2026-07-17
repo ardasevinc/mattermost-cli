@@ -141,6 +141,10 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 		s.runtimeErr = configFailure("could not parse the Mattermost configuration")
 		return nil, s.runtimeErr
 	}
+	if file.WritableByOthers {
+		s.runtimeErr = configFailure("Mattermost configuration must not be writable by other users")
+		return nil, s.runtimeErr
+	}
 	if file.InsecurePermissions && file.Config.Token != "" {
 		s.runtimeErr = configFailure("Mattermost configuration containing a token must not be accessible by other users")
 		return nil, s.runtimeErr

@@ -137,6 +137,9 @@ func resolveStageOptions(state *rootState, cmd *cobra.Command) error {
 	if file.InsecurePermissions && file.Config.Token != "" {
 		return configFailure("Mattermost configuration containing a token must not be accessible by other users")
 	}
+	if file.WritableByOthers {
+		return configFailure("Mattermost configuration governing stage retention must not be writable by other users")
+	}
 	state.stageTTLSeconds = file.Config.StageTTLSeconds
 	state.stagePruneSeconds = file.Config.StagePruneAfterSeconds
 	return nil
