@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  actions: read
+  actions: write
   contents: write
   id-token: write
   attestations: write
@@ -120,3 +120,7 @@ jobs:
             -F draft=false \
             -F prerelease="${{ steps.version.outputs.prerelease }}" \
             -f make_latest="$latest" >/dev/null
+      - name: Dispatch npm publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish.yml --ref main -f tag="$GITHUB_REF_NAME"
