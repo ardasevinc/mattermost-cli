@@ -159,7 +159,7 @@ func TestReactionUsesAuthoritativeStateAndExactBinding(t *testing.T) {
 	if err != nil || result.Preview.Destination.ReactionPresent == nil || !*result.Preview.Destination.ReactionPresent {
 		t.Fatalf("result/error = %#v/%v", result, err)
 	}
-	if !reflect.DeepEqual(posts.reaction, []string{"post-1", "channel-1", "user-1", "Eyes"}) || !reflect.DeepEqual(result.Preview.Destination.ParticipantIDs, []string{"user-1"}) {
+	if !reflect.DeepEqual(posts.reaction, []string{"post-1", "channel-1", "user-1", "eyes"}) || result.Preview.Destination.Emoji == nil || *result.Preview.Destination.Emoji != "eyes" || !reflect.DeepEqual(result.Preview.Destination.ParticipantIDs, []string{"user-1"}) {
 		t.Fatalf("reaction/participants = %v/%v", posts.reaction, result.Preview.Destination.ParticipantIDs)
 	}
 	if result.Preview.Destination.RootPostID == nil || *result.Preview.Destination.RootPostID != "root-1" {
@@ -272,8 +272,8 @@ func TestEditCanRemediateCredentialInExistingRemoteMessage(t *testing.T) {
 func TestPostMutationRejectsCallerCredentialBeforeNetwork(t *testing.T) {
 	post := ordinaryPost()
 	service, posts, calls := postService(t, post, mattermost.Channel{ID: "channel-1", Type: "G", Name: "group"}, &recordingStore{})
-	service.credentials = [][]byte{[]byte("secret")}
-	_, err := service.React(context.Background(), ReactionInput{RequestID: "request", PostID: "post-1", Emoji: "secret"})
+	service.credentials = [][]byte{[]byte("Secret")}
+	_, err := service.React(context.Background(), ReactionInput{RequestID: "request", PostID: "post-1", Emoji: "Secret"})
 	if !errors.Is(err, ErrCredential) || len(*calls) != 0 || len(posts.reaction) != 0 {
 		t.Fatalf("error/calls = %v/%v", err, *calls)
 	}

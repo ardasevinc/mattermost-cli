@@ -151,19 +151,31 @@ func (s *Service) DeletePost(ctx context.Context, in DeletePostInput) (CreatePos
 }
 
 func (s *Service) DryRunReact(ctx context.Context, in ReactionDryRunInput) (Preview, error) {
-	return s.resolvePost(ctx, postOperation{operation: stagestore.React, postID: in.PostID, emoji: in.Emoji})
+	if contaminated(s.credentials, in.Emoji) {
+		return Preview{}, ErrCredential
+	}
+	return s.resolvePost(ctx, postOperation{operation: stagestore.React, postID: in.PostID, emoji: strings.ToLower(in.Emoji)})
 }
 
 func (s *Service) React(ctx context.Context, in ReactionInput) (CreatePostResult, error) {
-	return s.persistContentless(ctx, in.RequestID, postOperation{operation: stagestore.React, postID: in.PostID, emoji: in.Emoji})
+	if contaminated(s.credentials, in.Emoji) {
+		return CreatePostResult{}, ErrCredential
+	}
+	return s.persistContentless(ctx, in.RequestID, postOperation{operation: stagestore.React, postID: in.PostID, emoji: strings.ToLower(in.Emoji)})
 }
 
 func (s *Service) DryRunUnreact(ctx context.Context, in ReactionDryRunInput) (Preview, error) {
-	return s.resolvePost(ctx, postOperation{operation: stagestore.Unreact, postID: in.PostID, emoji: in.Emoji})
+	if contaminated(s.credentials, in.Emoji) {
+		return Preview{}, ErrCredential
+	}
+	return s.resolvePost(ctx, postOperation{operation: stagestore.Unreact, postID: in.PostID, emoji: strings.ToLower(in.Emoji)})
 }
 
 func (s *Service) Unreact(ctx context.Context, in ReactionInput) (CreatePostResult, error) {
-	return s.persistContentless(ctx, in.RequestID, postOperation{operation: stagestore.Unreact, postID: in.PostID, emoji: in.Emoji})
+	if contaminated(s.credentials, in.Emoji) {
+		return CreatePostResult{}, ErrCredential
+	}
+	return s.persistContentless(ctx, in.RequestID, postOperation{operation: stagestore.Unreact, postID: in.PostID, emoji: strings.ToLower(in.Emoji)})
 }
 
 func (s *Service) persistContentless(ctx context.Context, requestID string, op postOperation) (CreatePostResult, error) {
