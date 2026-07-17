@@ -7,12 +7,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -21,10 +26,13 @@ import (
 type liveHarness struct {
 	t      *testing.T
 	url    string
+	cliURL string
 	token  string
 	binary string
 	home   string
 	client *http.Client
+	mu     sync.Mutex
+	writes map[string]int
 }
 
 type stageReceipt struct {
@@ -76,19 +84,46 @@ func TestGoStageApplyPreservesMaximumLongMarkdownInGroup(t *testing.T) {
 func newLiveHarness(t *testing.T) *liveHarness {
 	t.Helper()
 	rawURL, token, binary := os.Getenv("MM_E2E_URL"), os.Getenv("MM_E2E_TOKEN"), os.Getenv("MM_E2E_BINARY")
+	markerTeam := os.Getenv("MM_E2E_MARKER_TEAM")
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
 		t.Fatal("refusing to run Go mutation E2E without an explicit loopback Mattermost URL")
 	}
-	if token == "" || binary == "" || !filepath.IsAbs(binary) {
-		t.Fatal("disposable Mattermost token and absolute Go binary path are required")
+	if token == "" || binary == "" || !filepath.IsAbs(binary) || !regexp.MustCompile(`^mm-e2e-[0-9a-f]{16}$`).MatchString(markerTeam) {
+		t.Fatal("disposable Mattermost token, marker team, and absolute Go binary path are required")
 	}
 	transport := &http.Transport{Proxy: nil}
 	t.Cleanup(transport.CloseIdleConnections)
-	return &liveHarness{
+	harness := &liveHarness{
 		t: t, url: strings.TrimRight(rawURL, "/"), token: token, binary: binary, home: t.TempDir(),
 		client: &http.Client{Transport: transport, Timeout: 15 * time.Second},
+		writes: make(map[string]int),
 	}
+	proxyTransport := &http.Transport{Proxy: nil}
+	proxy := httputil.NewSingleHostReverseProxy(parsed)
+	proxy.Transport = proxyTransport
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions {
+			harness.mu.Lock()
+			harness.writes[request.Method+" "+request.URL.Path]++
+			harness.mu.Unlock()
+		}
+		proxy.ServeHTTP(response, request)
+	}))
+	harness.cliURL = server.URL
+	t.Cleanup(func() {
+		server.Close()
+		proxyTransport.CloseIdleConnections()
+	})
+	var marker struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+	}
+	harness.api(http.MethodGet, "/teams/name/"+url.PathEscape(markerTeam), nil, &marker)
+	if marker.Name != markerTeam || marker.DisplayName != "Mattermost CLI E2E "+markerTeam {
+		t.Fatal("refusing to mutate a Mattermost server without this run's random marker team")
+	}
+	return harness
 }
 
 type user struct {
@@ -126,7 +161,9 @@ func (h *liveHarness) createChannel(kind string, userIDs []string) channel {
 func (h *liveHarness) assertStageApplyExactlyOnce(kind, target, channelID, userID, message, requestPrefix string) {
 	h.t.Helper()
 	before := h.posts(channelID)
+	writesBeforeStage := h.mutationSnapshot()
 	stageRaw := h.cli(message, "--json", "stage", "send", kind, target, "--request-id", requestPrefix+"-stage")
+	h.assertMutationDelta(writesBeforeStage, nil)
 	var staged stageReceipt
 	if err := json.Unmarshal(stageRaw, &staged); err != nil || staged.Schema != "mm/v2/stage-receipt" || staged.Stage.StageRef == "" {
 		h.t.Fatalf("invalid stage receipt: %v", err)
@@ -135,7 +172,9 @@ func (h *liveHarness) assertStageApplyExactlyOnce(kind, target, channelID, userI
 		h.t.Fatalf("staging mutated Mattermost: before=%d after=%d", len(before.Order), len(afterStage.Order))
 	}
 
+	writesBeforeApply := h.mutationSnapshot()
 	applyRaw := h.cli("", "--json", "apply", staged.Stage.StageRef, "--request-id", requestPrefix+"-apply")
+	h.assertMutationDelta(writesBeforeApply, map[string]int{"POST /api/v4/posts": 1})
 	var applied applyReceipt
 	if err := json.Unmarshal(applyRaw, &applied); err != nil || applied.Schema != "mm/v2/apply-receipt" || applied.Outcome != "succeeded" {
 		h.t.Fatalf("invalid apply receipt: %v outcome=%q", err, applied.Outcome)
@@ -156,7 +195,9 @@ func (h *liveHarness) assertStageApplyExactlyOnce(kind, target, channelID, userI
 		h.t.Fatalf("apply count mismatch: before=%d after=%d matches=%d", len(before.Order), len(afterApply.Order), countMessage(afterApply, message))
 	}
 
+	writesBeforeReplay := h.mutationSnapshot()
 	replayRaw := h.cli("", "--json", "apply", staged.Stage.StageRef, "--request-id", requestPrefix+"-apply")
+	h.assertMutationDelta(writesBeforeReplay, nil)
 	var replay applyReceipt
 	if err := json.Unmarshal(replayRaw, &replay); err != nil || replay.AttemptID != applied.AttemptID || replay.Outcome != "succeeded" {
 		h.t.Fatalf("invalid apply replay: %v attempt=%q outcome=%q", err, replay.AttemptID, replay.Outcome)
@@ -164,6 +205,27 @@ func (h *liveHarness) assertStageApplyExactlyOnce(kind, target, channelID, userI
 	afterReplay := h.posts(channelID)
 	if countMessage(afterReplay, message) != 1 || len(afterReplay.Order) != len(afterApply.Order) {
 		h.t.Fatalf("apply replay created another post: before=%d after=%d matches=%d", len(afterApply.Order), len(afterReplay.Order), countMessage(afterReplay, message))
+	}
+}
+
+func (h *liveHarness) mutationSnapshot() map[string]int {
+	h.t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.writes)
+}
+
+func (h *liveHarness) assertMutationDelta(before, expected map[string]int) {
+	h.t.Helper()
+	after := h.mutationSnapshot()
+	actual := make(map[string]int)
+	for key, count := range after {
+		if delta := count - before[key]; delta != 0 {
+			actual[key] = delta
+		}
+	}
+	if !maps.Equal(actual, expected) {
+		h.t.Fatalf("CLI mutation dispatch delta=%v, want %v", actual, expected)
 	}
 }
 
@@ -235,7 +297,7 @@ func (h *liveHarness) cli(stdin string, args ...string) []byte {
 		"HOME=" + h.home,
 		"XDG_CONFIG_HOME=" + filepath.Join(h.home, ".config"),
 		"XDG_STATE_HOME=" + filepath.Join(h.home, ".local", "state"),
-		"MM_URL=" + h.url,
+		"MM_URL=" + h.cliURL,
 		"MM_TOKEN=" + h.token,
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + h.home,
