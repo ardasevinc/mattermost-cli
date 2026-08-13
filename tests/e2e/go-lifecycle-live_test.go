@@ -64,6 +64,32 @@ func TestGoApplyFullPostLifecycleWithAttachment(t *testing.T) {
 	if downloaded := h.apiBytes(http.MethodGet, "/files/"+fileID); !bytes.Equal(downloaded, attachment) {
 		t.Fatalf("downloaded attachment differs: got %d bytes, want %d", len(downloaded), len(attachment))
 	}
+	var download struct {
+		Schema, FileID, Name, MIMEType, SHA256, Path string
+		SizeBytes                                    int64
+		Temporary                                    bool
+	}
+	decodeCLI(t, h.cli("", "--json", "file", "download", fileID), &download)
+	if download.Schema != "mm/v2/file-download" || download.FileID != fileID || download.Name != "proof.bin" ||
+		download.SizeBytes != int64(len(attachment)) || !download.Temporary || !filepath.IsAbs(download.Path) {
+		t.Fatalf("invalid file download receipt: %+v", download)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(download.Path)) })
+	if downloaded, err := os.ReadFile(download.Path); err != nil || !bytes.Equal(downloaded, attachment) {
+		t.Fatalf("mm temp download differs: got %d bytes, want %d, error=%v", len(downloaded), len(attachment), err)
+	}
+	explicitPath := filepath.Join(attachmentDir, "downloaded.bin")
+	decodeCLI(t, h.cli("", "--json", "file", "download", fileID, "--output", explicitPath), &download)
+	if download.Path != explicitPath || download.Temporary {
+		t.Fatalf("invalid explicit download receipt: %+v", download)
+	}
+	if downloaded, err := os.ReadFile(explicitPath); err != nil || !bytes.Equal(downloaded, attachment) {
+		t.Fatalf("mm explicit download differs: got %d bytes, want %d, error=%v", len(downloaded), len(attachment), err)
+	}
+	stdout, stderr, code := h.cliResult("", "--json", "file", "download", fileID, "--output", explicitPath)
+	if code != 2 || len(stdout) != 0 || !bytes.Contains(stderr, []byte(`"code":"invalid_input"`)) {
+		t.Fatalf("download overwrite refusal exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
 
 	replyMessage := "> reply\n\nwith `code`\n"
 	replied := h.stageApply(t, replyMessage, "lifecycle-reply", []string{"reply", postID}, map[string]int{"POST /api/v4/posts": 1})
