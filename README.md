@@ -24,14 +24,14 @@ brew install ardasevinc/tap/mattermost-cli
 npm install -g mattermost-cli
 
 # Go
-go install github.com/ardasevinc/mattermost-cli/v2/cmd/mm@v2.0.0
+go install github.com/ardasevinc/mattermost-cli/v2/cmd/mm@v2.1.0
 
 # checksum-verifying installer
 curl -fsSL https://raw.githubusercontent.com/ardasevinc/mattermost-cli/main/scripts/install.sh | sh
 ```
 
 The installer defaults to `~/.local/bin`. Set `MATTERMOST_CLI_INSTALL_DIR` to
-choose another directory or `MATTERMOST_CLI_VERSION=v2.0.0` to pin a release.
+choose another directory or `MATTERMOST_CLI_VERSION=v2.1.0` to pin a release.
 
 From source:
 
@@ -229,7 +229,7 @@ Go 1.26 or newer is required.
 ```bash
 just gate           # format, unit, race, vet, staticcheck, vuln, license, build
 just docker-e2e     # disposable Mattermost 11.8.3 + Postgres acceptance
-just release-artifacts 2.0.0 <commit> /tmp/mm-release
+just release-artifacts 2.1.0 <commit> /tmp/mm-release
 ```
 
 The normal gate includes all Go tests, race detection, `go vet`, Staticcheck,

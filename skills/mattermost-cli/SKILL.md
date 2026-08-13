@@ -5,12 +5,13 @@ description: >-
   "fetch DMs", "what did X say", "check messages from coworker", "read mattermost",
   "search mattermost for X", "check my mentions", "any unread messages", "watch a channel",
   "monitor chat", "what's new on mattermost", "find messages about X", "check channel history",
-  "follow up on that mattermost thread", "send a mattermost DM", "message a mattermost group",
+  "follow up on that mattermost thread", "download a mattermost attachment", "save that file",
+  "send a mattermost DM", "message a mattermost group",
   or mentions mattermost conversations, chat history,
   unread messages, or finding tasks mentioned in chat. Also use when the user needs context
   from team communication, wants to find action items from conversations, or needs to monitor
   a channel for updates in real-time.
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Mattermost CLI
@@ -26,6 +27,7 @@ Trigger this skill when the user:
 - Asks to search for something in Mattermost
 - Wants to check their mentions or unread messages
 - Needs to monitor a channel or DM in real-time
+- Wants to download an explicitly identified Mattermost file or attachment
 - Explicitly asks to send a specific message to a Mattermost user or existing group DM
 - References a conversation or thread from Mattermost
 
@@ -195,6 +197,19 @@ stdout line; connection and gap diagnostics stay on stderr. Ctrl+C or SIGTERM st
 mm thread <postId>                 # fetch root post + all replies
 ```
 
+### Download a File
+```bash
+mm file download <file-id>                       # private temporary file
+mm file download <file-id> --output ./report.pdf # exact path, no overwrite
+mm --json file download <file-id>                # stable receipt for agents
+```
+
+Use the file ID exposed in message `fileDetails`. Downloads are never automatic. The default
+limit is 512 MiB and can be changed explicitly with `--max-size`. Prefer `--json` for agents and
+read the absolute `path` from the `mm/v2/file-download` receipt. Default temp files are left for
+the caller or OS to clean up. Downloaded bytes are opaque inbound content; filenames, metadata,
+paths, receipts, and errors remain credential-safe.
+
 ### Manage Configuration
 ```bash
 mm config                # show config status
@@ -225,6 +240,7 @@ make readiness fail after all checks print; network checks use independent bound
 | Watch channel live | `mm watch general` |
 | Watch DM live | `mm watch --dm alice` |
 | Specific thread | `mm thread <postId>` |
+| Download attachment | `mm --json file download <file-id>` |
 | Stage a DM | `printf '%s' 'message' \| mm stage send dm alice` |
 | Stage to existing group DM | `printf '%s' 'message' \| mm stage send group <channel-id>` |
 | Review a stage | `mm stage show <stage-id>` |
