@@ -49,7 +49,7 @@ func (m *FileMutations) ValidateUpload(ctx context.Context, in UploadMutationInp
 	if err := m.client.Get(ctx, "/files/"+url.PathEscape(fileID)+"/info", &response); err != nil {
 		return err
 	}
-	file := uploadFileInfo(response)
+	file := FileInfo(response)
 	if file.ID != fileID || file.UserID != in.UserID || file.ChannelID != in.ChannelID || file.PostID != "" || file.Name != in.Filename || file.Size != in.Length ||
 		file.CreateAt <= 0 || file.CreateAt > maxDateMilliseconds || file.UpdateAt < file.CreateAt || file.UpdateAt > maxDateMilliseconds || file.DeleteAt != 0 {
 		return ErrUploadBinding
@@ -115,13 +115,13 @@ func (p *PreparedUpload) Close() error {
 }
 
 type uploadResponse struct {
-	FileInfos []uploadFileInfo
+	FileInfos []FileInfo
 	ClientIDs []string
 }
 
-type uploadFileInfo struct {
-	ID, UserID, PostID, ChannelID, Name string
-	CreateAt, UpdateAt, DeleteAt, Size  int64
+type FileInfo struct {
+	ID, UserID, PostID, ChannelID, Name, MIMEType string
+	CreateAt, UpdateAt, DeleteAt, Size            int64
 }
 
 func (r *uploadResponse) UnmarshalJSON(data []byte) error {
@@ -140,7 +140,7 @@ func (r *uploadResponse) UnmarshalJSON(data []byte) error {
 	if json.Unmarshal(envelope.FileInfos, &infos) != nil || len(infos) != 1 {
 		return ErrInvalidPostResponse
 	}
-	file, err := decodeUploadFileInfo(infos[0])
+	file, err := decodeFileInfo(infos[0])
 	if err != nil {
 		return err
 	}
@@ -148,14 +148,14 @@ func (r *uploadResponse) UnmarshalJSON(data []byte) error {
 	if envelope.ClientIDs != nil && string(envelope.ClientIDs) != "null" && json.Unmarshal(envelope.ClientIDs, &clientIDs) != nil {
 		return ErrInvalidPostResponse
 	}
-	*r = uploadResponse{[]uploadFileInfo{file}, clientIDs}
+	*r = uploadResponse{[]FileInfo{file}, clientIDs}
 	return nil
 }
 
-type fileInfoResponse uploadFileInfo
+type fileInfoResponse FileInfo
 
 func (r *fileInfoResponse) UnmarshalJSON(data []byte) error {
-	file, err := decodeUploadFileInfo(data)
+	file, err := decodeFileInfo(data)
 	if err != nil {
 		return err
 	}
@@ -163,50 +163,56 @@ func (r *fileInfoResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func decodeUploadFileInfo(data []byte) (uploadFileInfo, error) {
+func decodeFileInfo(data []byte) (FileInfo, error) {
 	infoRaw, ok := uniqueJSONObject(data)
 	if !ok {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
-	file := uploadFileInfo{}
+	file := FileInfo{}
 	var fieldsOK bool
 	file.ID, fieldsOK = safePostID(infoRaw["id"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	file.UserID, fieldsOK = safePostID(infoRaw["user_id"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	file.ChannelID, fieldsOK = safePostID(infoRaw["channel_id"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	if rawPostID, present := infoRaw["post_id"]; present {
 		file.PostID, fieldsOK = strictString(rawPostID)
 		if !fieldsOK {
-			return uploadFileInfo{}, ErrInvalidPostResponse
+			return FileInfo{}, ErrInvalidPostResponse
 		}
 	}
 	file.Name, fieldsOK = strictString(infoRaw["name"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
+	}
+	if rawMIMEType, present := infoRaw["mime_type"]; present {
+		file.MIMEType, fieldsOK = strictString(rawMIMEType)
+		if !fieldsOK {
+			return FileInfo{}, ErrInvalidPostResponse
+		}
 	}
 	file.CreateAt, fieldsOK = nonnegativeInteger(infoRaw["create_at"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	file.UpdateAt, fieldsOK = nonnegativeInteger(infoRaw["update_at"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	file.DeleteAt, fieldsOK = nonnegativeInteger(infoRaw["delete_at"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	file.Size, fieldsOK = nonnegativeInteger(infoRaw["size"])
 	if !fieldsOK {
-		return uploadFileInfo{}, ErrInvalidPostResponse
+		return FileInfo{}, ErrInvalidPostResponse
 	}
 	return file, nil
 }

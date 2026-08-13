@@ -22,19 +22,21 @@ import (
 
 const (
 	AttemptTimeout  = 15 * time.Second
+	DownloadTimeout = 10 * time.Minute
 	MaxResponseBody = 4 << 20
 	maxRetries      = 2
 	maxRetryDelay   = 30 * time.Second
 )
 
 var (
-	ErrNetwork      = errors.New("unable to connect to Mattermost due to a network error")
-	ErrTimeout      = errors.New("Mattermost request timed out")
-	ErrCanceled     = errors.New("Mattermost request canceled")
-	ErrInvalidJSON  = errors.New("Mattermost returned an invalid JSON response")
-	ErrBodyTooLarge = errors.New("Mattermost response exceeded the size limit")
-	ErrClientClosed = errors.New("Mattermost client is closed")
-	ErrMutationUsed = errors.New("prepared Mattermost mutation was already consumed")
+	ErrNetwork       = errors.New("unable to connect to Mattermost due to a network error")
+	ErrTimeout       = errors.New("Mattermost request timed out")
+	ErrCanceled      = errors.New("Mattermost request canceled")
+	ErrInvalidJSON   = errors.New("Mattermost returned an invalid JSON response")
+	ErrBodyTooLarge  = errors.New("Mattermost response exceeded the size limit")
+	ErrResponseWrite = errors.New("could not write the Mattermost response")
+	ErrClientClosed  = errors.New("Mattermost client is closed")
+	ErrMutationUsed  = errors.New("prepared Mattermost mutation was already consumed")
 )
 
 type APIError struct{ Status int }
@@ -88,18 +90,27 @@ func WithResponseLimit(limit int64) Option {
 	}
 }
 
+func WithDownloadTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.downloadTimeout = timeout
+		}
+	}
+}
+
 type Client struct {
-	base      *url.URL
-	token     string
-	http      *http.Client
-	transport http.RoundTripper
-	now       func() time.Time
-	sleep     SleepFunc
-	timeout   time.Duration
-	bodyLimit int64
-	release   func()
-	lifecycle sync.RWMutex
-	closed    bool
+	base            *url.URL
+	token           string
+	http            *http.Client
+	transport       http.RoundTripper
+	now             func() time.Time
+	sleep           SleepFunc
+	timeout         time.Duration
+	downloadTimeout time.Duration
+	bodyLimit       int64
+	release         func()
+	lifecycle       sync.RWMutex
+	closed          bool
 }
 
 // PreparedMutation is an immutable, one-shot JSON mutation. URL resolution and
@@ -139,7 +150,7 @@ func New(baseURL, token string, options ...Option) (*Client, error) {
 	}
 	c := &Client{
 		base: base, token: token, transport: http.DefaultTransport, now: time.Now,
-		timeout: AttemptTimeout, bodyLimit: MaxResponseBody,
+		timeout: AttemptTimeout, downloadTimeout: DownloadTimeout, bodyLimit: MaxResponseBody,
 	}
 	c.sleep = sleepContext
 	for _, option := range options {
@@ -167,6 +178,57 @@ func (c *Client) Get(ctx context.Context, path string, out any) error {
 }
 func (c *Client) GetPublic(ctx context.Context, path string, out any) error {
 	return c.request(ctx, http.MethodGet, path, nil, out, false, false)
+}
+
+type DownloadResult struct {
+	Bytes       int64
+	ContentType string
+}
+
+// Download streams one authenticated read response into out. It retries only
+// failures that happen before response bytes are handed to the caller, so a
+// partial destination is never silently combined with a replayed response.
+func (c *Client) Download(ctx context.Context, path string, out io.Writer, limit int64) (DownloadResult, error) {
+	if ctx == nil || out == nil || limit <= 0 {
+		return DownloadResult{}, errors.New("invalid Mattermost download request")
+	}
+	c.lifecycle.RLock()
+	defer c.lifecycle.RUnlock()
+	if c.closed {
+		return DownloadResult{}, ErrClientClosed
+	}
+	endpoint, err := c.endpoint(path)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil {
+			return DownloadResult{}, classifyContext(ctx)
+		}
+		result, status, failure := c.downloadAttempt(ctx, endpoint, out, limit)
+		if failure != nil {
+			if result.Bytes == 0 && retryableDownloadFailure(failure) && attempt < maxRetries {
+				if err := c.sleep(ctx, retryDelay(attempt)); err != nil {
+					return DownloadResult{}, classifyContext(ctx)
+				}
+				continue
+			}
+			if errors.Is(failure, ErrResponseWrite) {
+				return result, failure
+			}
+			return result, publicReadError(ctx, failure)
+		}
+		if (status == 429 || status == 502 || status == 503 || status == 504) && attempt < maxRetries {
+			if err := c.sleep(ctx, retryDelay(attempt)); err != nil {
+				return DownloadResult{}, classifyContext(ctx)
+			}
+			continue
+		}
+		if status < 200 || status >= 300 {
+			return DownloadResult{}, &APIError{Status: status}
+		}
+		return result, nil
+	}
 }
 func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.request(ctx, http.MethodPost, path, body, out, true, true)
@@ -449,6 +511,70 @@ func (c *Client) attemptReader(parent context.Context, method string, endpoint *
 	return resp.StatusCode, resp.Header.Clone(), data, nil
 }
 
+func (c *Client) downloadAttempt(parent context.Context, endpoint *url.URL, out io.Writer, limit int64) (DownloadResult, int, error) {
+	ctx, cancel := context.WithTimeout(parent, c.downloadTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return DownloadResult{}, 0, &attemptFailure{kind: "transport"}
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/octet-stream")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if parent.Err() != nil {
+			return DownloadResult{}, 0, &attemptFailure{kind: "canceled"}
+		}
+		if ctx.Err() != nil {
+			return DownloadResult{}, 0, &attemptFailure{kind: "timeout"}
+		}
+		return DownloadResult{}, 0, &attemptFailure{kind: "transport"}
+	}
+	defer resp.Body.Close()
+	result := DownloadResult{ContentType: resp.Header.Get("Content-Type")}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, resp.StatusCode, nil
+	}
+	if resp.ContentLength > limit {
+		return result, 0, &attemptFailure{kind: "oversized"}
+	}
+	tracked := &downloadWriter{writer: out}
+	written, readErr := io.Copy(tracked, io.LimitReader(resp.Body, limit+1))
+	result.Bytes = written
+	if parent.Err() != nil {
+		return result, 0, &attemptFailure{kind: "canceled"}
+	}
+	if ctx.Err() != nil {
+		return result, 0, &attemptFailure{kind: "timeout"}
+	}
+	if tracked.err != nil {
+		return result, 0, ErrResponseWrite
+	}
+	if readErr != nil {
+		return result, 0, &attemptFailure{kind: "transport"}
+	}
+	if written > limit {
+		return result, 0, &attemptFailure{kind: "oversized"}
+	}
+	return result, resp.StatusCode, nil
+}
+
+type downloadWriter struct {
+	writer io.Writer
+	err    error
+}
+
+func (w *downloadWriter) Write(data []byte) (int, error) {
+	written, err := w.writer.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+	}
+	return written, err
+}
+
 func (c *Client) endpoint(path string) (*url.URL, error) {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, "#") {
 		return nil, errors.New("invalid Mattermost API path")
@@ -556,6 +682,10 @@ func decodeJSON(data []byte, out any) error {
 func retryableFailure(err error) bool {
 	var failure *attemptFailure
 	return errors.As(err, &failure) && (failure.kind == "transport" || failure.kind == "timeout" || failure.kind == "oversized")
+}
+func retryableDownloadFailure(err error) bool {
+	var failure *attemptFailure
+	return errors.As(err, &failure) && (failure.kind == "transport" || failure.kind == "timeout")
 }
 func publicReadError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {

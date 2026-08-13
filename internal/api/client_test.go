@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -705,6 +706,74 @@ func TestRateLimitDelayBoundsHeaders(t *testing.T) {
 	}
 }
 
+func TestDownloadStreamsAuthenticatedBoundedResponse(t *testing.T) {
+	payload := bytes.Repeat([]byte{0, 1, 2, 3}, 1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != "/api/v4/files/file-id" || r.Header.Get("Authorization") != "Bearer token-value" || r.Header.Get("Accept") != "application/octet-stream" {
+			t.Fatalf("request=%s auth=%q accept=%q", r.URL.RequestURI(), r.Header.Get("Authorization"), r.Header.Get("Accept"))
+		}
+		w.Header().Set("Content-Type", "application/x-test")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	c := newTestClient(t, server.URL)
+	var destination bytes.Buffer
+	result, err := c.Download(context.Background(), "/files/file-id", &destination, int64(len(payload)))
+	if err != nil || result.Bytes != int64(len(payload)) || result.ContentType != "application/x-test" || !bytes.Equal(destination.Bytes(), payload) {
+		t.Fatalf("result=%+v exact=%v err=%v", result, bytes.Equal(destination.Bytes(), payload), err)
+	}
+}
+
+func TestDownloadRejectsDeclaredAndStreamedOversize(t *testing.T) {
+	for _, declared := range []bool{true, false} {
+		t.Run(fmt.Sprintf("declared=%t", declared), func(t *testing.T) {
+			var calls atomic.Int32
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("123456")), ContentLength: -1}
+				if declared {
+					response.ContentLength = 6
+				}
+				return response, nil
+			})
+			c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport), WithSleep(noSleep))
+			var destination bytes.Buffer
+			result, err := c.Download(context.Background(), "/files/id", &destination, 5)
+			if !errors.Is(err, ErrBodyTooLarge) || calls.Load() != 1 {
+				t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
+			}
+			if declared && destination.Len() != 0 {
+				t.Fatalf("declared oversize wrote %d bytes", destination.Len())
+			}
+		})
+	}
+}
+
+func TestDownloadDoesNotReplayPartialResponse(t *testing.T) {
+	var calls atomic.Int32
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(&oneThenErrorReader{})}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport), WithSleep(noSleep))
+	var destination bytes.Buffer
+	result, err := c.Download(context.Background(), "/files/id", &destination, 5)
+	if !errors.Is(err, ErrNetwork) || result.Bytes != 1 || destination.String() != "x" || calls.Load() != 1 {
+		t.Fatalf("result=%+v body=%q calls=%d err=%v", result, destination.String(), calls.Load(), err)
+	}
+}
+
+func TestDownloadSeparatesDestinationWriteFailure(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("payload"))}, nil
+	})
+	c := newTestClient(t, "https://mattermost.example", WithRoundTripper(transport))
+	result, err := c.Download(context.Background(), "/files/id", failingWriter{}, 100)
+	if !errors.Is(err, ErrResponseWrite) || result.Bytes != 0 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func newTestClient(t *testing.T, base string, options ...Option) *Client {
 	t.Helper()
 	c, err := New(base, "token-value", options...)
@@ -755,6 +824,21 @@ func (b *trackedReadCloser) Close() error {
 type trackingBody struct {
 	reads  atomic.Int32
 	closed atomic.Bool
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk secret") }
+
+type oneThenErrorReader struct{ sent bool }
+
+func (r *oneThenErrorReader) Read(data []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		data[0] = 'x'
+		return 1, nil
+	}
+	return 0, errors.New("remote secret")
 }
 
 func (b *trackingBody) Read([]byte) (int, error) {
