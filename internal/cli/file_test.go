@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -80,6 +82,30 @@ func TestFileDownloadValidatesFlagsBeforeRuntime(t *testing.T) {
 	}
 }
 
+func TestFileDownloadOutputFailureRemovesOnlyTemporaryResult(t *testing.T) {
+	payload := []byte("hello")
+	server := fileDownloadServer(t, "greeting.txt", payload, nil)
+	defer server.Close()
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	setChannelEnvironment(t, server.URL)
+	code := Execute(context.Background(), []string{"--json", "file", "download", "file-1"}, strings.NewReader(""), failingOutput{}, io.Discard)
+	if code != 3 {
+		t.Fatalf("temporary output failure exit=%d", code)
+	}
+	entries, err := os.ReadDir(tempRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("temporary artifacts=%v err=%v", entries, err)
+	}
+
+	explicit := filepath.Join(t.TempDir(), "kept.txt")
+	code = Execute(context.Background(), []string{"--json", "file", "download", "file-1", "--output", explicit}, strings.NewReader(""), failingOutput{}, io.Discard)
+	data, err := os.ReadFile(explicit)
+	if code != 3 || err != nil || string(data) != string(payload) {
+		t.Fatalf("explicit output failure exit=%d data=%q err=%v", code, data, err)
+	}
+}
+
 func TestParseByteSizeAndHumanFormatting(t *testing.T) {
 	for raw, want := range map[string]int64{"1": 1, "2B": 2, "3KiB": 3 << 10, "4MiB": 4 << 20, "5GiB": 5 << 30, "6MB": 6_000_000} {
 		got, err := parseByteSize(raw)
@@ -120,3 +146,7 @@ func fileDownloadServer(t *testing.T, name string, payload []byte, byteRequests 
 		}
 	}))
 }
+
+type failingOutput struct{}
+
+func (failingOutput) Write([]byte) (int, error) { return 0, errors.New("closed") }

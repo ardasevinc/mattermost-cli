@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -61,6 +63,7 @@ func runFileDownload(cmd *cobra.Command, state *rootState, fileID string, flags 
 	}
 	document, err := output.NewFileDownloadEnvelope(result.FileID, result.Name, result.MIMEType, result.SizeBytes, result.SHA256, result.Path, result.Temporary)
 	if err != nil {
+		cleanupTemporaryDownload(result)
 		return readFailure(err)
 	}
 	if state.flags.json {
@@ -68,14 +71,28 @@ func runFileDownload(cmd *cobra.Command, state *rootState, fileID string, flags 
 		if _, err := output.WriteMachineJSON(&wire, document); err != nil {
 			return readFailure(err)
 		}
-		return writeAll(state.streams.out, wire.Bytes())
+		if err := writeAll(state.streams.out, wire.Bytes()); err != nil {
+			cleanupTemporaryDownload(result)
+			return err
+		}
+		return nil
 	}
 	var receipt strings.Builder
 	fmt.Fprintf(&receipt, "Downloaded %s (%s)\nSaved to %s\n", document.Name, humanBytes(document.SizeBytes), document.Path)
 	if document.Temporary {
 		receipt.WriteString("Temporary file; the OS may clean it up.\n")
 	}
-	return writeAll(state.streams.out, []byte(receipt.String()))
+	if err := writeAll(state.streams.out, []byte(receipt.String())); err != nil {
+		cleanupTemporaryDownload(result)
+		return err
+	}
+	return nil
+}
+
+func cleanupTemporaryDownload(result filedownload.Result) {
+	if result.Temporary {
+		_ = os.RemoveAll(filepath.Dir(result.Path))
+	}
 }
 
 func parseByteSize(raw string) (int64, error) {
