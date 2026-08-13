@@ -212,6 +212,7 @@ func newRootWithState(state *rootState) *cobra.Command {
 	cmd.AddCommand(newMentionsCommand(state))
 	cmd.AddCommand(newUnreadCommand(state))
 	cmd.AddCommand(newWatchCommand(state))
+	cmd.AddCommand(newFileCommand(state))
 	return cmd
 }
 

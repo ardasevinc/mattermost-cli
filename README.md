@@ -112,6 +112,27 @@ Output modes:
 - non-TTY: Markdown suitable for pipes and agents
 - `--json`: versioned `mm/v2/*` JSON, or JSON Lines for `watch`
 
+## Download files
+
+Downloads are always explicit. `mm` never fetches message attachments as a
+side effect of history, search, or watch commands.
+
+```bash
+# private 0700 temp directory, safe original filename, 0600 file
+mm file download <file-id>
+
+# exact durable destination; existing files are never overwritten
+mm file download <file-id> --output ./report.pdf
+
+# strict mm/v2/file-download receipt for agents
+mm --json file download <file-id>
+```
+
+The default client limit is 512 MiB. Use `--max-size` with bytes or a `KiB`,
+`MiB`, or `GiB` suffix to set a different explicit bound. Successful receipts
+include the absolute path, byte count, MIME type, SHA-256 digest, and whether
+the path is temporary.
+
 ## Stage and apply mutations
 
 Creating a stage performs read-only identity and destination binding plus a
@@ -183,6 +204,9 @@ Checked-in schemas and examples live under `schemas/v2/`.
 - The active Mattermost credential is never emitted, even with `--no-redact`.
 - Outbound text, structured fields, attachment paths/metadata, and attachment
   bytes containing that credential are rejected before persistence or dispatch.
+- Explicitly downloaded file bytes are opaque inbound content and are not
+  credential-scanned. Their filenames, paths, metadata, receipts, and errors
+  remain subject to mandatory credential masking and presentation safety.
 - Read commands never create conversations or perform write fallbacks.
 - Mutation redirects are rejected and uncertain writes are never replayed
   automatically.

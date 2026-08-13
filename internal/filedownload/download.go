@@ -60,6 +60,7 @@ func Download(ctx context.Context, remote Remote, fileID string, options Options
 	}
 	presented := presentation.PreprocessWithOptions(info.Name, options.Presentation).Text
 	name := safeFilename(presented, fileID)
+	mimeType := presentation.PreprocessWithOptions(info.MIMEType, options.Presentation).Text
 	path, file, temporary, finalize, cleanup, err := createDestination(options.Output, name)
 	if err != nil {
 		return Result{}, err
@@ -97,7 +98,7 @@ func Download(ctx context.Context, remote Remote, fileID string, options Options
 	}
 	succeeded = true
 	return Result{
-		FileID: fileID, Name: name, MIMEType: info.MIMEType, SizeBytes: download.Bytes,
+		FileID: fileID, Name: name, MIMEType: mimeType, SizeBytes: download.Bytes,
 		SHA256: hex.EncodeToString(hash.Sum(nil)), Path: absPath, Temporary: temporary,
 	}, nil
 }

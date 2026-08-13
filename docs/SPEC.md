@@ -34,6 +34,7 @@ doctor
 store doctor
 store migrations
 schema list|show|validate
+file download <file-id> [--output <file>] [--max-size <bytes>]
 ```
 
 Mutation preparation and local lifecycle:
@@ -69,6 +70,11 @@ alias.
 - Thread hydration is bounded to four workers and preserves partial visible
   context when completeness cannot be proven.
 - Deleted posts never expose stale body, file, attachment, or reaction data.
+- File downloads are explicit, stream-bounded reads. The default destination
+  is a private temporary directory; an exact `--output` path must not exist.
+  Metadata and streamed size are both checked, partials are removed, and the
+  receipt includes a SHA-256 digest. Reads, search, and watch never download
+  attachments automatically.
 - Watch authenticates before events, validates sequence state, bounds reconnect,
   reports gaps, and never claims REST backfill it did not perform.
 
@@ -146,6 +152,8 @@ Exit classes:
 - Active credentials are never emitted and cannot be disabled by `--no-redact`.
 - Active credentials are forbidden in outbound text, structured fields,
   attachment metadata/path, and bytes.
+- Explicitly requested inbound download bytes are opaque and may contain the
+  active credential. Filenames, paths, metadata, output, and errors may not.
 - Mutation redirects are rejected.
 - Unknown mutation outcomes are not automatically replayed.
 - Remote response bodies and unsafe caller/remote values are not reflected in

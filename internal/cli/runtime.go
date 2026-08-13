@@ -50,6 +50,7 @@ type Runtime struct {
 	Teams     *mattermost.Teams
 	Channels  *mattermost.Channels
 	Posts     *mattermost.Posts
+	Files     *mattermost.Files
 	StdoutTTY bool
 }
 
@@ -186,7 +187,7 @@ func (s *rootState) runtimeFor(cmd *cobra.Command) (*Runtime, error) {
 	s.runtime = &Runtime{
 		Config: resolved, Client: client, StdoutTTY: s.deps.stdoutTTY(),
 		Users: mattermost.NewUsers(client), Teams: mattermost.NewTeams(client),
-		Channels: mattermost.NewChannels(client), Posts: mattermost.NewPosts(client),
+		Channels: mattermost.NewChannels(client), Posts: mattermost.NewPosts(client), Files: mattermost.NewFiles(client),
 	}
 	return s.runtime, nil
 }

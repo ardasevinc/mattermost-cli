@@ -57,7 +57,7 @@ func TestSchemaList(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr = %q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "mm/v2/apply-receipt\nmm/v2/apply-request\nmm/v2/channel\nmm/v2/channels\nmm/v2/config\nmm/v2/dms\nmm/v2/doctor\nmm/v2/error\nmm/v2/group-dms\nmm/v2/mentions\nmm/v2/search\nmm/v2/stage\nmm/v2/stage-cancel-request\nmm/v2/stage-preview\nmm/v2/stage-prune-request\nmm/v2/stage-prune-result\nmm/v2/stage-receipt\nmm/v2/stage-request\nmm/v2/stage-revise-request\nmm/v2/stages\nmm/v2/store-doctor\nmm/v2/store-migrations\nmm/v2/teams\nmm/v2/thread\nmm/v2/unread\nmm/v2/users\nmm/v2/watch-diagnostic\nmm/v2/watch-event\nmm/v2/whoami\n"; got != want {
+	if got, want := stdout.String(), "mm/v2/apply-receipt\nmm/v2/apply-request\nmm/v2/channel\nmm/v2/channels\nmm/v2/config\nmm/v2/dms\nmm/v2/doctor\nmm/v2/error\nmm/v2/file-download\nmm/v2/group-dms\nmm/v2/mentions\nmm/v2/search\nmm/v2/stage\nmm/v2/stage-cancel-request\nmm/v2/stage-preview\nmm/v2/stage-prune-request\nmm/v2/stage-prune-result\nmm/v2/stage-receipt\nmm/v2/stage-request\nmm/v2/stage-revise-request\nmm/v2/stages\nmm/v2/store-doctor\nmm/v2/store-migrations\nmm/v2/teams\nmm/v2/thread\nmm/v2/unread\nmm/v2/users\nmm/v2/watch-diagnostic\nmm/v2/watch-event\nmm/v2/whoami\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mm:schema:v2:file-download",
+  "title": "mm v2 file download receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "fileId", "name", "mimeType", "sizeBytes", "sha256", "path", "temporary"],
+  "properties": {
+    "schema": { "const": "mm/v2/file-download" },
+    "fileId": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "mimeType": { "type": "string" },
+    "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "path": { "type": "string", "minLength": 1, "pattern": "^/" },
+    "temporary": { "type": "boolean" }
+  }
+}

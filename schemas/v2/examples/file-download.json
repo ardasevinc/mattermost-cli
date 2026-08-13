@@ -1,0 +1,10 @@
+{
+  "schema": "mm/v2/file-download",
+  "fileId": "abc123",
+  "name": "report.pdf",
+  "mimeType": "application/pdf",
+  "sizeBytes": 248131,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "path": "/tmp/mm-download-example/report.pdf",
+  "temporary": true
+}

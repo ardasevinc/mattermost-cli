@@ -58,6 +58,20 @@ Parity means semantic parity, not a line-for-line port. In particular, v2 must p
 - secret masking without retaining original secret values;
 - exact active Mattermost credential masking even when heuristic redaction is disabled.
 
+File download is an explicit bounded read, never an automatic consequence of
+retrieving a post. `mm file download <file-id>` streams the original
+Mattermost-hosted file into a fresh private temporary directory by default.
+`--output <file>` selects one exact destination and refuses any collision.
+The initial surface does not support bulk download, arbitrary rich-attachment
+URLs, preview/thumbnail variants, binary stdout, or overwrite flags.
+
+The client checks remote metadata before creating a destination, defaults to a
+512 MiB limit, enforces the same limit while streaming, and requires the final
+byte count to equal authenticated file metadata. Partial files are removed on
+failure. A successful `mm/v2/file-download` receipt binds the file ID, safe
+filename, presented MIME type, exact size, SHA-256 digest, absolute path, and
+temporary status.
+
 ## 4. Go architecture and dependencies
 
 The implementation targets Go 1.26 or newer and prefers small, explicit packages.
@@ -454,6 +468,9 @@ The v1 security boundary survives the rewrite:
 - Mutation requests do not follow redirects.
 - Active credentials are ownership-scoped and fully masked everywhere.
 - Heuristic secret redaction is display-only and may be disabled; credential masking and terminal/control sanitization may not.
+- Explicitly requested inbound file bytes are opaque content and are exempt
+  from credential scanning. This exemption does not cover remote filenames,
+  metadata, local pathnames, receipts, diagnostics, or errors.
 - Original secret values and unredacted originals never appear in redaction provenance.
 - Canonical unsanitized IDs drive identity, ordering, grouping, and deduplication; sanitized copies are presentation-only.
 - Go RE2 incompatibilities are implemented with candidate matching plus explicit boundary validation, not weaker regex substitutions.

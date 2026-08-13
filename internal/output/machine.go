@@ -299,7 +299,7 @@ func canonicalMachineDocument(document MachineDocument) (any, error) {
 		return value, nil
 	case DoctorEnvelope:
 		return value, nil
-	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope:
+	case WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope, FileDownloadEnvelope:
 		return value, nil
 	case UnreadEnvelope:
 		return value, nil
@@ -480,7 +480,7 @@ const (
 
 func preflightMachineDocument(document MachineDocument) error {
 	switch document.(type) {
-	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope, WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope, UnreadEnvelope:
+	case DMSEnvelope, GroupDMSEnvelope, ChannelEnvelope, ThreadEnvelope, SearchEnvelope, MentionsEnvelope, ErrorEnvelope, ConfigEnvelope, DoctorEnvelope, WhoAmIEnvelope, TeamsEnvelope, UsersEnvelope, ChannelsEnvelope, UnreadEnvelope, FileDownloadEnvelope:
 	default:
 		return fmt.Errorf("unsupported machine document type %T", document)
 	}
@@ -497,6 +497,11 @@ func preflightMachineDocument(document MachineDocument) error {
 	}
 	if unread, ok := document.(UnreadEnvelope); ok {
 		if err := validateUnreadEnvelope(unread); err != nil {
+			return err
+		}
+	}
+	if download, ok := document.(FileDownloadEnvelope); ok {
+		if err := validateFileDownloadEnvelope(download); err != nil {
 			return err
 		}
 	}
